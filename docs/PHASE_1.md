@@ -4,7 +4,7 @@ Phase 1 turns the product idea into a reviewable software requirements document.
 
 ## Product definition
 
-Flockletter helps a business communicate with people who have chosen to hear from it. The hosted product combines audience management, campaign preparation, included email delivery, reporting and subscription billing. Customers should be able to onboard themselves and operate through either the dashboard or delegated API/MCP access.
+Flockletter helps small retailers and general small businesses communicate with people who have chosen to hear from them. The hosted MVP combines audience management, campaign preparation, included delivery, scheduling, basic reports and subscription billing. Customers should be able to onboard themselves and operate through either the dashboard or delegated API/MCP access. Large enterprises and complex marketing journeys are outside this first release.
 
 The first concrete use case is an FFA product or collection announcement: choose an authorized audience, prepare a draft using existing approved product information and photos, review it, send a test, then authorize sending or scheduling. That integration does not change the merchandise or commerce system. A second business must be able to perform the same workflow without FFA-specific assumptions.
 
@@ -12,16 +12,18 @@ The value of the hosted service is managed operation, delivery integration, conv
 
 ## What the owner has settled
 
-The name is Flockletter, the repository is public, future signup is open and self-service, hosted plans include delivery, and the license is AGPLv3. FFA is the first intended customer. The product remains in documentation-only phase 1. These decisions are recorded in D-001 through D-008 in [the decision ledger](DECISIONS.md).
+The name is Flockletter, the repository is public, future signup is open and self-service, hosted plans include delivery, and the license is AGPLv3. The target market is small US businesses, with inexpensive pricing and a 14-day card-required trial. FFA is the first intended customer and receives complimentary access without Stripe or card payments. The intended operator is Frosty Flamingo Software, LLC; its planned Colorado DBA filing remains pending.
 
-Three hosted tiers, Listmonk, Stripe, isolated mailing engines and the exact reuse/hosting approach are proposed designs. They have not been represented as completed features or approved infrastructure changes.
+The three tiers allow 2, 5 and 20 campaigns per month, with campaign and recipient allowances pooled across each subscription. Company/brand totals are 1/1, 3/3 and 5/5; user limits are 1, 3 and unlimited. Recipient caps and dollar prices remain open. Clerk with Google and Apple sign-in, Listmonk, Stripe and Render are selected. Double opt-in defaults on, tracking defaults off, canceled-account data is retained 90 days then purged, and support is email-only with AI replies.
+
+The product remains in documentation-only phase 1. These choices are D-001 through D-023 in [decisions](DECISIONS.md). Engine isolation, billing details, data-lifecycle exceptions and support automation controls remain proposals; provider selection does not authorize infrastructure changes.
 
 ## Discussion order
 
-1. **Define what each plan buys.** Choose the customer size and useful differences between Starter, Growth and Pro. Establish contacts, recipient sends, seats and sender domains before choosing prices. Separate essential safety/data controls from optional convenience features.
-2. **Choose included delivery economics.** Compare real provider terms, production approval, tenant/domain isolation, feedback, limits and costs at full allowance. Include per-customer engine compute, authentication, billing and support costs. Do not assume existing accounts cover a new public SaaS.
-3. **Approve the account and hosting design.** Choose authentication, confirm the proposed Listmonk boundary, and validate shared-database headroom. Decide how much UI can be reused while preserving independent deployment and open-source installation.
-4. **Set commercial and operating policies.** Resolve trials, cancellation, refunds, tax/markets, acceptable use, privacy defaults, retention and recovery. Specify the normal self-service path and exceptional hold/recovery paths.
+1. **Cost the remaining plan limits.** Propose recipients per campaign, stored contacts, monthly recipient-messages and dollar prices together. Establish the initial monthly budget and expected customer count. Include unlimited-user identity costs and shared subscription accounting; essential safety controls belong in every tier.
+2. **Choose delivery and validate the engine boundary.** Compare provider terms, production approval, reputation isolation, feedback, rate limits and cost at full allowance. Review Listmonk enforcement and per-customer provisioning costs. Do not assume existing accounts or hosting capacity cover a public SaaS.
+3. **Complete the account and Render design.** Define company/brand access, Clerk configuration, independent self-hosting and the FFA integration. Validate database headroom and component reuse rights.
+4. **Finish the operating details.** Resolve trial sending caps, exact billing behavior, refunds, retention clocks/copies, pending legal/tax work and AI support escalation. The owner has deferred the detailed abuse-policy conversation; retain it as a gate before sending implementation, without blocking SRD drafting.
 5. **Approve a bounded implementation plan.** Freeze the first workstream's contracts, list its required decisions and tests, and obtain explicit implementation authorization. A public draft SRD is not that authorization.
 
 ## Phase 1 deliverables
@@ -33,7 +35,8 @@ Three hosted tiers, Listmonk, Stripe, isolated mailing engines and the exact reu
 | Numbered product and operational requirements | Drafted for review |
 | Architecture and reuse choices | Proposals with identified gaps; no implementation reuse approved |
 | Acceptance cases and traceability | Planned cases only; no executable tests or verification claims |
-| Tier values, selected providers and operating budget | Open decisions |
+| Tier values and providers | Campaign/company/brand/user limits and Listmonk/Stripe/Clerk/Render accepted; prices, recipient caps and remaining providers open |
+| Operating budget and detailed policies | Open decisions; privacy defaults and retention duration are accepted |
 | Final SRD approval and permission to build | Pending owner instruction |
 
 ## Documentation review criteria
@@ -49,5 +52,8 @@ The phase 1 draft can be published while decisions remain open. Completing phase
 - Included delivery requires a provider and an abuse/reputation plan suitable for open signup.
 - Reusing a billing pattern does not establish reusable code, compatible licensing or verified live behavior.
 - A usable open-source deployment needs portable authentication and delivery configuration; private account assumptions must be removed.
+- Multi-company/brand permissions must preserve consent boundaries while enforcing one shared subscription allowance.
+- A 90-day purge must cover engine data, exports, media and restore behavior; any narrow retention exceptions need an explicit policy.
+- AI support needs approved context, reply rules, handoff and operating costs before automatic replies are enabled.
 
 The complete list, with timing and proposed starting points, is O-001 through O-013 in [decisions](DECISIONS.md).

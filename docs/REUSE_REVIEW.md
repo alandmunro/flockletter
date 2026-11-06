@@ -12,9 +12,11 @@ This is a phase 1 inventory of possible reuse. No source code has been imported 
 | Existing UI primitives and operational conventions | Familiar forms, status displays, validation, logs and deployment practices | Separate generic components from private business behavior, branding, data and deployment identifiers. Publish only material whose rights and dependencies permit it. |
 | FFA product context | Prepare a newsletter draft from approved merchandising data | Define a scoped API contract and consent reconciliation. Existing photos and commerce settings remain unchanged; no database sharing or automatic sends. |
 | Listmonk | Reuse mailing lists, templates, campaign APIs and execution | Select a stable version, preserve license/notices, review security and adapter contracts, prove per-workspace isolation and all-path usage/suppression enforcement. |
-| Official payment and identity integrations | Reduce bespoke handling of sensitive functions | Select supported versions and verify real contracts; do not transplant old API assumptions or custom cryptography merely because it exists elsewhere. |
+| Selected Stripe and Clerk integrations | Reduce bespoke handling of sensitive functions | Select supported versions and verify real contracts, Google/Apple production setup and the complimentary-account exception; do not transplant old API assumptions or custom cryptography merely because it exists elsewhere. |
 
 Selected plan-catalogue and verified-event-ingress patterns were observed in the owner's existing SaaS source during product discussion. That limited observation is not a code audit, license clearance, performance measurement or proof of deployed behavior. Private source excerpts, repository internals and operating details are not reproduced here.
+
+The owner also selected similar commercial billing policies. The SRD states a proposed Flockletter adaptation explicitly, rather than inheriting another application's prices, discounts or conflicting historical draft language. FFA's approved Stripe-free complimentary entitlement takes precedence over any existing coupon-based pattern. Current policy decisions inform the draft; deployed billing behavior has not been verified by this documentation review.
 
 ## Reuse acceptance process
 

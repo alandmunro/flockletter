@@ -1,14 +1,16 @@
 # Flockletter
 
-Flockletter is a planned open-source mailing SaaS for businesses to manage permission-based audiences and newsletter campaigns. Frosty Flamingo Apparel is the first intended customer; the product is designed to serve other businesses independently.
+Flockletter is a planned open-source mailing SaaS for small retailers and general small businesses to manage permission-based audiences and newsletter campaigns. Frosty Flamingo Apparel is the first intended customer; other businesses can operate independently. Large enterprises are outside the target market.
 
 ## Current status
 
 Phase 1 covers product definition and a draft software requirements document. This repository contains planning documents only. There is no application, deployable service, signup page or live email sending yet. Implementation has not been authorized.
 
-The owner has selected a public repository, open self-service signup for the future hosted product, included email delivery in hosted subscriptions and AGPLv3 licensing.
+Settled choices include a public repository, AGPLv3 licensing, open self-service signup for the eventual hosted service, included email delivery and a 14-day trial with a card required. FFA will use a complimentary customer account that bypasses Stripe and card payments.
 
-The proposed design combines customer workspaces, administrator and team roles, three hosted subscription tiers, Stripe-based billing, a Listmonk mailing engine, and consistent UI, API and MCP operations. Prices, allowances, providers and final deployment choices remain under review.
+The first release is a minimum viable product. The draft covers audiences, newsletters and announcements, previews and test sends, scheduling, basic reports, and consistent UI, API and MCP operations. Three tiers have accepted campaign, company, brand and user limits; prices and recipient caps remain open in the [SRD](docs/SRD.md).
+
+Selected technologies are Listmonk, Stripe, Clerk with Google and Apple sign-in, and Render hosting. Engine isolation, the delivery provider, costs and exact topology remain to be designed. Support will be by email with AI reply automation; the provider and operating rules are still under review.
 
 The planned hosted service is paid. Self-hosting must not require the owner's private systems or a Flockletter subscription. All application code, including administration, billing and MCP, is intended to remain open source; credentials and customer data stay private.
 

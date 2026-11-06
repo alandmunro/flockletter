@@ -14,40 +14,55 @@ Updated November 6, 2026. Accepted decisions below reflect the owner's instructi
 | D-006 | Hosted subscriptions include email delivery. Customers do not have to bring a delivery provider for the standard hosted service. | Owner selected included delivery. |
 | D-007 | Use AGPLv3 for Flockletter's original material, expressed as AGPL-3.0-only in this repository. Preserve upstream licenses. | Owner selected AGPLv3. |
 | D-008 | Plan for reuse of existing hosting capacity where isolation and capacity checks permit it. | Owner's shared-infrastructure direction; no capacity or account changes are approved by this decision. |
+| D-009 | Serve small retailers and general small businesses. Do not target large enterprises. | Owner's market selection. |
+| D-010 | Keep the first release to the minimum viable mailing product. | Owner's MVP direction; detailed release requirements remain a reviewable draft. |
+| D-011 | Offer three tiers with monthly campaign caps of 2, 5 and 20 respectively. Share campaign and recipient allowances across the subscription's companies and brands. | Owner supplied the initial limits, then confirmed 5 for Tier 2 and pooling across the subscription. Counting/reset details remain open. |
+| D-012 | Tier 1 allows 1 company, 1 brand and 1 user. Tier 2 allows up to 3 companies, 3 brands total and 3 users. Tier 3 allows up to 5 companies, 5 brands total and unlimited users. Cap recipients as well as campaign counts. | Owner confirmed the completed company/brand totals. Recipient numbers remain open; unlimited users is explicit. |
+| D-013 | Position pricing below major competitors and most smaller competitors for comparable use. | Owner's low-price direction. No dollar prices or comparative claims are approved. |
+| D-014 | Provide a 14-day free trial with a credit card required at signup for ordinary hosted customers. | Owner selected duration and card requirement; the complimentary FFA account is the explicit exception. |
+| D-015 | Use commercial billing policies similar to the owner's existing SaaS. | Owner selected the policy family. The Flockletter-specific lifecycle proposal is written out in the SRD; exact adaptation remains reviewable. |
+| D-016 | Use Clerk for hosted authentication and support Google and Apple sign-in. | Owner selected provider and social logins. Credentials and identity data remain independent of other applications. |
+| D-017 | Default to confirmation-based signup (double opt-in) and open/click tracking off until enabled. | Owner accepted the proposed privacy defaults. Import policy and consent wording still need definition. |
+| D-018 | Retain canceled account data for 90 days, then purge it. | Owner selected duration and deletion. Clock definition, backup expiry and narrowly necessary record exceptions require an explicit policy. |
+| D-019 | Launch for US customers under Frosty Flamingo Software, LLC. Record the owner's planned Colorado DBA filing as a launch prerequisite. | Owner supplied business identity, geography and filing intention; filing is not claimed complete. |
+| D-020 | Offer email support only, with AI automation in replies. | Owner selected channel and automation; provider, escalation and response commitments remain open. |
+| D-021 | FFA uses Flockletter as a customer with a 100% complimentary entitlement, bypassing Stripe and card payments. | Explicit exception to the ordinary paid/trial flow. This is not a Stripe coupon or simulated payment. |
+| D-022 | Use Listmonk, Stripe and Clerk, and host Flockletter on Render. Other services remain discussable. | Owner selected the core stack and host; versions, delivery provider and topology remain open. |
+| D-023 | Defer the detailed sender/abuse-policy discussion for now. | Owner requested deferral where it does not prevent SRD progress. Retain the requirements and resolve the policy before implementing sending. |
 
 Open signup describes the intended launched product. The public documentation repository does not currently provide signup, a paid service or email delivery.
 
 ## Proposed baseline
 
-These choices shape SRD draft 0.1 and remain subject to owner review.
+These choices shape SRD draft 0.2 and remain subject to owner review. Selected providers are now accepted; their integration designs are still proposals.
 
 | ID | Proposal | Reason and consequence |
 | --- | --- | --- |
-| P-001 | Use Listmonk behind an engine adapter. | Reuse campaign functionality while keeping SaaS accounts, billing, access and usage enforcement in Flockletter. Pin and review a supported release before implementation. |
+| P-001 | Put the selected Listmonk engine behind a Flockletter adapter. | Engine selection is accepted in D-022; adapter contracts, version and all-path enforcement need review. |
 | P-002 | Isolate each hosted customer's mailing engine and its database. | Avoid treating Listmonk lists as customer boundaries. This has per-customer resource and provisioning costs that must fit the price model. |
 | P-003 | Use a separate SaaS application database on the shared PostgreSQL instance, with tenant-scoped access and database enforcement for customer-owned records. | The control application needs memberships, subscription state, usage, jobs and audit independently of mailing-engine storage. |
-| P-004 | Use Stripe Billing, hosted Checkout and the Customer Portal for fixed subscriptions. | Reduce custom payment handling. Use separate Flockletter resource mappings, credentials and verified event handling. No existing merchant settings or subscriptions are changed. |
-| P-005 | Start with three hosted tiers, provisionally Starter, Growth and Pro. | Differentiate capacity, team allowances and operational features. Prices and numeric allowances are not decided. |
+| P-004 | Use the selected Stripe service through Billing, hosted Checkout and the Customer Portal for ordinary subscriptions. | D-021's complimentary account uses a separate audited entitlement without creating Stripe resources. Existing merchant settings remain unchanged. |
+| P-005 | Use the working names Starter, Growth and Pro for the three accepted tiers. | D-011/D-012 settle some limits; exact prices, recipient caps and remaining definitions are open. Core privacy and safety controls apply to every tier. |
 | P-006 | Serve FFA's Mailings entry point through a small integration with the independent SaaS. | Reuse reviewed UI components and public APIs without a runtime dependency on private commerce code. Separate sending processes from shopping requests. |
-| P-007 | Start with scheduled broadcasts and permission-based audiences. | Branching customer journeys, abandoned-cart automation and additional messaging channels are later work. |
+| P-007 | Make broadcasts, audience management, previews/tests, scheduling and basic reporting the first-release MVP. | D-010 accepts an MVP; this is its proposed feature boundary. AI support replies are in scope separately from AI campaign generation. |
 | P-008 | Keep hosted product code and self-hosting capabilities open source. | Self-hosters do not need the owner's private systems or a Flockletter subscription; they provide their own infrastructure and delivery connection. |
 
 ## Decisions still needed
 
 | ID | Decision to resolve | Proposed starting point | Needed before |
 | --- | --- | --- | --- |
-| O-001 | Tier prices, currency, contact/send/seat/domain allowances, feature differences and commercial margin | Three fixed plans with clear included allowances; no automatic overage charges in the first release | Billing and quota implementation |
+| O-001 | Campaign counting/reset rules; recipients per campaign, stored contacts and total recipient sends; prices, currency, domains, feature differences and margin | Accepted campaign/company/brand/user limits and pooled allowances are D-011/D-012. Recipient caps and prices need a costed proposal; no automatic overage charges | Billing and quota implementation |
 | O-002 | Delivery provider and per-customer reputation isolation | A provider supporting verified domains, signed feedback, tenant attribution, documented rate limits and delivery cost reporting | Delivery implementation |
-| O-003 | Authentication implementation and self-hosted option | Provider-backed identity with MFA for platform operators; no dependency on another application's identity records | Identity implementation |
+| O-003 | Clerk configuration, non-social recovery/login, customer MFA policy and portable self-hosted identity configuration | Google and Apple are selected; isolate environments and verify production setup. Operator MFA remains the proposed minimum | Identity implementation |
 | O-004 | Engine version, isolation shape, provisioning strategy and compute budget | P-001/P-002, assessed at one customer and a defined small launch cohort | Engine implementation |
-| O-005 | Exact hosting topology and ownership of any extracted UI components | Shared database server with restricted logical databases; independently deployable SaaS and mail engine | Deployment design |
-| O-006 | Trial, refunds, cancellation, proration and failed-payment grace policy | No assumed free trial; self-service cancellation; preserve data and unsubscribe access during sending suspension | Billing implementation and terms |
-| O-007 | Sender onboarding, initial trust limits, escalation and acceptable-use policy | Open signup with verified identity/domain, bounded sending and risk-based review of exceptions | Sending implementation |
-| O-008 | Primary launch countries, business identity, legal documents and tax registrations | Choose explicitly before paid public launch; configure Stripe Tax where applicable | Public paid launch |
-| O-009 | Data residency, retention, deletion, backup coverage and recovery targets | Minimum necessary data, separate logical recovery and a documented exit path | Data-lifecycle implementation |
-| O-010 | Tracking defaults, double opt-in policy and signup-form consent presentation | Tracking off and double opt-in on as review defaults; no claim that these alone establish legal compliance | Subscriber and analytics implementation |
-| O-011 | FFA integration contract and account treatment | FFA uses the same workspace and permission paths as other customers; explicitly choose a paid or recorded internal plan | FFA integration implementation |
-| O-012 | Expected launch load, response-time targets and support commitments | Measure before promising service levels; include shared-database and per-engine connection costs | Capacity acceptance and commercial publication |
+| O-005 | Exact Render topology, region and ownership of extracted UI components | Restricted logical databases; independently deployable SaaS and engine. No shared capacity is presumed available | Deployment design |
+| O-006 | Exact billing adaptation, trial sending allowance/reset, refunds, annual option/discount and failed-payment behavior | 14-day card-required trial is accepted. SRD proposes immediate prorated upgrades, end-of-period downgrades/cancellation, suspension on day 6 and closure on day 30; no refund or annual-discount commitment yet | Billing implementation and terms |
+| O-007 | Sender onboarding, initial trust limits, escalation and acceptable-use policy | Discussion deferred by D-023. Retain verified sender/consent, finite recipient limits and suppression requirements; define thresholds and response before sending is built | Sending implementation |
+| O-008 | DBA completion, customer eligibility wording, terms, privacy and tax determination | US launch and business identity are settled; no filing, registration or tax-account change is performed by documentation | Public paid launch |
+| O-009 | Retention clock, backups/deletion evidence, minimal record exceptions, residency and recovery targets | Accepted 90-day canceled-account retention; propose counting from effective service end. US customer eligibility does not by itself set all provider storage locations | Data-lifecycle implementation |
+| O-010 | Signup-form wording, imported-list confirmation, brand consent and who may enable tracking | Double opt-in on and tracking off are accepted defaults; do not silently infer permission from an import or another brand | Subscriber and analytics implementation |
+| O-011 | FFA integration contract, assigned tier/allowances and complimentary-grant lifecycle | Customer workflows with an operator-issued complimentary grant; no Stripe/card dependency or exemption from sending controls | FFA integration implementation |
+| O-012 | Initial budget, expected customers/audience volume, service targets, AI support provider and escalation policy | Email support with AI replies is accepted. Cost delivery, unlimited-seat identity usage and engine resources before setting prices; propose human escalation for sensitive or uncertain support | Capacity acceptance and support implementation |
 | O-013 | Exact initial role/capability matrix and approval policy | Owner, editor, analyst and separate platform operator; send permission explicitly granted | Authorization implementation |
 
 The owner can resolve these incrementally. Missing decisions must be exposed before dependent implementation starts; they are not defaults that an agent may silently fill during deployment.
@@ -57,3 +72,5 @@ The owner can resolve these incrementally. Missing decisions must be exposed bef
 | Date | Change |
 | --- | --- |
 | 2026-11-06 | Established the product name, public-repository scope and phase 1 boundary; recorded open signup, included delivery and AGPLv3 choices; created the first draft requirements and review gates. |
+| 2026-11-06 | Draft 0.2 records the owner's market, tier limits, pricing direction, trial, login, privacy, retention, US/business, support, complimentary FFA and Render/core-stack decisions. Keeps unresolved numeric limits and detailed policy gates explicit. No implementation authorized. |
+| 2026-11-06 | Owner confirmed Tier 2 at 5 campaigns, subscription-wide shared allowances, Tier 2 at 3 companies/3 brands and Tier 3 at 5 companies/5 brands. |

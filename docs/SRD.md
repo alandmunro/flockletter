@@ -1,10 +1,10 @@
 # Flockletter software requirements
 
-Version 0.1. Draft for product review. Updated November 6, 2026.
+Version 0.2. Draft for product review. Updated November 6, 2026.
 
-Flockletter is an open-source mailing SaaS for businesses that want to build permission-based audiences and send newsletters and announcements. The hosted service includes delivery and subscription management. Frosty Flamingo Apparel is the first intended customer; the product must operate independently for other businesses and for self-hosters.
+Flockletter is an open-source mailing SaaS for small retailers and general small businesses that want to build permission-based audiences and send newsletters and announcements. Large enterprises are outside its target market. The hosted service includes delivery and subscription management. Frosty Flamingo Apparel is the first intended customer, with complimentary service; the product must operate independently for other businesses and for self-hosters.
 
-The owner has approved the product identity, public repository, open self-service signup, included hosted delivery and AGPLv3. See [accepted decisions](DECISIONS.md). Requirements marked SHALL describe the proposed release-one contract; they are not a statement of existing functionality or authorization to implement it. Phase 1 permits documentation only. The owner must authorize implementation separately.
+The owner has selected open self-service signup, included delivery, three tiers, a 14-day card-required trial, Clerk with Google and Apple sign-in, Listmonk, Stripe, Render hosting and AGPLv3. Additional accepted policies and unresolved details are recorded in [decisions](DECISIONS.md). Requirements marked SHALL describe the proposed release-one contract; they are not a statement of existing functionality or authorization to implement it. Phase 1 permits documentation only. The owner must authorize implementation separately.
 
 ## Product outcomes
 
@@ -18,18 +18,21 @@ Success requires both the ordinary flow and failure handling: a payment redirect
 
 | Term | Meaning |
 | --- | --- |
-| Workspace | One business customer's isolated account, also called a tenant. |
-| Workspace owner | An authenticated member authorized to administer that business, its members and billing. |
+| Workspace | A customer's isolated account, also called a tenant. One subscription or complimentary entitlement covers its permitted companies and brands with shared allowances. |
+| Company | A business entity managed within an account; company count and brand count are distinct allowances. |
+| Brand | A named sending identity with its own sender, audience purpose, consent and assets. A company may own more than one brand; exact membership rules are O-013. |
+| Workspace owner | An authenticated member authorized to administer the account, its members and billing. |
 | Editor or analyst | Proposed member roles for campaign work or reporting; exact capabilities are O-013. |
 | Platform operator | A separately authorized Flockletter operator responsible for service operation and exceptional support. |
 | Subscriber | A recipient with recorded mailing preferences and consent; not a SaaS login or paid subscription. |
-| Hosted subscription | The business's recurring service plan, independent of subscriber consent. |
-| Mailing engine | The component preparing and dispatching campaigns; Listmonk is the proposed initial implementation. |
+| Hosted subscription | The customer's recurring paid service plan, independent of subscriber consent. A recorded complimentary entitlement is a separate source of service access. |
+| Campaign | A reviewed newsletter or announcement sent or scheduled to a defined audience. Campaign allowance and individual recipient-message allowance are separate units. |
+| Mailing engine | The component preparing and dispatching campaigns; Listmonk is selected, subject to adapter validation. |
 | Delivery provider | The external service accepting outbound mail and returning delivery, bounce and complaint facts. |
 
 ## Release scope
 
-Release one proposes public product/pricing pages; account signup and login; customer and platform administration; three fixed hosted subscription tiers; verified senders; subscriber import/export and forms; lists, basic segments, templates and media; previews, test sends, immediate and scheduled broadcasts; delivery reporting; and equivalent API/MCP operations. Account provisioning and included delivery must work for a new customer as well as FFA.
+Release one is an MVP. It proposes public product/pricing pages; account signup and login; customer and platform administration; three hosted tiers; verified senders; subscriber import/export and confirmation forms; lists, basic segments, templates and media; previews, test sends, immediate and scheduled broadcasts; basic delivery reporting; email support with AI replies; and equivalent API/MCP operations. Account provisioning and included delivery must work for a new paying customer as well as complimentary FFA.
 
 The following are deferred: discussion lists and inbound mailboxes; running a general-purpose public SMTP relay; SMS or push; branching customer journeys; abandoned-cart automation; AI-generated campaigns; purchased audience acquisition; agency resale; bespoke enterprise contracts; and automatic usage-overage billing. A feature offered by an upstream engine is not automatically part of Flockletter's public product.
 
@@ -42,6 +45,8 @@ The following are deferred: discussion lists and inbound mailboxes; running a ge
 **FL-PROD-003 — Public and portable source.** Original application, administration, API, MCP, billing and operational code SHALL be published under AGPLv3 with necessary build and deployment instructions. A self-hosted mode SHALL work with user-supplied infrastructure and delivery configuration without a Flockletter subscription. Private keys and customer data SHALL NOT be included.
 
 **FL-PROD-004 — Commercial clarity.** Public pricing and onboarding SHALL explain included delivery, relevant limits, billing period, cancellation terms and sending prerequisites. Unimplemented features, guaranteed inbox placement and unmeasured service levels SHALL NOT be advertised as available.
+
+The pricing objective is inexpensive service below major competitors and most smaller competitors for comparable use. This is an owner objective, not a verified price comparison. Set prices only after comparing equivalent allowances and the cost of included delivery, Render, identity, support and billing.
 
 ## Customer journeys and administration
 
@@ -57,7 +62,7 @@ The following are deferred: discussion lists and inbound mailboxes; running a ge
 
 ## Identity and workspace isolation
 
-**FL-ID-001 — Verified identity.** Use a reviewed authentication implementation with verified account ownership, recovery, session revocation and secure session handling. Customer and platform-operator authority SHALL be distinguishable and enforced on the server. Platform operator MFA is the proposed minimum. Authentication selection is O-003.
+**FL-ID-001 — Verified identity.** Hosted authentication SHALL use Clerk with Google and Apple sign-in, verified account ownership, recovery, session revocation and secure session handling. Use Flockletter-owned configuration rather than another application's identities or credentials. Customer and platform-operator authority SHALL be distinguishable and enforced on the server. Platform operator MFA is the proposed minimum. Production OAuth setup, account linking, recovery and customer MFA are O-003; social login alone grants no workspace or sending authority.
 
 **FL-ID-002 — Server-derived workspace.** Resolve workspace access from authenticated membership or a valid delegated grant. A workspace ID supplied in a URL, body, header, upload or job SHALL never be sufficient authority. Enforce the boundary on every record lookup, action, export, asset and provider reference.
 
@@ -69,9 +74,9 @@ The following are deferred: discussion lists and inbound mailboxes; running a ge
 
 ## Hosted plans and billing
 
-**FL-BIL-001 — One plan catalogue.** Three hosted tiers are the proposed baseline. Prices, currencies, allowances, enabled features and effective versions SHALL come from one server-owned catalogue used by UI, API, MCP and workers. Exact values and names require O-001; no allowance is unlimited by omission.
+**FL-BIL-001 — One plan catalogue.** The three hosted tiers SHALL use one server-owned catalogue for prices, currencies, allowances, enabled features and effective versions, shared by UI, API, MCP and workers. The tier table below distinguishes accepted values from open ones. Tier 3 users are explicitly unlimited; other missing values SHALL NOT become unlimited by omission. Changing a plan SHALL not reset already consumed usage.
 
-**FL-BIL-002 — Provider-held card details.** Use Stripe Billing with hosted Checkout and a customer billing portal as the proposed integration. Flockletter SHALL not collect or store raw card numbers or security codes. Store provider identifiers scoped to the Flockletter account and environment, not credentials or cross-application customer lookups.
+**FL-BIL-002 — Provider-held card details.** Stripe is selected for ordinary hosted subscriptions; Billing, hosted Checkout and a customer billing portal are the proposed integration. Flockletter SHALL not collect or store raw card numbers or security codes. Store provider identifiers scoped to the Flockletter account and environment, not credentials or cross-application customer lookups. Complimentary accounts use FL-BIL-008.
 
 **FL-BIL-003 — Verified payment lifecycle.** Signed, account/environment-checked provider events SHALL establish payment and subscription facts through a durable, deduplicated inbox. Handle renewals, failures, plan changes, cancellations and applicable refund/dispute/fraud events. Reconcile delayed, duplicate, out-of-order and unknown outcomes. A success-page visit SHALL never grant paid access. See [Stripe subscription events](https://docs.stripe.com/billing/subscriptions/webhooks).
 
@@ -81,9 +86,31 @@ The following are deferred: discussion lists and inbound mailboxes; running a ge
 
 **FL-BIL-006 — Paid-launch prerequisites.** Before accepting public paid subscriptions, approve the business identity, supported markets, terms and applicable tax registrations/configuration. If Stripe Tax is used, verify registrations and tax behavior rather than assuming a switch establishes collection. Keep Flockletter's setup separate from existing merchant configurations.
 
+The selected launch market is US customers and the intended operator is Frosty Flamingo Software, LLC. Track the owner's Colorado DBA filing as pending before launch; do not represent Flockletter as a registered trade name yet. US-only sales do not decide subscriber geography or provider data residency. O-008/O-009 cover those definitions and the remaining legal, privacy and tax work.
+
+**FL-BIL-007 — Card-required trial.** Ordinary hosted signup SHALL require a successfully established provider-held payment method before trial activation. The trial lasts 14 days, with the charge date, selected recurring price and cancellation path disclosed before acceptance. Proposed behavior: cancel before trial end to avoid the first charge, retain trial access until its end, and enter the ordinary failed-payment process if the first charge fails. A partial signup may resume onboarding but SHALL not obtain sending access. Trial campaign/recipient caps and their transition to paid allowances require O-006; the trial is not unlimited. FFA's explicit complimentary grant is the exception.
+
+**FL-BIL-008 — Complimentary customer entitlement.** Support FFA as a customer with a recorded 100% complimentary entitlement and no Stripe customer, subscription, Checkout or card requirement for that entitlement. An authorized platform operator SHALL record the workspace, assigned tier/allowances, reason, effective date and grant/revocation history. Customer input, email domain or a claimed FFA name SHALL never activate the exception. UI, API, MCP and workers SHALL use the same entitlement checks as paid accounts; consent, sender verification, quotas and abuse holds still apply. Display complimentary status without inventing a paid invoice or payment success. FFA's tier and grant lifecycle are O-011.
+
+### Proposed billing behavior
+
+The owner requested policies similar to the existing SaaS. The following is the explicit Flockletter adaptation for review under O-006. Its money rules are independent of the complimentary account path.
+
+| Event | Proposed behavior |
+| --- | --- |
+| Ordinary trial | Card required during signup; 14 days free; first recurring payment due when the trial ends, with no charge after timely trial cancellation. |
+| Upgrade | Apply higher limits after confirmed billing eligibility; prorate the price difference immediately. Usage already consumed remains counted. |
+| Downgrade | Take effect at renewal. Check users, companies, brands and contact limits before scheduling and again at the effective date; present a remediation path without silently deleting data or members. |
+| Customer cancellation | Keep paid access through the paid period, or trial access through trial end. Stop future renewals and show the effective service-end date. |
+| Failed payment | Start a visible past-due state at the first failure; suspend campaign submissions and other paid mutations on day 6; close ordinary workspace access on day 30. Repeated failures do not restart the clock. Trial abuse holds may stop sends sooner. |
+| Recovery | Successful payment before closure restores eligible access; after closure, use an authorized support recovery process before the purge deadline. A payment never clears a separate abuse or sender hold. |
+| Essential access | Maintain public unsubscribe and minimal suppression even during suspension/closure. Provide the authorized customer a documented billing, export and deletion route during the retention window. |
+| Retention | Purge canceled-account data after 90 days; proposed clock starts at effective service end. The nonpayment clock and backup/record exceptions must be finalized under O-009 before implementation. |
+| Still open | Refund rules, annual billing/discount, trial send limits, allowance reset behavior and exact sending eligibility while past due. No existing product's prices, overage model or discount program transfer automatically. |
+
 ## Usage and cost control
 
-**FL-USG-001 — Explicit units.** Define each allowance in customer-facing terms. Proposed send unit: one logical recipient-message accepted by the delivery provider, including later bounces, counted once. A recipient suppressed before submission or a rejected validation attempt does not consume that unit. Test messages sent to real recipients do; local captured mail does not. Contact, seat, domain and period definitions remain O-001.
+**FL-USG-001 — Explicit units.** Define campaigns per month, recipients per campaign, stored contacts, total recipient-messages per month, users, companies, brands and sender domains separately. Campaign and recipient allowances SHALL be shared across all companies and brands on the subscription. Recipient and total-delivery limits SHALL be finite in every tier; campaign counts alone do not bound costs or abuse. Proposed send unit: one logical recipient-message accepted by the delivery provider, including later bounces, counted once. Suppression before submission or rejected validation does not consume that unit. Real test messages do; local captured mail does not. Exact recipient numbers, contact/seat/domain definitions and period boundaries remain O-001.
 
 **FL-USG-002 — Atomic reservation.** Reserve required allowance before accepting send work, with concurrency protection across UI, API and MCP. Settle reservations from observed outcomes, retaining unresolved reservations until reconciliation. Retrying a command or provider event SHALL not reset usage, charge it twice or bypass a cap.
 
@@ -91,17 +118,21 @@ The following are deferred: discussion lists and inbound mailboxes; running a ge
 
 **FL-USG-004 — Platform exposure.** Bound aggregate provisioning, delivery, media and compute spending separately from per-customer entitlements. Rate-limit signup, imports and sends; apply fair work scheduling so one customer cannot monopolize the shared service. Budget exhaustion or provider throttling SHALL produce a durable, visible state.
 
+**FL-USG-005 — Campaign accounting.** Reserve a campaign slot for the intended sending period when accepting scheduled or immediate work. Proposed accounting: consume it at the first accepted recipient submission, release it if canceled before any submission, and keep an unresolved reservation until its outcome is reconciled. A retry/resume of the same campaign consumes no new slot; a deliberate resend or copied launch consumes another. A draft/preview consumes no slot. Test sends SHALL have separate approved recipient/rate/volume bounds so they cannot act as unmetered campaigns. O-001/O-006 must settle monthly anchors, trial transition, future-period reservations and these counting rules before implementation.
+
+**FL-USG-006 — Company brand and member limits.** Enforce the accepted tier allowances on creation, invitations, activation and plan changes. Count members consistently across companies without silently granting every member access to every company or brand. Preserve sender, audience, consent and reporting boundaries; one brand's contacts do not establish permission for another brand. Tier 3 SHALL have no plan seat cap or per-seat charge, while account verification and protective rate controls still apply. Unlimited users does not mean unlimited mail, brands or provisioning. Exact seat counting and role scopes remain O-001/O-013.
+
 ## Audiences and consent
 
 **FL-AUD-001 — Subscriber lifecycle.** Support scoped lists, subscriber attributes and basic segments. Keep subscription, unconfirmed, unsubscribed, hard-bounce and complaint states distinct. Normalize and deduplicate addresses under a documented policy; do not merge unrelated mailboxes using guessed provider-specific alias rules.
 
-**FL-AUD-002 — Evidence and forms.** Record consent source, time, purpose and relevant confirmation/version evidence. Provide signup and preference forms with abuse controls. A purchase, uploaded file or another brand's contact record alone SHALL not be treated as consent. Double opt-in and tracking defaults require O-010.
+**FL-AUD-002 — Evidence and forms.** Record consent source, time, purpose and relevant confirmation/version evidence. Subscriber signup forms SHALL default to double opt-in: confirmation is required before a new signup becomes send-eligible. Open and click tracking SHALL default off until an authorized customer enables it under the approved policy. Provide preference forms with abuse controls. A purchase, uploaded file or another brand's contact record alone SHALL not be treated as consent. Import confirmation, consent wording and permissions to change privacy settings remain O-010.
 
 **FL-AUD-003 — Imports and exports.** Imports SHALL support a preflight summary, field mapping, size/row limits, duplicate/invalid-row reporting and an explicit permission-to-contact declaration. Process large work asynchronously and scope exports to authorized members. Retries SHALL not duplicate subscribers; reimport SHALL not erase suppression or consent history.
 
 **FL-AUD-004 — Effective unsubscribe.** Provide a visible unsubscribe option and supported one-click unsubscribe handling for marketing mail. Persist the suppression before confirming success; recheck it before every future submission. Public unsubscribe endpoints SHALL be scoped, tamper-resistant and independent of paid access. Marketing content SHALL include the sender identity and disclosures required by the approved launch policy. See [mail sender guidance](https://support.google.com/mail/answer/81126).
 
-**FL-AUD-005 — Data lifecycle.** Define export, correction, account deletion and retention behavior for subscriber, campaign, billing, audit and suppression records. Retain only what the approved policy requires, explain exceptions, and avoid re-enabling delivery after deleting unnecessary personal details. Data must not cross between customers or brands without valid authority and consent.
+**FL-AUD-005 — Data lifecycle.** Retain canceled account data for 90 days, then purge it under a documented lifecycle covering the application database, engine, media, exports, logs and copies. Proposed clock: effective service end, not the date a future cancellation was requested. Define export, correction and earlier owner-requested deletion. O-009 must explicitly resolve minimal billing/suppression records, any legally necessary holds and backup expiry before making deletion promises; retained exceptions cannot contain an unnecessary recoverable mailing list. Restoring an older backup SHALL reapply deletion/suppression records before enabling access or sends. Data must not cross customers or brands without valid authority and consent.
 
 ## Campaign creation and delivery
 
@@ -127,6 +158,8 @@ The following are deferred: discussion lists and inbound mailboxes; running a ge
 
 **FL-DEL-003 — Trust and reputation.** Open signup SHALL include verification, initial sending limits, rate controls and risk-based suspension/review. A payment alone SHALL not authorize arbitrary bulk mail. Define acceptable use and complaint/bounce responses before launch. Apply holds to affected workspaces and prevent reputation spillover as far as the selected provider's architecture supports.
 
+The detailed trust-policy discussion is deferred at the owner's request. It does affect delivery design: O-007 must be resolved before sending implementation. This does not block drafting the SRD, and recipient caps do not replace consent, suppression or complaint handling.
+
 **FL-DEL-004 — Authenticated feedback.** Verify delivery webhooks using provider-supported authentication, deduplicate them and resolve the owning workspace from trusted mappings. Missing authentication requires authoritative reconciliation before changing eligibility. Complaints and hard bounces SHALL suppress future applicable mail; repeated or out-of-order feedback SHALL not undo suppression.
 
 **FL-DEL-005 — Transport-independent enforcement.** All actual sends SHALL pass through the approved usage, suppression and provider controls, including engine retries and direct API paths. Before implementation, validate where Listmonk can enforce these checks; treat missing adapter/hooks as a design gap requiring review. Do not expose an unguarded engine send endpoint behind a billing-aware dashboard.
@@ -139,13 +172,19 @@ The following are deferred: discussion lists and inbound mailboxes; running a ge
 
 **FL-API-003 — Practical campaign workflow.** Provide inspect/preflight, draft, audience selection, media/template management, preview/test, send/schedule and status/report operations. Return blocking gaps together before expensive preparation. Support batch operations with per-item results and safe retry behavior; do not make customers repeat successful items after partial failures.
 
-**FL-API-004 — FFA integration.** FFA SHALL be an ordinary isolated customer workspace. Its integration may create a campaign draft from approved published product data and authorized photo references. It SHALL NOT alter product photography, catalog content, prices, availability, checkout, payments or manufacturing settings. Publishing a product SHALL not automatically send a marketing campaign.
+**FL-API-004 — FFA integration.** FFA SHALL use the ordinary isolated customer workspace and sending controls, with the complimentary billing exception in FL-BIL-008. Its integration may create a campaign draft from approved published product data and authorized photo references. It SHALL NOT alter product photography, catalog content, prices, availability, checkout, payments or manufacturing settings. Publishing a product SHALL not automatically send a marketing campaign.
 
 **FL-API-005 — Independent permissions and consent.** FFA integration SHALL use an explicitly scoped Flockletter grant; an existing commerce/catalog grant is not newsletter-send authority. Transfer only authorized data and consent changes. Define one authoritative preference/suppression path and reconciliation behavior before integration, without cross-application database joins.
 
+## Email support and AI replies
+
+**FL-SUP-001 — Email support.** Provide email support with AI-assisted reply automation. Keep a customer-visible conversation and handoff path; phone and live-chat support are outside the MVP. Proposed automation handles acknowledgments and answers from approved product guidance, identifies itself as automated and escalates uncertain answers, billing disputes, security/privacy matters and account recovery to a human. Support hours, response targets, AI provider and which replies may send automatically remain O-012.
+
+**FL-SUP-002 — Support authority and data.** Support messages, attachments and AI output SHALL be treated as untrusted content. Receiving an email does not establish account authority. Automated replies SHALL not issue refunds, change billing/entitlements, remove abuse holds, change identities, export/delete customer data or launch campaigns. Use only necessary, authorized context; do not expose other customers' records or pass mailing lists and secrets to the AI provider. Record automated replies and human escalation under a defined retention policy. Before enabling the provider, review data use, retention and disclosure; repeated auto-replies and mail loops SHALL be bounded.
+
 ## Data hosting and service operation
 
-The proposed topology is a standalone SaaS portal/API with durable control jobs, a protected mailing engine per customer, a delivery provider and a logical Flockletter application database. Existing PostgreSQL hardware may host these databases. The FFA admin entry point uses the SaaS integration; other businesses use the independent Flockletter dashboard. Exact process layout and authentication provider remain open.
+Render is the selected host for Flockletter application, worker and engine services. The proposed topology is a standalone portal/API with durable control jobs, a protected Listmonk engine per customer, a delivery provider and a logical Flockletter application database. Existing PostgreSQL capacity may host these databases if isolation and load checks permit it. The proposed FFA admin entry point uses the SaaS integration; other businesses use the independent dashboard. Exact process layout, engine isolation and region remain open. Stripe and Clerk are selected external services; delivery and support-AI providers remain undecided.
 
 **FL-OPS-001 — Shared infrastructure boundaries.** Use dedicated logical databases and restricted runtime/migration identities. Inspect effective privileges, including inherited grants, rather than relying on role names. No Flockletter runtime SHALL access another application's business records or own its schema. Existing shared roles/settings SHALL not be changed without the applicable separate authorization.
 
@@ -161,23 +200,27 @@ The proposed topology is a standalone SaaS portal/API with durable control jobs,
 
 **FL-OPS-007 — Public delivery readiness.** Before enabling paid public operation, demonstrate account isolation, billing lifecycle, provider/DNS setup, suppression, capacity, recovery and operator response using the planned acceptance cases. Document remaining gaps honestly. A passing mock is not proof of live provider behavior or deliverability.
 
-## Three proposed hosted tiers
+## Hosted tier limits
 
-All tiers include the core consent, suppression, secure access, billing visibility and permitted export controls. Hosted limits may differ while the source for all tiers remains open.
+The owner has accepted the limits below. Campaign and recipient allowances are shared across the entire subscription, including all its companies and brands; they are not multiplied by each brand. Starter, Growth and Pro remain working names. All tiers include core consent, suppression, secure access, billing visibility, permitted exports and email support; source for all tiers remains open.
 
-| Working name | Proposed emphasis | Values still required |
-| --- | --- | --- |
-| Starter | One business brand; essential newsletters and reports | Price, contacts, sends, seats, sender domains and support scope |
-| Growth | More volume and team collaboration | Price, allowances, approval workflow scope and reporting differences |
-| Pro | Larger allowances and expanded operational support | Price, allowances, multi-brand boundaries and support commitments |
+| Allowance | Tier 1 | Tier 2 | Tier 3 |
+| --- | --- | --- | --- |
+| Campaigns per month | 2 | 5 | 20 |
+| Companies per account | 1 | Up to 3 | Up to 5 |
+| Brands total per account | 1 | Up to 3 | Up to 5 |
+| Users | 1 | Up to 3 | Unlimited |
+| Recipients per campaign | Finite cap to decide | Finite cap to decide | Finite cap to decide |
+| Stored contacts and recipient-messages per month | To decide | To decide | To decide |
+| Price | To decide | To decide | To decide |
 
-Price each tier against delivery at full included usage, engine/provisioning compute, database/storage, authentication, billing fees, abuse reserves and support. No advertised price or numeric capacity is approved in draft 0.1. See O-001 through O-013 in [decisions](DECISIONS.md).
+Price each tier against delivery at full included usage, engine/provisioning compute, database/storage, authentication including unlimited-seat costs, billing fees, abuse reserves and support. No dollar price or recipient capacity has been selected. Monthly reset/rollover rules, sender domains, trial quotas and feature differences are also open. See O-001 through O-013 in [decisions](DECISIONS.md).
 
 ## Records and authority
 
-Conceptual records include workspace, membership, delegated grant, sender domain, subscriber/consent, list/segment, template/media, campaign/version, recipient dispatch, subscription, usage reservation/ledger, provider mapping, job/inbox and audit. This is a requirements inventory, not a database schema or migration.
+Conceptual records include workspace, company, brand, membership, delegated grant, sender domain, subscriber/consent, list/segment, template/media, campaign/version, recipient dispatch, subscription/complimentary entitlement, usage reservation/ledger, provider mapping, support conversation, job/inbox and audit. This is a requirements inventory, not a database schema or migration.
 
-Flockletter's application database owns access, limits, intended operations and audit. Stripe owns payment/subscription facts; the delivery provider owns its acceptance and delivery facts. The engine owns its campaign execution facts behind the adapter. Document the field-level ownership and synchronization contract before implementation so two systems cannot independently overwrite consent or usage.
+Flockletter's application database owns access, limits, complimentary grants, intended operations and audit. Stripe owns actual payment/subscription facts; a complimentary grant is not a Stripe fact. The delivery provider owns acceptance and delivery facts. The engine owns its campaign execution facts behind the adapter. Document the field-level ownership and synchronization contract before implementation so two systems cannot independently overwrite consent or usage.
 
 ## Verification and phase gates
 
