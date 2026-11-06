@@ -2,6 +2,8 @@
 
 Use a separate Flockletter web service in the existing Render workspace, Oregon region. The first setup preview uses the Free plan and the implementation branch with automatic deployment off. It has no database or provider credentials until separately configured. No FFA or Cadence services need to be resumed for this independent foundation, and no existing settings or photos are changed.
 
+The setup page is deployed at [flockletter-staging.onrender.com](https://flockletter-staging.onrender.com). Its [Render service](https://dashboard.render.com/web/srv-dbn5lb6gekts738v63ag) is the destination for Flockletter-only configuration. See the verification record for the exact application revision and observed gates.
+
 ## Service configuration
 
 Build: `npm ci --include=dev && npm run build`.

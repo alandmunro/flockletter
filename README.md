@@ -14,17 +14,20 @@ Selected technologies are Listmonk, Stripe, Clerk for all hosted logins and work
 
 The planned hosted service is paid. Self-hosting must not require the owner's private systems or a Flockletter subscription. All application code, including administration, billing and MCP, is intended to remain open source; credentials and customer data stay private.
 
-## Run the foundation locally
+## Working foundation
 
-Use Node 24 and `npm ci`. In one terminal, run `npm run db:local` and leave it running. In another terminal:
+The application uses TypeScript, React/Vite, Express and PostgreSQL. You can create a workspace and first brand, save campaign drafts, batch-upload original images, review safe HTML/plain-text previews, inspect setup gaps and manage scoped API/MCP connections. The supplied logo is unchanged. Sending, billing and audience features remain inactive.
 
-```sh
-cp .local/database.env .env
-npm run build
-npm run dev
-```
+## Local setup
 
-Open [the local application](http://127.0.0.1:4310). The database is a real disposable PostgreSQL instance; stopping its process removes its test data. The synthetic owner identity is restricted to loopback development and cannot run in staging. `npm run check` runs lint, type checks, isolated tests and the production build.
+Use Node 24 and a disposable loopback PostgreSQL instance:
+
+1. Run `npm ci`.
+2. In terminal 1, run `npm run db:local` and leave it running.
+3. In terminal 2, copy `.local/database.env` to `.env`, run `npm run build`, then run `npm run dev`.
+4. Open [Flockletter locally](http://127.0.0.1:4310).
+
+Stopping the database process normally removes its disposable test data. Local identity is synthetic and cannot run in staging. Run `npm run check` for lint, type checks, tests and the production build. Tests use their own temporary PostgreSQL instance and fictional data; they do not depend on the development database.
 
 Read the [foundation scope](docs/implementation/FOUNDATION.md), [API/MCP workflow](docs/implementation/API_MCP.md), [staging setup](docs/implementation/STAGING.md) and [verification evidence](docs/implementation/VERIFICATION.md). Never put service keys or customer data in this public repository.
 
