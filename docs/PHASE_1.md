@@ -1,6 +1,6 @@
 # Flockletter phase 1 product review
 
-Phase 1 turns the product idea into a reviewable software requirements document. It includes this public repository and its planning material. It does not include application code, test scaffolds, infrastructure provisioning, live provider setup or deployment.
+Phase 1 turns the product idea into a reviewable software requirements document. It includes this public repository and its planning material. It additionally includes owner-authorized nonproduction screen mockups through Sites, published design artifacts and user stories. It does not include production application code, test scaffolds, Render provisioning, live provider setup or operational deployment.
 
 ## Product definition
 
@@ -14,16 +14,16 @@ The value of the hosted service is managed operation, delivery integration, conv
 
 The name is Flockletter, the repository is public, future signup is open and self-service, hosted plans include delivery, and the license is AGPLv3. The target market is small US businesses, with inexpensive pricing and a 14-day card-required trial. FFA is the first intended customer and receives complimentary access without Stripe or card payments. The intended operator is Frosty Flamingo Software, LLC; its planned Colorado DBA filing remains pending.
 
-The three tiers allow 2, 5 and 20 campaigns per month, with campaign and recipient allowances pooled across each subscription. Company/brand totals are 1/1, 3/3 and 5/5; user limits are 1, 3 and unlimited. Recipient caps and dollar prices remain open. Clerk with Google and Apple sign-in, Listmonk, Stripe and Render are selected. Double opt-in defaults on, tracking defaults off, canceled-account data is retained 90 days then purged, and support is email-only with AI replies.
+The three tiers allow 2, 5 and 20 campaigns per month, with campaign and recipient allowances pooled across each subscription. Company/brand totals are 1/1, 3/3 and 5/5; user limits are 1, 3 and unlimited. Monthly prices are $15/$25/$39, active contacts and maximum recipients per campaign are 2,500/5,000/10,000, and monthly recipient emails are 5,000/25,000/100,000. The trial is limited to 250 contacts and 500 total emails. Clerk owns all hosted login and workspace membership, with Google and Apple sign-in. Listmonk, Stripe and Render are also selected. Double opt-in defaults on, tracking defaults off, canceled-account data is retained 90 days then purged, and support is email-only with AI replies.
 
-The product remains in documentation-only phase 1. These choices are D-001 through D-023 in [decisions](DECISIONS.md). Engine isolation, billing details, data-lifecycle exceptions and support automation controls remain proposals; provider selection does not authorize infrastructure changes.
+The product remains in documentation and design-only phase 1. These choices are D-001 through D-027 in [decisions](DECISIONS.md). Engine isolation, billing details, data-lifecycle exceptions and support automation controls remain proposals; provider selection does not authorize infrastructure changes.
 
 ## Discussion order
 
-1. **Cost the remaining plan limits.** Propose recipients per campaign, stored contacts, monthly recipient-messages and dollar prices together. Establish the initial monthly budget and expected customer count. Include unlimited-user identity costs and shared subscription accounting; essential safety controls belong in every tier.
+1. **Validate the accepted cost model.** Prices and recipient caps are accepted; establish measured capacity, storage limits and the launch budget using the $250 shared-cost assumption. Include Clerk Enhanced B2B and shared subscription accounting; essential safety controls belong in every tier.
 2. **Choose delivery and validate the engine boundary.** Compare provider terms, production approval, reputation isolation, feedback, rate limits and cost at full allowance. Review Listmonk enforcement and per-customer provisioning costs. Do not assume existing accounts or hosting capacity cover a public SaaS.
 3. **Complete the account and Render design.** Define company/brand access, Clerk configuration, independent self-hosting and the FFA integration. Validate database headroom and component reuse rights.
-4. **Finish the operating details.** Resolve trial sending caps, exact billing behavior, refunds, retention clocks/copies, pending legal/tax work and AI support escalation. The owner has deferred the detailed abuse-policy conversation; retain it as a gate before sending implementation, without blocking SRD drafting.
+4. **Finish the operating details.** Resolve trial campaign/seat/company/brand limits and paid transition, exact billing behavior, refunds, retention clocks/copies, pending legal/tax work and AI support escalation. The owner has deferred the detailed abuse-policy conversation; retain it as a gate before sending implementation, without blocking SRD drafting.
 5. **Approve a bounded implementation plan.** Freeze the first workstream's contracts, list its required decisions and tests, and obtain explicit implementation authorization. A public draft SRD is not that authorization.
 
 ## Phase 1 deliverables
@@ -35,8 +35,9 @@ The product remains in documentation-only phase 1. These choices are D-001 throu
 | Numbered product and operational requirements | Drafted for review |
 | Architecture and reuse choices | Proposals with identified gaps; no implementation reuse approved |
 | Acceptance cases and traceability | Planned cases only; no executable tests or verification claims |
-| Tier values and providers | Campaign/company/brand/user limits and Listmonk/Stripe/Clerk/Render accepted; prices, recipient caps and remaining providers open |
-| Operating budget and detailed policies | Open decisions; privacy defaults and retention duration are accepted |
+| Tier values and providers | Prices, recipient/campaign/company/brand/user and trial contact/email caps accepted; core providers accepted; delivery provider and counting details open |
+| Operating budget and detailed policies | Cost assumptions documented, including Clerk memberships; spending authorization, exact capacity and detailed policies remain open |
+| User interface review | Sites concept, complete MVP screen catalogue and linked user stories; design review does not authorize implementation |
 | Final SRD approval and permission to build | Pending owner instruction |
 
 ## Documentation review criteria

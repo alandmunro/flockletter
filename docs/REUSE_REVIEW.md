@@ -1,6 +1,6 @@
 # Flockletter reuse review
 
-This is a phase 1 inventory of possible reuse. No source code has been imported into Flockletter, no component has passed a reuse acceptance review, and no existing application is being modified. The purpose is to preserve useful patterns while making the product independently maintainable and publishable.
+This is a phase 1 inventory of possible reuse. No production runtime code has been imported into Flockletter and no existing application is being modified. D-027 authorizes a bounded adaptation of Cadence visual styling for nonproduction UI mockups; that is documented in the design system. Production component reuse still requires the review below. The purpose is to preserve useful patterns while making the product independently maintainable and publishable.
 
 ## Candidate inventory
 

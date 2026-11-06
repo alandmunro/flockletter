@@ -19,3 +19,5 @@ Public references reviewed for the phase 1 proposal on November 6, 2026. Provide
 | [Google email sender guidelines](https://support.google.com/mail/answer/81126) | Sender authentication, transport, unsubscribe and reputation requirements relevant to delivery design. | Other recipients/providers have their own rules; correct configuration does not guarantee inbox placement. |
 
 Private application source is not reproduced or linked as a public dependency. Candidate patterns and the review needed before code reuse are described in [the reuse inventory](REUSE_REVIEW.md).
+
+Pricing evidence for the accepted catalogue and planning assumptions is recorded in [the cost model](COST_MODEL.md), including Render, SES, Clerk memberships, Stripe Billing/processing and dated paid-plan comparisons. Vendor rates are not spending authorization or live integration evidence. Cadence visual styling is adapted only for the owner-authorized prototype; its provenance and scope are described in [the design system](design/DESIGN_SYSTEM.md).

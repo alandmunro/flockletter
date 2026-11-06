@@ -2,7 +2,7 @@
 
 ## Current authorization
 
-Flockletter is in phase 1: product definition and software requirements. The owner has authorized a public repository and planning documents only. Do not add application code, executable infrastructure, migrations, deployment workflows, provider configuration, paid resources or live email sending until the owner explicitly authorizes implementation. Documentation review and revision may continue.
+Flockletter is in phase 1: product definition and software requirements. The owner has authorized a public repository, planning documents and nonproduction UI mockups using ChatGPT Sites and Cadence visual styling, with design artifacts and user stories published here. Static prototype HTML/CSS/JS and screenshots are allowed only under docs/design; they must use fictional data and simulated actions, with no live integrations. This is not permission to build the product. Do not add application code, executable infrastructure, migrations, deployment workflows, provider configuration, paid resources or live email sending until the owner explicitly authorizes implementation. Documentation review and revision may continue.
 
 Read [the SRD](docs/SRD.md), [decisions](docs/DECISIONS.md) and [phase 1 review](docs/PHASE_1.md) before work. Accepted owner decisions, proposed requirements and unresolved decisions are distinct. Do not silently promote a proposal to an accepted decision. Later explicit owner instructions take precedence; update the documents to reflect them.
 
