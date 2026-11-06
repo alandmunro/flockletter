@@ -10,7 +10,7 @@ Settled choices include a public repository, AGPLv3 licensing, open self-service
 
 The first release is a minimum viable product. The draft covers audiences, newsletters and announcements, previews and test sends, scheduling, basic reports, and consistent UI, API and MCP operations. Three tiers are approved at $15/$25/$39 monthly, with 2,500/5,000/10,000 active contacts and 5,000/25,000/100,000 recipient emails monthly. The 14-day trial allows 250 contacts and 500 emails. See the complete limits in the [SRD](docs/SRD.md).
 
-Selected technologies are Listmonk, Stripe, Clerk for all hosted logins and workspace memberships, including Google and Apple sign-in, and Render hosting. Engine isolation, the delivery provider, actual capacity and exact topology remain to be designed; planning costs include the Clerk membership add-on. Support will be by email with AI reply automation; the provider and operating rules are still under review.
+Selected technologies are Listmonk, Stripe, Clerk for all hosted logins and workspace memberships, including Google, Apple and Microsoft sign-in, plus email with a one-time verification code, and Render hosting. Engine isolation, the delivery provider, actual capacity and exact topology remain to be designed; planning costs include the Clerk membership add-on. Support will be by email with AI reply automation; the provider and operating rules are still under review.
 
 The planned hosted service is paid. Self-hosting must not require the owner's private systems or a Flockletter subscription. All application code, including administration, billing and MCP, is intended to remain open source; credentials and customer data stay private.
 
@@ -29,4 +29,4 @@ See [AGENTS.md](AGENTS.md) for contribution and agent instructions, including th
 
 ## License
 
-Original Flockletter material is licensed under the GNU Affero General Public License version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE). Third-party components retain their own licenses and attribution.
+Original Flockletter material is licensed under the GNU Affero General Public License version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE). Third-party components retain their own licenses and attribution. The owner-supplied [software logo](docs/design/prototype/assets/README.md) is separate brand artwork; its inclusion does not grant a general artwork reuse license or trademark rights.

@@ -1,8 +1,8 @@
 # Flockletter visual system
 
-Design review version 1 · November 6, 2026.
+Design review version 2 · November 6, 2026.
 
-The owner requested Cadence’s stylesheet as the visual reference. The current stylesheet and shared shell were inspected read-only. Flockletter adapts its visual tokens and typography, with newly authored prototype layouts and no imported Cadence runtime components, private data, credentials, brand images or operational code. The owner explicitly authorized this bounded visual reuse in D-027. Private source provenance is retained outside this public repository; the private application is not a public runtime dependency.
+The owner requested Cadence’s stylesheet as the visual reference. The current stylesheet and shared shell were inspected read-only. Flockletter adapts its visual tokens and typography, with newly authored prototype layouts and no imported Cadence runtime components, private data, credentials, brand images or operational code from Cadence. The owner explicitly authorized this bounded visual reuse in D-027. Private source provenance is retained outside this public repository; the private application is not a public runtime dependency.
 
 ## Visual vocabulary
 
@@ -20,6 +20,10 @@ The owner requested Cadence’s stylesheet as the visual reference. The current 
 | Depth | Restrained shadows tinted toward wine |
 
 Fonts are referenced from Google Fonts and fall back to system fonts. No font binary is copied into this repository; upstream font licenses remain applicable. All displayed stationery artwork is an original CSS illustration for the fictional sample brand. FFA product photographs and existing commerce settings are untouched.
+
+## Owner-supplied software logo
+
+D-029 authorizes the provided Frosty Flamingo Software logo in every mockup header, aligned to the upper right. The exact transparent PNG is displayed with its aspect ratio preserved, at a compact desktop size and smaller phone size. It is not redrawn, recolored or cropped. Account controls reflow below the branding on narrow screens. Subscriber views show it as software-provider branding while retaining the fictional sending brand and login-free forms. See [asset provenance](prototype/assets/README.md).
 
 ## Layout and navigation
 

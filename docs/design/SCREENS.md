@@ -1,6 +1,6 @@
 # Flockletter screen catalogue
 
-Design review version 1 · November 6, 2026. All screens use fictional sample data and simulated actions. Public screenshots and downloadable prototype source are available here; the hosted Sites review is owner-private. These are the identified release-one screen families, including provider handoffs and operation-specific dialogs, not a production application.
+Design review version 2 · November 6, 2026. All screens use fictional sample data and simulated actions. Public screenshots and downloadable prototype source are available here; the hosted Sites review is owner-private. These are the identified release-one screen families, including provider handoffs and operation-specific dialogs, not a production application.
 
 [Open the interactive review](https://flockletter-design-review.alandmunro.chatgpt.site/#dashboard) · [User stories](USER_STORIES.md) · [Walkthroughs](WALKTHROUGHS.md) · [Review guide](README.md)
 
@@ -65,6 +65,8 @@ Design review version 1 · November 6, 2026. All screens use fictional sample da
 
 | Capture | Purpose |
 | --- | --- |
+| [Signup on phone](screenshots/S03-signup-mobile.jpg) | Four approved sign-in options and the supplied logo at 390 px. |
+| [Sign-in on phone](screenshots/S04-signin-mobile.jpg) | Returning-member sign-in and the supplied logo at 390 px. |
 | [View S28-preflight-blocked.jpg](screenshots/S28-preflight-blocked.jpg) | All launch blockers visible together; no product send action. |
 | [View S30-send-progress-uncertain.jpg](screenshots/S30-send-progress-uncertain.jpg) | Unknown provider outcome retains a reservation and requires reconciliation. |
 | [View S46-unsubscribe-failed.jpg](screenshots/S46-unsubscribe-failed.jpg) | A failed suppression write does not show success. |

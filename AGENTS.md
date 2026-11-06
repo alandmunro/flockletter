@@ -12,7 +12,7 @@ Read [the SRD](docs/SRD.md), [decisions](docs/DECISIONS.md) and [phase 1 review]
 - Flockletter is an independent open-source mailing SaaS. Frosty Flamingo Apparel is its first intended customer.
 - Open self-service signup, included delivery in hosted plans and AGPLv3 are accepted decisions.
 - Original repository material is licensed under AGPL-3.0-only. Preserve third-party licenses and attribution. Review provenance and compatibility before importing code.
-- Keep credentials, customer data, production identifiers, private application source, machine-specific configuration and proprietary brand assets out of the public repository.
+- Keep credentials, customer data, production identifiers, private application source, machine-specific configuration and proprietary brand assets out of the public repository. D-029 explicitly permits the owner-supplied Frosty Flamingo Software logo in docs/design for the requested mockups; it does not permit other private brand assets.
 - Existing applications retain their data, identities, payment settings, photos and deployments. Shared hosting does not authorize cross-application access or changes.
 
 ## Local model delegation

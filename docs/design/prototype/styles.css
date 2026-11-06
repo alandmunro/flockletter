@@ -6,3 +6,79 @@
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 
 .btn[aria-disabled=true]{opacity:.45;cursor:not-allowed}
+
+/* Owner-supplied logo: display sizing only; original artwork is unchanged. */
+.software-logo {
+  display: block;
+  object-fit: contain;
+  width: 88px;
+  height: 64px;
+  flex-shrink: 0;
+}
+
+.subscriber-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 8px 34px;
+  background: white;
+  border-bottom: 1px solid var(--rule);
+}
+
+@media (max-width: 800px) {
+  .header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 16px;
+    height: auto;
+  }
+
+  .header > .brand {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .header > .software-logo {
+    grid-column: 2;
+    grid-row: 1;
+    width: 72px;
+    height: 52px;
+  }
+
+  .header > .header-right {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin-left: 0;
+    justify-content: flex-end;
+    width: 100%;
+  }
+
+  .header > .nav {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .subscriber-header {
+    padding: 8px 20px;
+  }
+
+  .subscriber-header .software-logo {
+    width: 72px;
+    height: 52px;
+  }
+}
+
+@media (max-width: 480px) {
+  .header > .software-logo,
+  .subscriber-header .software-logo {
+    width: 62px;
+    height: 45px;
+  }
+
+  .subscriber-header {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

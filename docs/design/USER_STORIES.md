@@ -1,6 +1,6 @@
 # Flockletter UI user stories
 
-Design review version 1 · Proposed UI behavior, not implementation test evidence. Each screen has a stable story and requirement mapping. Read [the eight end-to-end walkthroughs](WALKTHROUGHS.md) first for a customer-oriented tour.
+Design review version 2 · Proposed UI behavior, not implementation test evidence. Each screen has a stable story and requirement mapping. Read [the eight end-to-end walkthroughs](WALKTHROUGHS.md) first for a customer-oriented tour.
 
 The canonical requirements remain [the SRD](../SRD.md). A displayed example date, sample role, mock status or provider handoff does not approve an unresolved policy. All real external operations need later implementation and verification.
 
@@ -51,8 +51,8 @@ As a new customer, I want to create an account through Clerk, so I can proceed w
 
 **Walkthrough**
 
-1. Choose Google, Apple or the proposed email route.
-2. Verify account ownership.
+1. Choose Google, Apple, Microsoft or email with a one-time verification code.
+2. Complete the provider step or sample email-code verification.
 3. Continue to workspace setup.
 
 **Expected outcome:** An authenticated identity can begin onboarding; it does not yet authorize sending.
@@ -70,8 +70,8 @@ As a returning member, I want to sign in and return to an authorized workspace, 
 
 **Walkthrough**
 
-1. Choose a Clerk sign-in method.
-2. Complete verification if requested.
+1. Choose Google, Apple, Microsoft or email with a one-time verification code.
+2. Complete the provider step or sample email-code verification.
 3. Open the active workspace.
 
 **Expected outcome:** Clerk login and membership identify the workspaces the user may access.

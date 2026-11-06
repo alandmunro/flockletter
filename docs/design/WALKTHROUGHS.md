@@ -1,12 +1,12 @@
 # Eight ways through Flockletter
 
-Design review version 1 · November 6, 2026. [Open the Sites prototype](https://flockletter-design-review.alandmunro.chatgpt.site/#dashboard) · [Screen catalogue](SCREENS.md) · [Detailed user stories](USER_STORIES.md).
+Design review version 2 · November 6, 2026. [Open the Sites prototype](https://flockletter-design-review.alandmunro.chatgpt.site/#dashboard) · [Screen catalogue](SCREENS.md) · [Detailed user stories](USER_STORIES.md).
 
 Start with one journey at a time. Use the prototype’s **All screens** menu to jump to a referenced ID and **User story** for that screen’s rationale and recovery requirements. The flows below are proposed customer experiences for review, not instructions for an available live service.
 
 The signup journey uses the 14-day trial example (250 active contacts / 500 total recipient emails). Audience, campaign, team and billing journeys use a separate populated **paid Tier 2** example (5,000 contacts / 25,000 emails / 5 campaigns / 3 users). Moving between these screen fixtures does not upgrade a trial, change billing or import data. The preview is a linked set of screen states, not a persistent application simulator.
 
-Clerk owns every hosted login and workspace membership. Google and Apple are selected; the alternative email/recovery configuration is still proposed. Subscriber preferences and unsubscribe do not require a login. The role matrix, usage anchors, trial campaign/team limits, exact billing adaptation, retention exceptions and FFA’s assigned tier remain open decisions.
+Clerk owns every hosted login and workspace membership. Google, Apple, Microsoft and email with a one-time verification code are the accepted launch options. Customer MFA, account linking and recovery safeguards remain under review. Subscriber preferences and unsubscribe do not require a login. The role matrix, usage anchors, trial campaign/team limits, exact billing adaptation, retention exceptions and FFA’s assigned tier remain open decisions.
 
 > All walkthroughs are nonproduction design simulations using fictional Alpine Paper Co. / example.com data. Preview navigation is not a performed side effect; no live authentication, payments, emails, imports, or infrastructure occurs.
 
@@ -16,8 +16,8 @@ Clerk owns every hosted login and workspace membership. Google and Apple are sel
 
 1. **S01 Home** — press “Find your plan →”.
 2. **S02 Pricing** — compare tiers and press “Start a 14-day trial →” for Tier 2, $25/month.
-3. **S03 Signup** — choose “Continue with Google”, “Continue with Apple”, or enter avery@example.com and press “Continue →”.
-4. **S05 Verify-recover** — enter the displayed sample code in “Sample verification code”, then press “Verify & continue →”; use “Resend code” or “Show expired code”.
+3. **S03 Signup** — choose “Continue with Google”, “Continue with Apple” or “Continue with Microsoft”; these buttons simulate the completed provider handoff and proceed to workspace setup. To inspect the email route, enter the fictional avery@example.com address and press “Continue with email →”. No password is requested.
+4. **S05 Verify-recover (email route)** — enter 123456 in “Sample verification code”, then press “Verify & continue →”; an incorrect sample code stays on this screen. Use “Resend code” or “Show expired code” to inspect recovery examples. No email is sent and no real identity is verified.
 5. **S07 Workspace onboarding** — enter “Workspace name” and “Company name”, select location/time zone, check “My business is based in the United States.”, and press “Continue to trial →”.
 6. **S08 Trial checkout** — review 14 days, 250 contacts, and 500 emails; press “Change plan” or “Continue to Stripe preview →”.
 7. **S09 Provisioning** — review identity/billing/service statuses; press “View sample ready state →” or “Show provisioning failure”.
@@ -26,6 +26,8 @@ Clerk owns every hosted login and workspace membership. Google and Apple are sel
 
 **Outcome:** Simulated identity, trial summary, provisioning, and sender readiness are separated; no real account, card charge, or DNS verification occurs.  
 **Required recovery behavior (future product):** Expired code, abandoned checkout, or failed provisioning returns to the interrupted step with support; trial campaign cap remains undecided.
+
+Returning members use **S04 Sign-in**, with the same four methods. The email-code route returns to the sample dashboard after the sample code is accepted; signup continues to workspace setup. **S34 Account security** lists all four methods and keeps membership, billing and send authority separate.
 
 ## 2. Consent-based audience import
 

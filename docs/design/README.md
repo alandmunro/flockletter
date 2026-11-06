@@ -13,7 +13,7 @@ This is the owner-authorized phase-one UI review in Cadence’s visual style. Th
 
 | Review journey | Start | What to look for |
 | --- | --- | --- |
-| Become a customer | [Home](https://flockletter-design-review.alandmunro.chatgpt.site/#home) | Pricing, Clerk sign-in, card-required trial and guided setup |
+| Become a customer | [Home](https://flockletter-design-review.alandmunro.chatgpt.site/#home) | Pricing, Clerk Google/Apple/Microsoft/email-code sign-in, card-required trial and guided setup |
 | Build an audience | [Audience](https://flockletter-design-review.alandmunro.chatgpt.site/#contacts) | Consent declaration, import review, suppression and list management |
 | Prepare and send a letter | [Campaigns](https://flockletter-design-review.alandmunro.chatgpt.site/#campaigns) | Editor, recipient exclusions, test, preflight, authorization and outcomes |
 | Work as a team | [Team](https://flockletter-design-review.alandmunro.chatgpt.site/#team) | Clerk membership, seats and separate edit/send/billing capabilities |
@@ -27,10 +27,11 @@ The signup journey uses the capped trial example. The populated audience, campai
 ## What is included
 
 - 54 primary screen families covering public, account, onboarding, customer, subscriber and operator experiences.
-- Desktop screenshots for every screen, six representative phone screenshots and three critical failure-state captures.
+- Desktop screenshots for every screen, eight representative phone screenshots and three critical failure-state captures.
 - An interactive browser-local prototype with catalogue/story navigation, filters, sample editing, confirmations and recovery examples.
 - Stable screen/story IDs mapped to SRD requirements, plus a documented [visual system](DESIGN_SYSTEM.md) and [design verification](VERIFICATION.md).
-- Approved $15/$25/$39 tier values, 250-contact/500-email trial limits and Clerk-owned workspace memberships.
+- The owner-supplied Frosty Flamingo Software logo in the upper-right header across all screen families, with responsive sizing.
+- Approved $15/$25/$39 tier values, 250-contact/500-email trial limits and Clerk-owned workspace memberships, with the four approved launch sign-in methods.
 
 ## Review boundaries
 
