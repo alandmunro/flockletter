@@ -2,7 +2,7 @@
 
 ## Current authorization
 
-Flockletter is in phase 1: product definition and software requirements. The owner has authorized a public repository, planning documents and nonproduction UI mockups using ChatGPT Sites and Cadence visual styling, with design artifacts and user stories published here. Static prototype HTML/CSS/JS and screenshots are allowed only under docs/design; they must use fictional data and simulated actions, with no live integrations. This is not permission to build the product. Do not add application code, executable infrastructure, migrations, deployment workflows, provider configuration, paid resources or live email sending until the owner explicitly authorizes implementation. Documentation review and revision may continue.
+The owner has authorized the foundation implementation and staging verification, and asked the assistant to make reasonable implementation decisions without routine confirmation. Build the independent application shell, isolated database setup, canonical UI/API/MCP operations, campaign drafts, bounded batch images, preview and actionable validation. Use the approved visual system and exact supplied logo. Record decisions and evidence in docs/implementation. Production deployment, live mailing and paid public activation are outside this workstream. Existing FFA staging may be resumed when needed; this does not authorize changing production or another application's data/settings. Gather genuinely missing configuration together after completing independent work.
 
 Read [the SRD](docs/SRD.md), [decisions](docs/DECISIONS.md) and [phase 1 review](docs/PHASE_1.md) before work. Accepted owner decisions, proposed requirements and unresolved decisions are distinct. Do not silently promote a proposal to an accepted decision. Later explicit owner instructions take precedence; update the documents to reflect them.
 
@@ -12,7 +12,7 @@ Read [the SRD](docs/SRD.md), [decisions](docs/DECISIONS.md) and [phase 1 review]
 - Flockletter is an independent open-source mailing SaaS. Frosty Flamingo Apparel is its first intended customer.
 - Open self-service signup, included delivery in hosted plans and AGPLv3 are accepted decisions.
 - Original repository material is licensed under AGPL-3.0-only. Preserve third-party licenses and attribution. Review provenance and compatibility before importing code.
-- Keep credentials, customer data, production identifiers, private application source, machine-specific configuration and proprietary brand assets out of the public repository. D-029 explicitly permits the owner-supplied Frosty Flamingo Software logo in docs/design for the requested mockups; it does not permit other private brand assets.
+- Keep credentials, customer data, production identifiers, private application source and machine-specific configuration out of the public repository. D-029/D-030 permit the exact supplied Frosty Flamingo Software logo in mockups and the application shell; no other private brand assets are permitted.
 - Existing applications retain their data, identities, payment settings, photos and deployments. Shared hosting does not authorize cross-application access or changes.
 
 ## Local model delegation
@@ -23,7 +23,7 @@ Keep architecture, product intent, security, money, tenant isolation, acceptance
 
 Every completion report must identify actual local-model and primary-assistant contributions, including corrected or replaced drafts and skipped delegation. Report token or cost percentages only when measured.
 
-## Requirements for later implementation
+## Implementation requirements
 
 - Tenant identity comes from verified authentication and membership. Enforce isolation in browser, API, MCP, worker, storage and provider operations.
 - Use one canonical command layer for customer administration, HTTP APIs and MCP. Draft permission does not grant send permission.

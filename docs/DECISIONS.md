@@ -35,12 +35,13 @@ Updated November 6, 2026. Accepted decisions below reflect the owner's instructi
 | D-027 | Produce nonproduction UI mockups through ChatGPT Sites using Cadence's visual stylesheet, publish design artifacts to GitHub, and document user stories. | Explicit design authorization; no production application implementation, live provider configuration, sending, payments or Render deployment. Only bounded visual styling may be adapted; no private runtime code or data. |
 | D-028 | Offer Google, Apple, Microsoft, or email with a one-time verification code at launch, all through Clerk. Password-based login is not proposed for launch; other social providers are deferred. | Owner approved the recommended four-option launch screen. D-026 continues to govern hosted membership. Customer MFA, account-linking safeguards and recovery details remain O-003. This approval updates documentation and nonproduction mockups only. |
 | D-029 | Display the owner-supplied Frosty Flamingo Software logo in the upper-right header across the design mockups, sized responsively. | Owner supplied the transparent PNG and requested its placement on every page where appropriate. Include the exact asset in the published design artifacts; do not alter its artwork. Reader pages retain their sending-brand identity and login-free flow. This does not authorize application implementation. |
+| D-030 | Build the bounded application foundation and test it locally and in staging; make reasonable decisions without routine confirmation stops. Use the approved visual system/logo, shared UI/API/MCP commands and local-model delegation with primary review. | Owner explicitly authorized implementation on November 6, 2026 and authorized resuming staging when needed. This supersedes earlier design-only restrictions. Production, real mailing and public paid activation remain outside this workstream. See [foundation decisions](implementation/FOUNDATION.md). |
 
-Open signup describes the intended launched product. The public documentation repository does not currently provide signup, a paid service or email delivery.
+Open signup describes the intended launched product. The foundation provides campaign preparation; a paid service and email delivery are not active.
 
 ## Proposed baseline
 
-These choices shape SRD draft 0.4 and remain subject to owner review. Selected providers are now accepted; their integration designs are still proposals.
+These choices shape the full release SRD and remain subject to owner review. Selected providers are now accepted; their integration designs are still proposals.
 
 | ID | Proposal | Reason and consequence |
 | --- | --- | --- |
@@ -71,7 +72,7 @@ These choices shape SRD draft 0.4 and remain subject to owner review. Selected p
 | O-012 | Initial budget, expected customers/audience volume, service targets, AI support provider and escalation policy | Email support with AI replies is accepted. Accepted prices use the documented cost assumptions, including Clerk Enhanced B2B; actual capacity and spending approval remain open; propose human escalation for sensitive or uncertain support | Capacity acceptance and support implementation |
 | O-013 | Exact initial role/capability matrix and approval policy | Owner, editor, analyst and separate platform operator; send permission explicitly granted | Authorization implementation |
 
-The owner can resolve these incrementally. Missing decisions must be exposed before dependent implementation starts; they are not defaults that an agent may silently fill during deployment.
+The owner can resolve these incrementally. Missing decisions must be exposed before dependent implementation starts. Under D-030, the assistant may resolve reasonable foundation choices and must record them explicitly; provider secrets, legal facts and live sending readiness cannot be invented.
 
 ## Change record
 
@@ -83,3 +84,5 @@ The owner can resolve these incrementally. Missing decisions must be exposed bef
 | 2026-11-06 | Draft 0.3 accepts the $15/$25/$39 tiers and recipient caps, trial limits, and Clerk-owned memberships; records the $250 shared-cost assumption and authorizes design-only Sites mockups plus user stories. |
 | 2026-11-06 | Draft 0.4 records the approved Google/Apple/Microsoft/email-code launch options and synchronizes signup, sign-in, account screens, stories and acceptance planning. Live authentication and application implementation remain unauthorized. |
 | 2026-11-06 | Added the owner-supplied Frosty Flamingo Software logo to the shared mockup headers and refreshed design captures. Original artwork is preserved. |
+
+Foundation status: O-003/O-013 are resolved narrowly for owner-only preparation with fresh Clerk checks and scoped connections. Full member roles, live Clerk configuration and recovery verification remain open. O-005 has a single-process staging setup preview; shared-database capacity and activation are not presumed. Other release gates remain as listed.

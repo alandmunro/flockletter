@@ -1,3 +1,5 @@
+> Update November 6, 2026: the owner has now authorized the [foundation implementation](implementation/FOUNDATION.md) and staging verification (D-030). The design-only restrictions below describe the earlier planning phase and are superseded for that bounded scope. Full SaaS launch, live sending and production remain gated.
+
 # Flockletter phase 1 product review
 
 Phase 1 turns the product idea into a reviewable software requirements document. It includes this public repository and its planning material. It additionally includes owner-authorized nonproduction screen mockups through Sites, published design artifacts and user stories. It does not include production application code, test scaffolds, Render provisioning, live provider setup or operational deployment.
@@ -38,7 +40,7 @@ The product remains in documentation and design-only phase 1. These choices are 
 | Tier values and providers | Prices, recipient/campaign/company/brand/user and trial contact/email caps accepted; core providers accepted; delivery provider and counting details open |
 | Operating budget and detailed policies | Cost assumptions documented, including Clerk memberships; spending authorization, exact capacity and detailed policies remain open |
 | User interface review | Sites concept, complete MVP screen catalogue and linked user stories; design review does not authorize implementation |
-| Final SRD approval and permission to build | Pending owner instruction |
+| Foundation permission to build | Authorized by D-030; broader release acceptance remains open |
 
 ## Documentation review criteria
 

@@ -1,0 +1,1116 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Flockletter preparation API",
+    "version": "0.1.0",
+    "description": "Foundation only. No send, payment or subscriber operations. Generated from canonical command schemas."
+  },
+  "paths": {
+    "/api/v1/commands/workspace.get": {
+      "post": {
+        "operationId": "workspace_get",
+        "summary": "Inspect workspace, plan catalogue and preparation limits. Does not create records.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/workspace.preflight": {
+      "post": {
+        "operationId": "workspace_preflight",
+        "summary": "Start here: inspect all workspace setup gaps and preparation limits before gathering content or photos. Never starts billing or sends.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/workspace.initialize": {
+      "post": {
+        "operationId": "workspace_initialize",
+        "summary": "Create the current Clerk organization workspace and first brand once. Does not activate a subscription.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "owner",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "brandName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "operationKey",
+                  "name",
+                  "brandName"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/campaign.list": {
+      "post": {
+        "operationId": "campaign_list",
+        "summary": "List accessible draft campaigns, newest first.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/campaign.get": {
+      "post": {
+        "operationId": "campaign_get",
+        "summary": "Read one authorized draft version.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/campaign.create": {
+      "post": {
+        "operationId": "campaign_create",
+        "summary": "Prepare a draft in an authorized brand. No sending or recipient changes.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "draft:write",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  },
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "content": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "maxLength": 120
+                      },
+                      "subject": {
+                        "type": "string",
+                        "maxLength": 150
+                      },
+                      "preheader": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "fromName": {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      "replyTo": {
+                        "type": "string",
+                        "maxLength": 254
+                      },
+                      "heading": {
+                        "type": "string",
+                        "maxLength": 150
+                      },
+                      "body": {
+                        "type": "string",
+                        "maxLength": 12000
+                      },
+                      "ctaLabel": {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      "ctaUrl": {
+                        "type": "string",
+                        "maxLength": 2048
+                      },
+                      "assetIds": {
+                        "maxItems": 6,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "subject",
+                      "preheader",
+                      "fromName",
+                      "replyTo",
+                      "heading",
+                      "body",
+                      "ctaLabel",
+                      "ctaUrl",
+                      "assetIds"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "operationKey",
+                  "brandId",
+                  "content"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/campaign.update": {
+      "post": {
+        "operationId": "campaign_update",
+        "summary": "Save a draft only if its expected version still matches. Reuse the operation key only for an identical retry.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "draft:write",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "expectedVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "content": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "maxLength": 120
+                      },
+                      "subject": {
+                        "type": "string",
+                        "maxLength": 150
+                      },
+                      "preheader": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "fromName": {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      "replyTo": {
+                        "type": "string",
+                        "maxLength": 254
+                      },
+                      "heading": {
+                        "type": "string",
+                        "maxLength": 150
+                      },
+                      "body": {
+                        "type": "string",
+                        "maxLength": 12000
+                      },
+                      "ctaLabel": {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      "ctaUrl": {
+                        "type": "string",
+                        "maxLength": 2048
+                      },
+                      "assetIds": {
+                        "maxItems": 6,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "subject",
+                      "preheader",
+                      "fromName",
+                      "replyTo",
+                      "heading",
+                      "body",
+                      "ctaLabel",
+                      "ctaUrl",
+                      "assetIds"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "operationKey",
+                  "id",
+                  "expectedVersion",
+                  "content"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/campaign.preflight": {
+      "post": {
+        "operationId": "campaign_preflight",
+        "summary": "Report all preparation and delivery gaps together. Preview success does not establish send eligibility.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/campaign.preview": {
+      "post": {
+        "operationId": "campaign_preview",
+        "summary": "Render escaped HTML and plain text for the exact saved draft version. Does not send.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "expectedVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "id",
+                  "expectedVersion"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/asset.list": {
+      "post": {
+        "operationId": "asset_list",
+        "summary": "List private images for the authorized brand.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "brandId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/asset.uploadBatch": {
+      "post": {
+        "operationId": "asset_uploadBatch",
+        "summary": "Upload original JPEG, PNG or WebP images with per-file outcomes. Max 10 files, 5 MiB each, 20 MiB total. Names are metadata; files are never fetched from URLs.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "assets:write",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  },
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "files": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "itemKey": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "base64": {
+                          "type": "string",
+                          "maxLength": 27962028
+                        }
+                      },
+                      "required": [
+                        "itemKey",
+                        "name",
+                        "base64"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "operationKey",
+                  "brandId",
+                  "files"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/connection.list": {
+      "post": {
+        "operationId": "connection_list",
+        "summary": "List scoped API/MCP connections without secrets. Owner session required.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "owner",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/connection.create": {
+      "post": {
+        "operationId": "connection_create",
+        "summary": "Issue a scoped, expiring connection. Secret is displayed once and omitted from retries. Owner session required.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "owner",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "scopes": {
+                    "minItems": 1,
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "draft:write",
+                        "assets:write"
+                      ]
+                    }
+                  },
+                  "brandIds": {
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "expiresInDays": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 90
+                  }
+                },
+                "required": [
+                  "operationKey",
+                  "name",
+                  "scopes",
+                  "brandIds",
+                  "expiresInDays"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/connection.revoke": {
+      "post": {
+        "operationId": "connection_revoke",
+        "summary": "Revoke a connection immediately. Owner session required.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "owner",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "operationKey",
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A Clerk session token, or an owner-issued scoped Flockletter connection token. Connection tokens cannot invoke owner-only commands."
+      }
+    }
+  }
+}

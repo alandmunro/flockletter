@@ -1,10 +1,10 @@
 # Flockletter software requirements
 
-Version 0.4. Draft for product review. Updated November 6, 2026.
+Version 0.5. Release requirements with an authorized foundation workstream. Updated November 6, 2026.
 
 Flockletter is an open-source mailing SaaS for small retailers and general small businesses that want to build permission-based audiences and send newsletters and announcements. Large enterprises are outside its target market. The hosted service includes delivery and subscription management. Frosty Flamingo Apparel is the first intended customer, with complimentary service; the product must operate independently for other businesses and for self-hosters.
 
-The owner has selected open self-service signup, included delivery, three tiers, a 14-day card-required trial, Clerk for all hosted logins and workspace memberships, Listmonk, Stripe, Render hosting and AGPLv3. The accepted launch sign-in options are Google, Apple, Microsoft, and email with a one-time verification code. Additional accepted policies and unresolved details are recorded in [decisions](DECISIONS.md). Requirements marked SHALL describe the proposed release-one contract; they are not a statement of existing functionality or authorization to implement it. Phase 1 permits documentation and explicitly authorized nonproduction UI mockups only. Mockups may simulate interactions with fictional data; they do not implement authentication, billing, sending or infrastructure. The owner must authorize implementation separately.
+The owner has selected open self-service signup, included delivery, three tiers, a 14-day card-required trial, Clerk for all hosted logins and workspace memberships, Listmonk, Stripe, Render hosting and AGPLv3. The accepted launch sign-in options are Google, Apple, Microsoft, and email with a one-time verification code. Additional accepted policies and unresolved details are recorded in [decisions](DECISIONS.md). Requirements marked SHALL describe the proposed release-one contract; they are not a statement of existing functionality or authorization to implement it. D-030 now authorizes the bounded foundation in [the implementation plan](implementation/FOUNDATION.md) and staging verification. The prior mockups remain design artifacts. Implementation authorization does not claim completion of the full release or authorize production, live mailing or paid activation.
 
 ## Product outcomes
 
@@ -238,11 +238,11 @@ Clerk owns hosted login and organization membership facts. Flockletter's applica
 
 ## Verification and phase gates
 
-The [traceability matrix](TRACEABILITY.md) maps every requirement to a planned acceptance case. No implementation acceptance evidence exists in phase 1. Prototype navigation and visual checks are recorded separately as design verification only. For later implementation, verify unit/domain invariants, real database isolation/concurrency, provider contracts and end-to-end browser/API/MCP parity with focused tests appropriate to the change.
+The [traceability matrix](TRACEABILITY.md) maps every requirement to a planned acceptance case. Foundation implementation evidence is recorded separately in [verification](implementation/VERIFICATION.md); full release acceptance remains open. Prototype navigation and visual checks are recorded separately as design verification only. For later implementation, verify unit/domain invariants, real database isolation/concurrency, provider contracts and end-to-end browser/API/MCP parity with focused tests appropriate to the change.
 
 Before starting a dependent workstream, resolve the relevant open decisions and record its requirement IDs, adapter contracts and test plan. Before staged acceptance, use two synthetic customer workspaces, not just FFA, to test isolation and failure paths. External mail checks must use only approved recipients. Billing checks must use test environments until separately authorized.
 
-The [phase 1 review](PHASE_1.md) defines the documentation completion gate. Approval of the SRD alone does not deploy a service or send messages. No application build is authorized by this document.
+The [phase 1 review](PHASE_1.md) defines the documentation completion gate. Approval of the SRD alone does not deploy a service or send messages. The later owner instruction recorded in D-030 authorizes the foundation build.
 
 ## References
 

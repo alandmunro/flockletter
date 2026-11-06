@@ -1,6 +1,6 @@
 # Flockletter requirement traceability
 
-This matrix maps the proposed requirements in [the SRD](SRD.md) to planned acceptance cases. All cases below are **planned, not run**. Phase 1 contains documentation and separately recorded nonproduction design checks; no implementation test or live provider verification is claimed.
+This matrix maps the proposed requirements in [the SRD](SRD.md) to planned acceptance cases. The table lists full-release acceptance cases. The authorized foundation now has targeted implementation evidence in [foundation verification](implementation/VERIFICATION.md). This does not mark broader cases or live provider checks complete.
 
 Later evidence must identify the implementation revision, environment, input scenario, observed result and any remaining external check. Use two synthetic customer workspaces for isolation tests. Keep secrets, personal data and sensitive provider responses out of public evidence.
 
@@ -44,6 +44,6 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
-The only completed checks in this phase concern documentation structure, references, requirement coverage and public-repository contents. They do not satisfy the implementation acceptance cases above. Add implementation evidence only after coding is authorized and the relevant checks actually run.
+Targeted foundation evidence now covers preparation, scoped access and real PostgreSQL isolation. See the linked verification record for exact test scope and remaining external checks; no full-release case is implicitly complete.
 
 Design-only browser checks and screen/story coverage are recorded in [design verification](design/VERIFICATION.md). They do not mark any FL-AT case complete.
