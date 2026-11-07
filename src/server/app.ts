@@ -25,10 +25,16 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     const host = Buffer.from(config.clerkPublishableKey.split('_').slice(2).join('_'), 'base64').toString('utf8').replace(/\$$/, '');
     if (/^[A-Za-z0-9.-]+$/.test(host)) clerkOrigin = `https://${host}`;
   }
+  // Clerk Protect runs its checks in the browser during hosted signup.
+  const clerkScriptAndFrameHosts = clerkOrigin
+    ? [clerkOrigin, 'https://challenges.cloudflare.com', 'https://*.protect.clerk.com']
+    : [];
   app.use(helmet({ contentSecurityPolicy: { directives: {
-    defaultSrc: ["'self'"], scriptSrc: ["'self'", ...(clerkOrigin ? [clerkOrigin] : [])],
-    connectSrc: ["'self'", ...(clerkOrigin ? [clerkOrigin] : [])], imgSrc: ["'self'", 'blob:', 'data:', 'https://img.clerk.com'],
-    styleSrc: ["'self'", "'unsafe-inline'"], frameSrc: ["'self'", ...(clerkOrigin ? [clerkOrigin] : [])],
+    defaultSrc: ["'self'"], scriptSrc: ["'self'", ...clerkScriptAndFrameHosts],
+    connectSrc: ["'self'", ...(clerkOrigin ? [clerkOrigin, 'https://*.protect.clerk.com:*'] : [])],
+    workerSrc: clerkOrigin ? ["'self'", 'blob:'] : ["'self'"],
+    imgSrc: ["'self'", 'blob:', 'data:', 'https://img.clerk.com'],
+    styleSrc: ["'self'", "'unsafe-inline'"], frameSrc: ["'self'", ...clerkScriptAndFrameHosts],
     objectSrc: ["'none'"], baseUri: ["'none'"], formAction: ["'self'"], upgradeInsecureRequests: config.environment === 'staging' ? [] : null,
   } }, crossOriginEmbedderPolicy: false, strictTransportSecurity: config.environment === 'staging' ? undefined : false }));
   app.get('/healthz', (_req, res) => res.json({ status: 'alive' }));
@@ -45,7 +51,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     const origin = req.get('origin');
     if (origin && !config.browserOrigins.includes(origin)) return next(new AppError(403, 'origin_rejected', 'This browser origin is not authorized.'));
     if (req.get('sec-fetch-site') === 'cross-site') return next(new AppError(403, 'origin_rejected', 'Cross-site browser requests are not authorized.'));
-    if (!service || !auth) return next(new AppError(503, 'setup_required', 'The service needs its isolated database and Clerk configuration before sign-in is available.'));
+    if (!service || !auth) return next(new AppError(503, 'setup_required', 'Workspace operations require the Flockletter database and Clerk backend connection.'));
     next();
   });
   app.get('/api/v1/schema', async (req, res) => {
