@@ -1,6 +1,6 @@
 # Flockletter product decisions
 
-Updated November 7, 2026. D-030 authorizes the foundation implementation and staging verification. D-031 records the hostname, sender and support addresses, and spending approval threshold. Proposed choices still require resolution before their dependent workstreams.
+Updated November 7, 2026. D-030 authorizes the foundation implementation and staging verification. D-031 records the hostname, sender and support addresses, and spending approval threshold. D-033 adds a customer-branded visual newsletter studio and identifies the preferred editor candidate; its integration remains gated by O-014. Proposed choices still require resolution before their dependent workstreams.
 
 ## Accepted decisions
 
@@ -38,6 +38,7 @@ Updated November 7, 2026. D-030 authorizes the foundation implementation and sta
 | D-030 | Build the bounded application foundation and test it locally and in staging; make reasonable decisions without routine confirmation stops. Use the approved visual system/logo, shared UI/API/MCP commands and local-model delegation with primary review. | Owner explicitly authorized implementation on November 6, 2026 and authorized resuming staging when needed. This supersedes earlier design-only restrictions. Production, real mailing and public paid activation remain outside this workstream. See [foundation decisions](implementation/FOUNDATION.md). |
 | D-031 | Use `flockletter.frostyflamingosoftware.com` for Flockletter, `flockletter@frostyflamingosoftware.com` as its platform sender and `support@frostyflamingosoftware.com` for support. Obtain approval for each individual expense above USD 25. | Owner selected the hostname, addresses and expense threshold on November 6, 2026. Customer brands retain their own sending identities. |
 | D-032 | Implement Flockletter PR #2 for one explicitly bound first-party storefront credential and brand. Flockletter records consent and double opt-in. Use captured mail for synthetic tests and default intake to off. | Owner authorized the code and staging work on November 7. Resend is an optional confirmation adapter. Selecting a live provider, approving policy, verifying the sender and enabling public collection remain separate decisions. |
+| D-033 | Include a Flockletter-branded visual Newsletter Studio in the MVP and assess Resend's MIT-licensed `@react-email/editor` as the preferred implementation candidate, separate from Unlayer's similarly named wrapper. Preserve third-party copyright/license notices in distributed software, without imposing vendor logos or attribution footers on customer newsletters. | Owner requested the React Email licensing/branding approach be documented in the SRD as a PR on November 7. Final package/version, dependencies, compatibility and acceptance remain gated by O-014; no implementation or live sending is authorized by this documentation PR. |
 
 Open signup describes the intended launched product. The foundation provides campaign preparation; a paid service and email delivery are not active.
 
@@ -55,6 +56,7 @@ These choices shape the full release SRD and remain subject to owner review. Sel
 | P-006 | Serve FFA's Mailings entry point through a small integration with the independent SaaS. | Reuse reviewed UI components and public APIs without a runtime dependency on private commerce code. Separate sending processes from shopping requests. |
 | P-007 | Make broadcasts, audience management, previews/tests, scheduling and basic reporting the first-release MVP. | D-010 accepts an MVP; this is its proposed feature boundary. AI support replies are in scope separately from AI campaign generation. |
 | P-008 | Keep hosted product code and self-hosting capabilities open source. | Self-hosters do not need the owner's private systems or a Flockletter subscription; they provide their own infrastructure and delivery connection. |
+| P-009 | Place the newsletter editor behind replaceable Flockletter draft/render/asset interfaces and render reviewed revisions to email-compatible HTML and plain text. | Evaluate `@react-email/editor` without binding mailing delivery to Resend or depending on external editor hosting. Keep the stored draft editable and protect brand/workspace scope. |
 
 ## Decisions still needed
 
@@ -73,6 +75,7 @@ These choices shape the full release SRD and remain subject to owner review. Sel
 | O-011 | FFA integration contract, assigned tier/allowances and complimentary-grant lifecycle | Customer workflows with an operator-issued complimentary grant; no Stripe/card dependency or exemption from sending controls | FFA integration implementation |
 | O-012 | Initial budget, expected customers/audience volume, service targets, AI support provider and escalation policy | Email support with AI replies is accepted. Accepted prices use the documented cost assumptions, including Clerk Enhanced B2B; capacity and the total operating budget remain open. Each individual expense above $25 requires owner approval. Propose human escalation for sensitive or uncertain support | Capacity acceptance and support implementation |
 | O-013 | Exact initial role/capability matrix and approval policy | Owner, editor, analyst and separate platform operator; send permission explicitly granted | Authorization implementation |
+| O-014 | Visual editor package/version, dependency licenses, rendering and draft round-trip compatibility | Evaluate `@react-email/editor` with the existing React/TypeScript/Vite stack, export to sanitized HTML/plain text for Listmonk, self-hosting without a vendor account, and a third-party notice inventory; exclude Unlayer's distinct `react-email-editor` unless independently approved | Newsletter Studio implementation |
 
 The owner can resolve these incrementally. Missing decisions must be exposed before dependent implementation starts. Under D-030, the assistant may resolve reasonable foundation choices and must record them explicitly; provider secrets, legal facts and live sending readiness cannot be invented.
 
