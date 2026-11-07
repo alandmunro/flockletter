@@ -1,6 +1,6 @@
 # Staging setup and acceptance
 
-Use a separate Flockletter web service in the existing Render workspace, Oregon region. The first setup preview uses the Free plan and the implementation branch with automatic deployment off. It has no database or provider credentials until separately configured. No FFA or Cadence services need to be resumed for this independent foundation, and no existing settings or photos are changed.
+The Flockletter staging web service runs in the existing Render workspace, Oregon region. It uses the Free plan and the implementation branch with automatic deployment off. Its Clerk development application, staging database and release secrets belong to Flockletter.
 
 The setup page is deployed at [flockletter-staging.onrender.com](https://flockletter-staging.onrender.com). Its [Render service](https://dashboard.render.com/web/srv-dbn5lb6gekts738v63ag) is the destination for Flockletter-only configuration. See the verification record for the exact application revision and observed gates.
 
@@ -12,7 +12,7 @@ Start: `npm start`.
 
 Nonsecret settings: `APP_ENV=staging`, `HOST=0.0.0.0`, `NODE_VERSION=24`, `LOCAL_TEST_IDENTITY=false`, and `APP_ORIGIN` equal to the exact HTTPS staging origin. Render supplies `PORT`. Do not set production mode or copy a local `.env` into the service. The application explicitly refuses synthetic identity on a hosted service.
 
-The setup preview can serve a clear setup page and `/healthz` while credentials are absent. `/readyz` must return **503 with setup gaps**, and every `/api/v1` operation must remain unavailable. A Render `live` deploy in this state proves that the build and process work; it does **not** prove authenticated staging readiness. Configure the operational HTTP health check as `/readyz` only after completing setup. Do not relabel `/healthz` as an authenticated acceptance check.
+The publishable Clerk key enables hosted sign-in, organization setup and session persistence. If the backend key or runtime database connection is missing, a signed-in user sees the remaining workspace setup status. `/healthz` checks whether the process is running. `/readyz` returns HTTP 503 with the outstanding gaps and the workspace API returns `setup_required`. After activating both backend credentials, require HTTP 200 from `/readyz` and a successful authenticated workspace operation before switching the operational health check to `/readyz`.
 
 ## Required isolated configuration
 
@@ -40,13 +40,14 @@ Apply `npm run db:migrate` using `MIGRATION_DATABASE_URL` and `RUNTIME_DATABASE_
 
 The local test suite already exercises real database isolation and the HTTP/MCP path. Its injected identity provider is not a live Clerk check. No email, Stripe purchase, engine provisioning or production deployment is part of foundation acceptance.
 
-## Missing setup handoff
-
-Collect these together when independent work is complete: the Flockletter staging Clerk application/configuration; a restricted connection for its isolated logical database plus an authorized migration path; and any required DNS/social-provider configuration. They are specific configuration data, not a request to reapprove routine implementation. The existing authorization to resume FFA staging remains available if a later FFA integration needs it.
-
 ## Operator bootstrap and private URL
 
-The existing staging Postgres host can hold the separate `flockletter_staging` database. An authorized release operator runs `scripts/provision-staging.mjs inspect` before `apply` in a private maintenance process. Provide one JSON line on protected standard input, with terminal echo disabled. The fields are `adminUrl`, `expectedHost` and `expectedSource`. Apply also requires distinct 32-byte random hex values for `runtimePassword` and `migratorPassword`. Save the runtime connection in the web service and keep the migrator connection in a protected release secret store. The script validates the selected staging host, catalog access, connection headroom and ownership markers, creates only Flockletter roles and objects, applies the foundation migration, and verifies restricted runtime access. Reuse the same role secrets on a retry.
+Run `scripts/provision-staging.mjs` from a private release process on the existing staging database network. Disable terminal echo and supply the administration connection, exact host and source database as one JSON line on standard input using `adminUrl`, `expectedHost` and `expectedSource`. Keep the cluster administrator connection out of web service settings.
+
+1. Run `inspect` to check the staging host, permissions, database and role ownership markers, and connection headroom.
+2. Run `prepare` to create the dedicated logical database with connections disabled and remove public database privileges. This step can finish before any application credentials are issued.
+3. Run `apply` with distinct 32-byte random hex values for `runtimePassword` and `migratorPassword`. It inspects accessible foreign catalogs for effective application grants, migrates the dedicated database, and checks the resulting runtime role and seven forced row-level policies. Reuse the same role secrets on a retry.
+4. Store the restricted runtime connection and the Flockletter Clerk development backend key on the staging web service. Keep the migrator connection in the unlinked release environment group. Follow the authenticated acceptance steps above.
 
 The selected custom hostname is `flockletter.frostyflamingosoftware.com`. Set `APP_ORIGIN` to the canonical staging origin and `APP_ADDITIONAL_ORIGINS` to any other approved exact HTTPS origins. The browser origin check and Clerk session validator share this list. The local synthetic identity supports only its loopback origin.
 

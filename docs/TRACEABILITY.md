@@ -44,6 +44,6 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
-Targeted foundation evidence now covers preparation, scoped access and real PostgreSQL isolation. See the linked verification record for exact test scope and remaining external checks; no full-release case is implicitly complete.
+Foundation evidence covers campaign preparation, scoped access, disposable PostgreSQL isolation and hosted Clerk passwordless sign-in. The staged database was prepared on the existing host. Hosted workspace writes and cross-organization tests await activation of its restricted roles and Clerk backend connection. [Foundation verification](implementation/VERIFICATION.md)
 
 Design-only browser checks and screen/story coverage are recorded in [design verification](design/VERIFICATION.md). They do not mark any FL-AT case complete.
