@@ -69,6 +69,8 @@ Monthly USD calculator values reviewed November 6, 2026, without annual or promo
 
 Contact counts alone are not a complete equivalence. These providers may include more monthly sends, automations and other features; EmailOctopus and Sender also offer free plans at 2,500 contacts. Do not advertise universal lowest pricing or feature parity. Recheck current pricing and matching allowances before publishing a comparative marketing claim.
 
+The owner requires approval for each individual expense above USD 25. Render quoted USD 0.25 per month for the selected Flockletter custom domain.
+
 ## Unresolved cost and policy gates
 
 - Final delivery provider, account approval, reputation architecture and any dedicated-IP requirement.

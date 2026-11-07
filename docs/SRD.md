@@ -1,10 +1,10 @@
 # Flockletter software requirements
 
-Version 0.4. Draft for product review. Updated November 6, 2026.
+Version 0.5. Release requirements with an authorized foundation workstream. Updated November 6, 2026.
 
 Flockletter is an open-source mailing SaaS for small retailers and general small businesses that want to build permission-based audiences and send newsletters and announcements. Large enterprises are outside its target market. The hosted service includes delivery and subscription management. Frosty Flamingo Apparel is the first intended customer, with complimentary service; the product must operate independently for other businesses and for self-hosters.
 
-The owner has selected open self-service signup, included delivery, three tiers, a 14-day card-required trial, Clerk for all hosted logins and workspace memberships, Listmonk, Stripe, Render hosting and AGPLv3. The accepted launch sign-in options are Google, Apple, Microsoft, and email with a one-time verification code. Additional accepted policies and unresolved details are recorded in [decisions](DECISIONS.md). Requirements marked SHALL describe the proposed release-one contract; they are not a statement of existing functionality or authorization to implement it. Phase 1 permits documentation and explicitly authorized nonproduction UI mockups only. Mockups may simulate interactions with fictional data; they do not implement authentication, billing, sending or infrastructure. The owner must authorize implementation separately.
+The owner has selected open self-service signup, included delivery, three tiers, a 14-day card-required trial, Clerk for all hosted logins and workspace memberships, Listmonk, Stripe, Render hosting and AGPLv3. The accepted launch sign-in options are Google, Apple, Microsoft, and email with a one-time verification code. Additional accepted policies and unresolved details are recorded in [decisions](DECISIONS.md). Requirements marked SHALL describe the proposed release-one contract; they are not a statement of existing functionality or authorization to implement it. D-030 now authorizes the bounded foundation in [the implementation plan](implementation/FOUNDATION.md) and staging verification. The prior mockups remain design artifacts. Implementation authorization does not claim completion of the full release or authorize production, live mailing or paid activation.
 
 ## Product outcomes
 
@@ -86,7 +86,7 @@ The pricing objective is inexpensive service below major competitors and most sm
 
 **FL-BIL-006 — Paid-launch prerequisites.** Before accepting public paid subscriptions, approve the business identity, supported markets, terms and applicable tax registrations/configuration. If Stripe Tax is used, verify registrations and tax behavior rather than assuming a switch establishes collection. Keep Flockletter's setup separate from existing merchant configurations.
 
-The selected launch market is US customers and the intended operator is Frosty Flamingo Software, LLC. Track the owner's Colorado DBA filing as pending before launch; do not represent Flockletter as a registered trade name yet. US-only sales do not decide subscriber geography or provider data residency. O-008/O-009 cover those definitions and the remaining legal, privacy and tax work.
+The selected launch market is US customers and the intended operator is Frosty Flamingo Software, LLC. The owner confirmed on November 6, 2026 that the Colorado DBA registration for Flockletter is complete. US-only sales do not decide subscriber geography or provider data residency. O-008/O-009 cover those definitions and the remaining legal, privacy and tax work.
 
 **FL-BIL-007 — Card-required trial.** Ordinary hosted signup SHALL require a successfully established provider-held payment method before trial activation. The trial lasts 14 days, with the charge date, selected recurring price and cancellation path disclosed before acceptance. Proposed behavior: cancel before trial end to avoid the first charge, retain trial access until its end, and enter the ordinary failed-payment process if the first charge fails. A partial signup may resume onboarding but SHALL not obtain sending access. The trial SHALL cap active contacts at 250 and total recipient emails at 500 across the complete 14-day trial, shared across its companies and brands; real test emails consume that email allowance. Repeated signup, plan changes or workspace/brand changes SHALL NOT refresh the trial allowance. Trial campaign count, member/company/brand limits and transition to paid allowances remain O-006; they must be settled before implementation and are not unlimited by omission. FFA's explicit complimentary grant is the exception.
 
@@ -224,7 +224,7 @@ D-025 accepts a 14-day, card-required trial capped at 250 active contacts and 50
 
 The detailed [cost model](COST_MODEL.md) records full-allowance delivery at a planning budget of $0.20 per 1,000 recipient emails, a proposed $7/month separate mailing service per workspace, standard domestic Stripe card processing plus Billing at 3.6% + $0.30 per monthly payment, and a $1/workspace operating reserve. At full send usage, estimated direct costs are $9.84/$14.20/$29.70, leaving $5.16/$10.80/$9.30 toward shared costs and overhead. These are estimates, not profit guarantees.
 
-Because Clerk owns memberships as well as login (D-026), include the $100/month Enhanced B2B add-on needed for unlimited organization members in the launch budget. Together with a $25/month base authentication allowance, shared production/staging capacity and the complimentary FFA allowance, the proposed fixed planning budget is about $250/month, plus paid-workspace direct costs and growth-related provider usage. Under the stated 60%/30%/10% tier mix at full usage, infrastructure break-even is approximately 35 paid workspaces. FFA alone produces no subscription revenue and requires owner funding. Costs exclude development, substantial support labor, taxes, refunds/disputes and larger capacity upgrades. Provider choice, actual sizing and spending authorization remain open; do not provision from these estimates.
+Because Clerk owns memberships as well as login (D-026), include the $100/month Enhanced B2B add-on needed for unlimited organization members in the launch budget. Together with a $25/month base authentication allowance, shared production/staging capacity and the complimentary FFA allowance, the proposed fixed planning budget is about $250/month, plus paid-workspace direct costs and growth-related provider usage. Under the stated 60%/30%/10% tier mix at full usage, infrastructure break-even is approximately 35 paid workspaces. FFA alone produces no subscription revenue and requires owner funding. Costs exclude development, substantial support labor, taxes, refunds/disputes and larger capacity upgrades. Provider choice and measured capacity remain open. The owner requires approval for each individual expense above USD 25. The estimates are for planning.
 
 ## UI design review
 
@@ -238,11 +238,11 @@ Clerk owns hosted login and organization membership facts. Flockletter's applica
 
 ## Verification and phase gates
 
-The [traceability matrix](TRACEABILITY.md) maps every requirement to a planned acceptance case. No implementation acceptance evidence exists in phase 1. Prototype navigation and visual checks are recorded separately as design verification only. For later implementation, verify unit/domain invariants, real database isolation/concurrency, provider contracts and end-to-end browser/API/MCP parity with focused tests appropriate to the change.
+The [traceability matrix](TRACEABILITY.md) maps every requirement to a planned acceptance case. Foundation implementation evidence is recorded separately in [verification](implementation/VERIFICATION.md); full release acceptance remains open. Prototype navigation and visual checks are recorded separately as design verification only. For later implementation, verify unit/domain invariants, real database isolation/concurrency, provider contracts and end-to-end browser/API/MCP parity with focused tests appropriate to the change.
 
 Before starting a dependent workstream, resolve the relevant open decisions and record its requirement IDs, adapter contracts and test plan. Before staged acceptance, use two synthetic customer workspaces, not just FFA, to test isolation and failure paths. External mail checks must use only approved recipients. Billing checks must use test environments until separately authorized.
 
-The [phase 1 review](PHASE_1.md) defines the documentation completion gate. Approval of the SRD alone does not deploy a service or send messages. No application build is authorized by this document.
+The [phase 1 review](PHASE_1.md) defines the documentation completion gate. Approval of the SRD alone does not deploy a service or send messages. The later owner instruction recorded in D-030 authorizes the foundation build.
 
 ## References
 
