@@ -40,18 +40,30 @@ type Row = {
   render_html: string;
   render_text: string;
 };
-export async function rehearsalReport(sql: Sql, id: string): Promise<Rehearsal> {
-  const row = await rehearsalRow(sql, id);
-  const counts = (
-    await sql.query<{ pending: number; captured: number; skipped: number }>(
-      `SELECT
-    count(*) FILTER(WHERE state='pending')::int pending,count(*) FILTER(WHERE state='captured')::int captured,
-    count(*) FILTER(WHERE state IN('cancelled','excluded'))::int skipped FROM rehearsal_recipients WHERE rehearsal_id=$1`,
-      [id],
-    )
-  ).rows[0]!;
+type ReportRow = Pick<
+  Row,
+  | 'id'
+  | 'campaign_id'
+  | 'version'
+  | 'audience'
+  | 'segment_id'
+  | 'segment_name'
+  | 'state'
+  | 'due_at'
+  | 'selected'
+  | 'excluded'
+  | 'reason'
+> & { pending: number; captured: number; skipped: number };
+const reportColumns = `r.id,r.campaign_id,r.version,r.audience,r.segment_id,r.segment_name,r.state,r.due_at,r.selected,r.excluded,r.reason,
+  counts.pending,counts.captured,counts.skipped`;
+const countRecipients = `CROSS JOIN LATERAL (
+  SELECT count(*) FILTER(WHERE p.state='pending')::int pending,count(*) FILTER(WHERE p.state='captured')::int captured,
+    count(*) FILTER(WHERE p.state IN('cancelled','excluded'))::int skipped
+  FROM rehearsal_recipients p WHERE (p.workspace_id,p.brand_id,p.rehearsal_id)=(r.workspace_id,r.brand_id,r.id)
+) counts`;
+function reportView(row: ReportRow): Rehearsal {
   return {
-    id,
+    id: row.id,
     campaignId: row.campaign_id,
     version: row.version,
     audience: row.audience,
@@ -62,9 +74,21 @@ export async function rehearsalReport(sql: Sql, id: string): Promise<Rehearsal> 
     dueAt: row.due_at.toISOString(),
     selected: row.selected,
     excluded: row.excluded,
-    ...counts,
+    pending: row.pending,
+    captured: row.captured,
+    skipped: row.skipped,
     reason: row.reason,
   };
+}
+export async function rehearsalReport(sql: Sql, id: string): Promise<Rehearsal> {
+  const row = (
+    await sql.query<ReportRow>(
+      `SELECT ${reportColumns} FROM campaign_rehearsals r ${countRecipients} WHERE r.id=$1`,
+      [id],
+    )
+  ).rows[0];
+  requireCondition(row, 404, 'rehearsal_missing', 'This rehearsal is unavailable for this brand.');
+  return reportView(row);
 }
 async function rehearsalRow(sql: Sql, id: string) {
   const row = (await sql.query<Row>('SELECT * FROM campaign_rehearsals WHERE id=$1', [id])).rows[0];
@@ -72,11 +96,14 @@ async function rehearsalRow(sql: Sql, id: string) {
   return row;
 }
 export async function listRehearsals(sql: Sql, campaignId: string, includeConfirmed: boolean) {
-  const result = await sql.query<{ id: string }>(
-    "SELECT id FROM campaign_rehearsals WHERE campaign_id=$1 AND ($2::boolean OR audience='test') ORDER BY reviewed_at DESC,id DESC LIMIT 15",
+  const result = await sql.query<ReportRow>(
+    `SELECT ${reportColumns} FROM (
+    SELECT * FROM campaign_rehearsals WHERE campaign_id=$1 AND ($2::boolean OR audience='test')
+    ORDER BY reviewed_at DESC,id DESC LIMIT 15
+  ) r ${countRecipients} ORDER BY r.reviewed_at DESC,r.id DESC`,
     [campaignId, includeConfirmed],
   );
-  return Promise.all(result.rows.map((r) => rehearsalReport(sql, r.id)));
+  return result.rows.map(reportView);
 }
 export async function reviewRehearsal(
   sql: Sql,
