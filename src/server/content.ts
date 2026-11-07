@@ -27,9 +27,9 @@ export function contentGaps(campaign: Campaign): Gap[] {
 export function deliveryGaps(): Gap[] {
   return [
     { code: 'sender_not_verified', title: 'Verify a sending domain', detail: 'Sender verification will be connected in the delivery workstream.', area: 'sender' },
-    { code: 'audience_not_ready', title: 'Connect a consented audience', detail: 'Audience import and suppression checks are not enabled in this foundation.', area: 'audience' },
+    { code: 'audience_not_ready', title: 'Connect a consented audience', detail: 'Campaign delivery requires a confirmed recipient snapshot and a fresh suppression check.', area: 'audience' },
     { code: 'entitlement_not_active', title: 'Activate service access', detail: 'Drafting does not start a trial or grant a paid or complimentary entitlement.', area: 'billing' },
-    { code: 'delivery_not_configured', title: 'Delivery is not enabled', detail: 'No test email or campaign can be sent by this build.', area: 'delivery' },
+    { code: 'delivery_not_configured', title: 'Campaign delivery is disabled', detail: 'Campaign test sends and broadcasts require the campaign delivery workstream.', area: 'delivery' },
   ];
 }
 export function preflight(campaign: Campaign) {

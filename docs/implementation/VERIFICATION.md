@@ -35,6 +35,8 @@ An oversized base64 string exposed stack exhaustion in a repeated-group validati
 
 ## Hosted staging
 
+The subsequent PR #2 implementation adds separately gated first-party subscriber intake. Its staging database proof, captured email contract, admin UI and remaining live-provider gates are recorded in the [intake verification](SUBSCRIBER_INTAKE_OPERATIONS.md#november-7-staging-proof).
+
 The separate Oregon web service has manual deploys. The initial gated deployment reached `live` on November 6 at 22:55 UTC. Render deployed the hosted sign-in revision `ef08d78` on November 7 at 02:55 UTC. The custom hostname resolves to the staging service, and Render issued its TLS certificate. [Staging website](https://flockletter.frostyflamingosoftware.com)
 
 - A synthetic user completed Clerk passwordless email-code sign-in over the private HTTPS route and created a staging organization. Refreshing the Flockletter page retained the session and displayed the signed-in workspace setup status. This exercise used Clerk's development verification code.
