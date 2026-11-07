@@ -1,0 +1,40 @@
+.companies-panel {
+  margin-top: 1.25rem;
+}
+.companies-panel .intake-metrics {
+  max-width: 26rem;
+}
+.company-record {
+  border-top: 1px solid var(--border);
+  padding-block: 1rem;
+  margin-top: 1rem;
+}
+.company-record h3 {
+  margin-bottom: 0.35rem;
+  overflow-wrap: anywhere;
+}
+.company-brands {
+  list-style: none;
+  padding-left: 1rem;
+  border-left: 2px solid var(--border);
+}
+.company-brands summary {
+  overflow-wrap: anywhere;
+}
+.company-form {
+  margin-block: 0.6rem 1.2rem;
+}
+.company-form > div {
+  display: flex;
+  align-items: end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.company-form input,
+.company-form select {
+  flex: 1 1 13rem;
+  max-width: 24rem;
+}
+.company-form .notice {
+  margin-top: 0.75rem;
+}

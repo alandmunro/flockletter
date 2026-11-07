@@ -131,7 +131,11 @@ export async function contactDetail(sql: Sql, id: string, cursor?: string): Prom
   };
 }
 
-export async function unsubscribeContact(sql: Sql, id: string) {
+export async function unsubscribeContact(
+  sql: Sql,
+  id: string,
+  source: 'workspace-owner' | 'marketing-unsubscribe-link' = 'workspace-owner',
+) {
   // The confirmation worker and public actions lock the brand gate before the subscriber.
   await sql.query('SELECT enabled FROM subscriber_intake_settings FOR UPDATE');
   const person = (
@@ -146,7 +150,7 @@ export async function unsubscribeContact(sql: Sql, id: string) {
         [id],
       )
     ).rows[0];
-    await suppress(sql, id, evidence?.id ?? null, 'unsubscribed', 'workspace-owner');
+    await suppress(sql, id, evidence?.id ?? null, 'unsubscribed', source);
   }
   return { id, suppressed: true };
 }

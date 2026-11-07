@@ -1,0 +1,105 @@
+:where(.public-plans) {
+  max-width: 80rem;
+  margin: 0 auto;
+  padding: clamp(1.25rem, 4vw, 4rem);
+}
+.public-plans > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+.public-plans .page-heading {
+  margin: 0 0 0.75rem;
+}
+.public-plans > header p {
+  margin-bottom: 0;
+}
+.plan-staging {
+  padding-left: 1.25rem;
+  border-left: 1px solid var(--border);
+}
+.plan-staging .actions {
+  margin-top: 0.75rem;
+}
+.plan-staging a {
+  text-decoration: none;
+}
+.plan-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+.plan-card {
+  min-width: 0;
+}
+.plan-card h2,
+.plan-card h3 {
+  margin: 0 0 0.5rem;
+}
+.plan-card dl {
+  margin: 1rem 0 0;
+}
+.plan-card dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.48rem 0;
+  border-top: 1px solid var(--border);
+}
+.plan-card dt {
+  color: var(--muted);
+  font-size: 0.87rem;
+}
+.plan-card dd {
+  margin: 0;
+  color: var(--wine);
+  font-weight: 650;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.public-trial {
+  margin-block: 1.25rem;
+}
+.setup-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 1.25rem;
+}
+.setup-steps li {
+  margin: 0;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border);
+}
+.setup-steps li > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.setup-steps li span {
+  color: var(--wine);
+  font-size: 0.83rem;
+  font-weight: 650;
+}
+.setup-steps li p {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 800px) {
+  .public-plans > header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+  .plan-staging {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .plan-cards {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  }
+}

@@ -18,6 +18,8 @@ Design inference: use a private customer-isolated engine behind a Flockletter ad
 
 No engine or transport is activated by this foundation. No upstream fork has been assumed. FL-AT-024 and FL-DEL-005 remain open; ordinary API availability is insufficient evidence.
 
+A disposable integration test subsequently ran Listmonk 6.2.0 with an internal HTTP messenger and a private database. Its confirmed subscriber received one personalized callback. The unconfirmed subscriber received none. The test also identified native confirmation and default template behavior that a Flockletter adapter must handle. [Listmonk capture verification](LISTMONK_CAPTURE.md)
+
 ## Render and other applications
 
 The foundation is a single independent web process. The local fixture uses a genuine PostgreSQL server and restricted role; the Render service requires its own logical database and restricted runtime credential. Staging setup must not point at a private application's database or reuse its Clerk/Stripe settings. Shared PostgreSQL activation still needs effective-grant and capacity evidence. The free service is suitable only for the temporary setup preview, with idle suspension and limited included usage; it is not a production capacity decision. See [Render free-service limits](https://render.com/docs/free).

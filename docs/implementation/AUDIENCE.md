@@ -12,6 +12,20 @@ A current Clerk workspace owner can review one brand’s contacts and consent hi
 
 Changing brands clears the current contact and search. Search addresses go in an authenticated POST body. Responses are marked private to the request with `Cache-Control: no-store`. Audit and retry receipts store opaque identifiers. An older contact with no signup evidence can be stopped, and the new event identifies the owner's action without inventing a prior signup.
 
+## Preview a CSV
+
+Open **Preview a contact CSV** in the selected brand's **Audience** screen. Choose a UTF-8 comma-separated file with a header, up to 256 KiB, 1,000 data rows and 64 columns. The browser reads the headings locally. Select the email column by its position and use **Preview CSV** to send the file to Flockletter for comparison. **Clear file** removes the selection and result from the screen.
+
+The report counts rows that are new to the brand, already confirmed, pending, suppressed, duplicated within the file or invalid. It shows the first ten row numbers that need attention. Row one is the header. Quoted line breaks are part of one row. A repeated valid address counts as a duplicate after its first occurrence.
+
+This owner-session operation is read-only. It stores no file, adds no subscriber and sends no email. An actual import that establishes or changes consent still depends on the O-010 import policy. Machine connections can read aggregate audience totals with their explicit brand grants.
+
+## Export a brand's contacts
+
+Open **Export brand contacts** for the authorized brand. Review the data included, choose **Prepare export**, then **Download CSV**. The private file includes current email addresses, status, and added and confirmed timestamps. Each file covers one brand with at most 10,000 contacts. Fields that a spreadsheet might evaluate as formulas receive a leading apostrophe.
+
+The owner-only `audience.exportPage` command returns at most 500 contacts. A changed audience, revoked membership, interrupted request or oversized brand aborts preparation. The browser offers the download only after all pages succeed. **Discard file**, closing the export panel, signing out or switching brands releases its in-memory file.
+
 ## Prepare a campaign or grant access
 
 On a saved draft, choose **Preview & check** to see the current confirmed count and the number excluded. Those counts describe the brand now. A send would still require a separately reviewed recipient snapshot and another suppression check.
@@ -23,5 +37,7 @@ In **API & MCP**, select the intended brands and enable **Read audience totals b
 Run `npm ci` and `npm run check`. Then install a test browser with `npx playwright-core install chromium` and run `npm run audience:verify`. The browser check starts its own loopback PostgreSQL and uses 27 fictional contacts in one brand and an empty second brand. On a Mac with Chrome installed, set `FLOCKLETTER_BROWSER_CHANNEL=chrome` to use it. Set `FLOCKLETTER_AUDIENCE_SCREENSHOTS` to a local directory to capture the three views.
 
 The database and transport tests cover tied history timestamps, paging while new contacts arrive, cross-brand and cross-workspace identifiers, revoked membership, denied individual access through MCP, aggregates matching HTTP, duplicate opt-outs and opt-outs at the operation limit. Intake tests exercise real confirmation-token invalidation and queue cancellation with a captured provider. The browser checks search, paging, filtering, consent history, cancel/confirm, persistence after reload, brand switching, mobile layout, campaign counts and issuing/revoking an aggregate grant in a disposable database.
+
+CSV tests exercise multiline quoted cells and invalid UTF-8, exact address normalization, signed-in owner restrictions, brand isolation and evidence that preview adds no contacts or mail. Export tests exercise a 501-row download, a mid-export opt-out, the 10,001-row refusal and spreadsheet formula protection. The browser verifies that selecting and mapping a CSV sends zero preview requests until the owner chooses **Preview CSV**, then prepares, downloads and discards the brand export.
 
 [Directory with sample contacts](screenshots/audience-directory.png) · [Contact and consent history](screenshots/audience-consent.png) · [Mobile directory](screenshots/audience-mobile.png)

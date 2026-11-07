@@ -29,7 +29,24 @@ const signupPath = { head: {
     '413':{description:'Body exceeds 8 KiB.'},'415':{description:'Unsupported content type.'},'422':{description:'Invalid consent or input.'},
     '429':{description:'Rate limited.'},'503':{description:'Intake or its confirmation worker is unavailable.'}},
 } };
-await writeFile('docs/api/openapi.json', JSON.stringify({ openapi:'3.1.0',info:{title:'Flockletter API',version:'0.2.0',
-  description:'Campaign preparation and separately gated first-party subscriber intake. Generated from canonical schemas.'},
-  paths:{...paths,'/api/v1/brands/{brandId}/subscriber-signups':signupPath},components:{securitySchemes:{bearerAuth:{type:'http',scheme:'bearer',
+const identityPath={get:{operationId:'connection_identity',summary:'Inspect this preparation connection’s own identity and brands.',security:[{bearerAuth:[]}],responses:{
+  '200':{description:'Connection id, workspaceId, brandIds and scopes. No contact or token material.'},'401':{description:'Connection expired or revoked.'},'403':{description:'Requires a current preparation connection and issuer membership.'}}}};
+const billingEventsPath={post:{operationId:'billing_stripe_events',summary:'Receive signed events for the separately configured Stripe sandbox.',
+  parameters:[{in:'header',name:'Stripe-Signature',required:true,schema:{type:'string'}}],requestBody:{required:true,content:{'application/json':{schema:{type:'object'}}}},
+  responses:{'200':{description:'Receipt acknowledged.'},'400':{description:'Invalid signature or wrong environment.'},'503':{description:'Sandbox unavailable or provider reconciliation pending.'}}}};
+const optOutForm = {schema:{type:'object',additionalProperties:false,required:['List-Unsubscribe'],
+  properties:{'List-Unsubscribe':{type:'string',const:'One-Click'}}}};
+const marketingUnsubscribePath = {
+  parameters:[{in:'query',name:'t',required:true,description:'Opaque per-recipient capability. Keep the query out of logs.',schema:{type:'string',maxLength:128}}],
+  get:{operationId:'marketing_unsubscribe_form',summary:'Read an intentional unsubscribe form without changing state.',security:[],
+    responses:{'200':{description:'Login-free confirmation form.'},'403':{description:'Wrong host or transport.'}}},
+  post:{operationId:'marketing_unsubscribe',summary:'Honor the recipient’s opt-out for the issuing brand. Replays have the same result.',security:[],
+    requestBody:{required:true,content:{'application/x-www-form-urlencoded':optOutForm,'multipart/form-data':optOutForm}},
+    responses:{'200':{description:'Generic receipt for an attended same-origin submission.'},'204':{description:'Generic one-click acknowledgment.'},
+      '400':{description:'Invalid form.'},'403':{description:'Disallowed browser origin, context, host or transport.'},
+      '413':{description:'Form exceeds 4 KiB.'},'415':{description:'Unsupported media type or compression.'},'503':{description:'Opt-out service temporarily unavailable.'}}},
+};
+await writeFile('docs/api/openapi.json', JSON.stringify({ openapi:'3.1.0',info:{title:'Flockletter API',version:'0.3.0',
+  description:'Campaign authoring, rehearsals, audience workflows, and separately gated subscriber intake and sandbox billing. Generated from canonical schemas.'},
+  paths:{...paths,'/api/v1/brands/{brandId}/subscriber-signups':signupPath,'/api/v1/connection/identity':identityPath,'/api/v1/billing/stripe-events':billingEventsPath,'/mail/unsubscribe':marketingUnsubscribePath},components:{securitySchemes:{bearerAuth:{type:'http',scheme:'bearer',
     description:'Use only a single-brand signup connection for subscriber intake. Owner-only commands require a Clerk owner session.'}}}},null,2)+'\n');

@@ -11,6 +11,8 @@ import {
 import type { Api } from './api.js';
 import { AudienceTable } from './AudienceTable.js';
 import { ConsentTimeline } from './ConsentTimeline.js';
+import { ImportPreview } from './ImportPreview.js';
+import { AudienceExport } from './AudienceExport.js';
 import './audience.css';
 
 const explain = (error: unknown) =>
@@ -88,6 +90,8 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
       <p className="eyebrow">{brand.name} / Audience</p>
       <h1 className="page-heading">Audience</h1>
       <Counts key={revision} api={api} brandId={brand.id} />
+      <ImportPreview api={api} brand={brand} />
+      <AudienceExport api={api} brand={brand} />
       <section className="card" aria-labelledby="contact-heading">
         <h2 id="contact-heading">Contacts</h2>
         <div className="audience-controls">

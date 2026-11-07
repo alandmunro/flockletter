@@ -13,6 +13,7 @@ import { CommandService, type Actor } from '../src/server/service.js';
 import { SubscriberIntake, suppress } from '../src/server/subscribers/intake.js';
 import { loadIntakeBinding, type IntakeBinding } from '../src/server/subscribers/config.js';
 import { actionUrl } from '../src/server/subscribers/tokens.js';
+import { buildMarketingMessageLinks, loadMarketingLinks, redeemMarketingLink } from '../src/server/subscribers/marketing-links.js';
 import {
   CapturedConfirmation,
   ResendConfirmation,
@@ -599,6 +600,26 @@ describe('FFA first-party subscriber intake', () => {
     await mode(true);
     expect(await (await post()).json()).toEqual(signupAccepted);
     expect((await rows('SELECT state FROM subscribers'))[0]?.state).toBe('unsubscribed');
+  });
+  it('keeps a marketing message opt-out after a real first-party confirmation, an intake pause and a repeated storefront signup', async () => {
+    expect((await post()).status).toBe(202);
+    const confirmation=await delivered();
+    expect((await action('confirm',confirmation.confirm)).status).toBe(200);
+    const person=(await rows('SELECT id FROM subscribers'))[0]!.id;
+    const scope={workspaceId:binding.workspaceId,brandId:binding.brandId};
+    const marketing=loadMarketingLinks(binding.origin,{
+      FLOCKLETTER_UNSUBSCRIBE_BINDINGS:JSON.stringify([scope]),
+      FLOCKLETTER_UNSUBSCRIBE_SIGNING_KEY:randomBytes(32).toString('hex'),
+    })!;
+    const envelope=await db.brand(scope.workspaceId,scope.brandId,sql=>buildMarketingMessageLinks(sql,marketing,{...scope,subscriberId:person}));
+    await mode(false);
+    await redeemMarketingLink(db,marketing,new URL(envelope.bodyUrl).searchParams.get('t')!);
+    await mode(true);
+    expect(await (await post()).json()).toEqual(signupAccepted);
+    expect(await rows('SELECT state FROM subscribers')).toEqual([{state:'unsubscribed'}]);
+    expect(await rows("SELECT source FROM subscriber_consent_events WHERE event='unsubscribed'")).toEqual([{source:'marketing-unsubscribe-link'}]);
+    expect(await worker.tick()).toBe(false);
+    expect(capture.messages.size).toBe(1);
   });
   it('honors a pending recipient opt-out before an outbox provider can be called', async () => {
     await post();

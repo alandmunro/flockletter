@@ -5,6 +5,15 @@ import { AppError, requireCondition } from './errors.js';
 import { deliveryGaps, digest, inspectImage, preflight, renderPreview } from './content.js';
 import { SubscriberIntake } from './subscribers/intake.js';
 import { audienceSummary, contactDetail, listContacts, unsubscribeContact } from './subscribers/audience.js';
+import { templates, fromTemplateContent, fromProductContent } from '../shared/authoring.js';
+import { approveRehearsal, cancelRehearsal, capturedMessage, listRehearsals, processDue, rehearsalReport, reviewRehearsal, type CheckOwner } from './campaign/rehearsal.js';
+import { practiceUsage, utcPeriod, workspaceAccess } from './campaign/access.js';
+import { previewImport } from './subscribers/import-preview.js';
+import { senderStatus, registerSender, verifySender,lookupTxt,type LookupTxt } from './campaign/sender.js';
+import { exportPage } from './subscribers/audience-export.js';
+import { SandboxBilling } from './billing/service.js';
+import {operations} from './campaign/operations.js';
+import {companyDirectory,createCompany,renameCompany,createBrand,renameBrand,moveBrand} from './companies.js';
 
 export type Actor = { workspaceId: string; userId: string; actorId: string; owner: boolean; kind: 'session' | 'connection'; scopes: Capability[]; brandIds: string[] | null };
 type CampaignRow = { id: string; brand_id: string; version: number; content: CampaignContent; created_at: Date; updated_at: Date };
@@ -16,6 +25,7 @@ const connectionView = (row: ConnectionRow): Connection => ({ id: row.id, name: 
 
 export function authorize(actor: Actor, name: CommandName) {
   const scope = commands[name].scope;
+  if(scope==='campaign:rehearse' && actor.kind==='connection') requireCondition(actor.scopes.includes('read'),403,'scope_required','Rehearsals also require draft read access.');
   if (scope === 'owner') requireCondition(actor.kind === 'session' && actor.owner, 403, 'owner_required', 'Use a current workspace owner session for this action.');
   else requireCondition(actor.owner && (actor.kind === 'session' || actor.scopes.includes(scope)), 403, 'scope_required', `This action requires ${scope} access. Current owners can grant the needed scopes together in Connections.`);
 }
@@ -28,6 +38,11 @@ async function brand(sql: Sql, actor: Actor, id: string) {
 async function audienceBrand(sql: Sql, actor: Actor, id: string) {
   await brand(sql, actor, id);
   await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [id]);
+}
+async function checkPracticeScope(sql:Sql,actor:Actor,id:string){
+  if(actor.kind==='session'||actor.scopes.includes('audience:summary'))return;
+  const visible=await sql.query("SELECT id FROM campaign_rehearsals WHERE id=$1 AND audience='test'",[id]);
+  requireCondition(visible.rowCount,404,'not_found','This rehearsal is unavailable with this grant.');
 }
 async function campaign(sql: Sql, actor: Actor, id: string) {
   const result = await sql.query<CampaignRow>('SELECT * FROM campaigns WHERE id=$1', [id]);
@@ -43,7 +58,9 @@ async function checkImages(sql: Sql, actor: Actor, brandId: string, ids: string[
 }
 
 export class CommandService {
-  constructor(readonly db: Database, readonly intake = new SubscriberIntake(db)) {}
+  constructor(readonly db: Database, readonly intake = new SubscriberIntake(db),
+    readonly checkOwner:CheckOwner = async()=>{throw new AppError(503,'membership_unavailable','Current workspace membership could not be verified.');},
+    readonly resolveTxt:LookupTxt=lookupTxt,readonly billing=new SandboxBilling(db)) {}
   async execute(name: CommandName, raw: unknown, actor: Actor): Promise<unknown> {
     authorize(actor, name);
     const definition = commands[name];
@@ -53,12 +70,19 @@ export class CommandService {
       throw parsed.error;
     }
     const input = parsed.data;
+    // Provider mutations persist their own intent before crossing the network. Session URLs never enter generic receipts.
+    if(name==='billing.checkout') {const request=commands[name].schema.parse(raw);return this.billing.checkout(actor,request.plan,request.operationKey);}
+    if(name==='billing.portal') return this.billing.portal(actor,commands[name].schema.parse(raw).operationKey);
     const optOut = name === 'audience.unsubscribe' ? commands[name].schema.parse(raw) : null;
     return this.db.tenant(actor.workspaceId, async sql => {
       let requestHash = '';
       let operationKey = '';
       if (definition.mutation) {
         await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [actor.workspaceId]);
+        if (name.startsWith('rehearsal.') && 'brandId' in input) {
+          await audienceBrand(sql,actor,input.brandId);
+          if('id' in input) await checkPracticeScope(sql,actor,input.id);
+        }
         if (optOut) await audienceBrand(sql, actor, optOut.brandId);
         // A permanent opt-out has one replay identity per owner, brand and contact.
         operationKey = optOut ? `unsubscribe:${optOut.brandId}:${optOut.id}` : (input as { operationKey: string }).operationKey;
@@ -69,7 +93,7 @@ export class CommandService {
           return prior.rows[0].result;
         }
         const disablingIntake = name === 'intake.configure' && 'enabled' in input && input.enabled === false;
-        if (name !== 'connection.revoke' && !disablingIntake && !optOut) {
+        if (name !== 'connection.revoke' && name !== 'rehearsal.cancel' && !disablingIntake && !optOut) {
           const count = (await sql.query<{ count: string }>('SELECT count(*) FROM operations')).rows[0];
           requireCondition(Number(count?.count) < limits.preparationOperations, 422, 'preparation_limit', 'This foundation workspace has reached its preparation operation limit. Contact the operator; connection revocation remains available.');
         }
@@ -89,13 +113,17 @@ export class CommandService {
     switch (name) {
       case 'workspace.preflight': {
         const initialized = Boolean((await sql.query('SELECT workspace_id FROM workspaces')).rowCount);
-        return { initialized, canPrepare: initialized, canSend: false, scopes: actor.scopes, brandIds: actor.brandIds, limits, gaps: [...(!initialized ? [{ code: 'workspace_not_initialized', title: 'Name your workspace and first brand', detail: 'A workspace owner must complete setup in the dashboard.' }] : []), ...deliveryGaps()] };
+        const access=await workspaceAccess(sql);
+        const gaps=deliveryGaps().filter(gap=>gap.code!=='entitlement_not_active'||!access.plan);
+        return { initialized, canPrepare: initialized, canSend: false, scopes: actor.scopes, brandIds: actor.brandIds, limits, gaps: [...(!initialized ? [{ code: 'workspace_not_initialized', title: 'Name your workspace and first brand', detail: 'A workspace owner must complete setup in the dashboard.' }] : []), ...gaps] };
       }
       case 'workspace.get': {
         const workspace = (await sql.query<{ name: string }>('SELECT name FROM workspaces')).rows[0];
         if (!workspace) return null;
         const brands = (await sql.query<{ id: string; name: string }>('SELECT id,name FROM brands ORDER BY name')).rows.filter(b => actor.brandIds === null || actor.brandIds.includes(b.id));
-        return { name: workspace.name, brands, entitlement: 'not_activated', canManageConnections: actor.kind === 'session' && actor.owner, preparationLimits: limits, plans };
+        const access=await workspaceAccess(sql);
+        const hasDraft=Boolean((await sql.query('SELECT id FROM campaigns WHERE ($1::uuid[] IS NULL OR brand_id=ANY($1)) LIMIT 1',[actor.brandIds])).rowCount);
+        return { name: workspace.name, brands,hasDraft, entitlement: access.plan?'complimentary':'not_activated', canManageConnections: actor.kind === 'session' && actor.owner, preparationLimits: limits, plans };
       }
       case 'workspace.initialize': {
         const input = commands[name].schema.parse(raw);
@@ -107,6 +135,74 @@ export class CommandService {
       case 'campaign.list': {
         const rows = await sql.query<CampaignRow>('SELECT * FROM campaigns WHERE ($1::uuid[] IS NULL OR brand_id=ANY($1::uuid[])) ORDER BY updated_at DESC LIMIT 100', [actor.brandIds]);
         return rows.rows.map(campaignView);
+      }
+      case 'workspace.access': {
+        const access=await workspaceAccess(sql);
+        return {access,usage:actor.kind==='session'?await practiceUsage(sql,utcPeriod(new Date())):null};
+      }
+      case 'workspace.operations':return operations(sql);
+      case 'template.list': return templates;
+      case 'company.list':return companyDirectory(sql);
+      case 'company.create':return createCompany(sql,w,commands[name].schema.parse(raw).name);
+      case 'company.rename':{const {id,name:next}=commands[name].schema.parse(raw);return renameCompany(sql,id,next);}
+      case 'brand.create':{const {companyId,name:next}=commands[name].schema.parse(raw);return createBrand(sql,w,companyId,next);}
+      case 'brand.rename':{const {id,name:next}=commands[name].schema.parse(raw);return renameBrand(sql,id,next);}
+      case 'brand.move':{const {id,companyId}=commands[name].schema.parse(raw);return moveBrand(sql,id,companyId);}
+      case 'billing.status':return this.billing.status(sql,w);
+      case 'sender.status':
+      case 'sender.register':
+      case 'sender.verify': {
+        const input=commands[name].schema.parse(raw);
+        await audienceBrand(sql,actor,input.brandId);
+        if(name==='sender.register') return registerSender(sql,w,input.brandId,commands[name].schema.parse(raw).domain);
+        return name==='sender.verify'?verifySender(sql,this.resolveTxt):senderStatus(sql);
+      }
+      case 'campaign.fromTemplate': {
+        const {operationKey,brandId,templateId}=commands[name].schema.parse(raw);
+        return this.perform('campaign.create',{operationKey,brandId,content:fromTemplateContent(templateId)},actor,sql);
+      }
+      case 'campaign.fromProduct': {
+        const {operationKey,brandId,...product}=commands[name].schema.parse(raw);
+        return this.perform('campaign.create',{operationKey,brandId,content:fromProductContent(product)},actor,sql);
+      }
+      case 'audience.previewImport': {
+        const input=commands[name].schema.parse(raw);
+        await audienceBrand(sql,actor,input.brandId);
+        return previewImport(sql,input);
+      }
+      case 'audience.exportPage': {
+        const input=commands[name].schema.parse(raw);
+        await audienceBrand(sql,actor,input.brandId);
+        return exportPage(sql,input);
+      }
+      case 'rehearsal.review': {
+        const input=commands[name].schema.parse(raw),draft=await campaign(sql,actor,input.campaignId);
+        requireCondition(draft.brandId===input.brandId,404,'not_found','This campaign is unavailable for this brand.');
+        return reviewRehearsal(sql,actor,draft,input.expectedVersion,input.audience,input.dueAt);
+      }
+      case 'rehearsal.approve': {
+        const {brandId,id}=commands[name].schema.parse(raw);
+        return approveRehearsal(sql,actor,brandId,id);
+      }
+      case 'rehearsal.process': {
+        const {brandId,id}=commands[name].schema.parse(raw);
+        await rehearsalReport(sql,id);
+        return processDue(sql,w,brandId,this.checkOwner,id);
+      }
+      case 'rehearsal.cancel': return cancelRehearsal(sql,commands[name].schema.parse(raw).id);
+      case 'rehearsal.report':
+      case 'rehearsal.message': {
+        const {brandId,id}=commands[name].schema.parse(raw);
+        await audienceBrand(sql,actor,brandId);
+        await checkPracticeScope(sql,actor,id);
+        return name==='rehearsal.report'?rehearsalReport(sql,id):capturedMessage(sql,brandId,id);
+      }
+      case 'rehearsal.list': {
+        const {brandId,campaignId}=commands[name].schema.parse(raw);
+        await audienceBrand(sql,actor,brandId);
+        const draft=await campaign(sql,actor,campaignId);
+        requireCondition(draft.brandId===brandId,404,'not_found','This campaign is unavailable for this brand.');
+        return listRehearsals(sql,campaignId,actor.kind==='session'||actor.scopes.includes('audience:summary'));
       }
       case 'campaign.get': return campaign(sql, actor, commands[name].schema.parse(raw).id);
       case 'campaign.create': {
@@ -129,6 +225,8 @@ export class CommandService {
       case 'campaign.preflight': {
         const draft = await campaign(sql, actor, commands[name].schema.parse(raw).id);
         const review = preflight(draft);
+        const access=await workspaceAccess(sql);
+        if(access.plan) review.gaps=review.gaps.filter(gap=>gap.code!=='entitlement_not_active');
         if (actor.kind !== 'session' && !actor.scopes.includes('audience:summary')) return review;
         await audienceBrand(sql, actor, draft.brandId);
         const counts = await audienceSummary(sql);
@@ -208,6 +306,7 @@ export class CommandService {
       }
       case 'connection.create': {
         const input = commands[name].schema.parse(raw);
+        requireCondition(!input.scopes.includes('campaign:rehearse')||input.scopes.includes('read'),422,'invalid_rehearsal_grant','Select draft read access together with campaign rehearsals.');
         for (const id of input.brandIds) await brand(sql, actor, id);
         if (input.scopes.includes('subscriber:signup')) {
           requireCondition(input.scopes.length===1 && input.brandIds.length===1,422,'invalid_intake_grant','Use only subscriber signup access and exactly one brand.');

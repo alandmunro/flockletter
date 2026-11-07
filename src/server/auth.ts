@@ -68,6 +68,6 @@ export class Authenticator {
     try { owner = await this.identity.isOwner(identity.userId, identity.workspaceId); }
     catch { throw new AppError(503, 'membership_unavailable', 'Current workspace membership could not be verified. Retry shortly.'); }
     requireCondition(owner, 403, 'owner_required', 'This foundation is available to workspace owners. Member roles will be added with explicit brand permissions.');
-    return { ...identity, actorId: `user:${identity.userId}`, owner, kind: 'session', scopes: ['read', 'draft:write', 'assets:write', 'audience:summary'], brandIds: null };
+    return { ...identity, actorId: `user:${identity.userId}`, owner, kind: 'session', scopes: ['read', 'draft:write', 'assets:write', 'audience:summary','campaign:rehearse'], brandIds: null };
   }
 }

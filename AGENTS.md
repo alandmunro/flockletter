@@ -2,6 +2,8 @@
 
 ## Current authorization
 
+The owner requested all independently buildable work after the staging assessment. D-034 covers the staging campaign pilot, sender ownership checks, protected complimentary grants, customer administration, Stripe sandbox integration and independent engine tests. Use synthetic capture until the live delivery and commercial decisions are resolved. [Pilot operation](docs/implementation/CAMPAIGN_PILOT.md)
+
 Under the owner's direction to continue building, D-033 adds an owner audience directory and consent history, durable brand-specific opt-out and an optional aggregate-only assistant capability. Use the existing Flockletter subscriber records and verify populated flows with disposable addresses. [Audience workflow and verification](docs/implementation/AUDIENCE.md)
 
 The owner authorized implementation of Flockletter PR #2 on November 7, 2026. This adds the Flockletter side of first-party subscriber intake, scoped owner controls, confirmation and unsubscribe, suppression and captured staging tests. Keep public FFA collection, production and live-provider activation behind the gates in [the intake specification](docs/implementation/FFA_SUBSCRIBER_INTAKE.md). FFA PR #181 is the separate storefront proposal.
