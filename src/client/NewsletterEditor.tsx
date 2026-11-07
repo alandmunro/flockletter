@@ -1,13 +1,10 @@
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import {
-  type AssetSummary,
-  type Campaign,
-  type CampaignContent,
-  type Preflight,
-} from '../shared/contracts.js';
+import { type Campaign, type CampaignContent, type Preflight } from '../shared/contracts.js';
 import { studioProblem, type StudioDocument } from '../shared/studio.js';
 import { legacyToStudio, withStudio } from '../shared/studio-legacy.js';
 import { operationKey, type Api } from './api.js';
+import { useBrandImages } from './useBrandImages.js';
+import { BrandImageUpload } from './BrandImageUpload.js';
 import { CampaignFields } from './CampaignFields.js';
 import { CampaignPreview } from './CampaignPreview.js';
 import { Rehearsals } from './Rehearsals.js';
@@ -50,8 +47,13 @@ export function NewsletterEditor({
 }) {
   const [saved, setSaved] = useState(initial),
     [content, setContent] = useState(initial.content);
-  const [assets, setAssets] = useState<AssetSummary[]>([]),
-    [libraryReady, setLibraryReady] = useState(false);
+  const {
+    assets,
+    ready: libraryReady,
+    error: libraryError,
+    accept: acceptImages,
+    retry: retryImages,
+  } = useBrandImages(api, initial.brandId);
   const [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false);
@@ -70,23 +72,6 @@ export function NewsletterEditor({
     onDirty(dirty);
     return () => onDirty(false);
   }, [dirty, onDirty]);
-  useEffect(() => {
-    let active = true;
-    api
-      .call<AssetSummary[]>('asset.list', { brandId: initial.brandId })
-      .then((result) => {
-        if (active) {
-          setAssets(result);
-          setLibraryReady(true);
-        }
-      })
-      .catch((e) => {
-        if (active) setError(errorText(e));
-      });
-    return () => {
-      active = false;
-    };
-  }, [api, initial.brandId, epoch]);
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
       if (dirty) e.preventDefault();
@@ -195,6 +180,14 @@ export function NewsletterEditor({
       )}
       {!savedProblem && (
         <>
+          {libraryError && (
+            <section className="notice error">
+              <p role="alert">{libraryError}</p>
+              <button className="btn secondary" onClick={retryImages}>
+                Retry image library
+              </button>
+            </section>
+          )}
           <section className="card">
             <CampaignFields
               value={content}
@@ -209,6 +202,12 @@ export function NewsletterEditor({
               </button>
             )}
           </section>
+          {content.studio && (
+            <details className="card studio-upload">
+              <summary>Add original images</summary>
+              <BrandImageUpload api={api} brandId={saved.brandId} onUploaded={acceptImages} />
+            </details>
+          )}
           {content.studio && (
             <CanvasBoundary key={epoch} onFailure={setCanvasError}>
               <Suspense fallback={<p role="status">Loading Newsletter Studio…</p>}>

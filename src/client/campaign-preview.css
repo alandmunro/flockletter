@@ -43,6 +43,8 @@
 .campaign-preview .preview-desktop {
   width: 620px;
 }
+.studio-upload summary {cursor:pointer;font-weight:650;color:var(--wine)}
+.studio-upload[open] summary {margin-bottom:1rem}
 .studio-editor-heading {
   margin-bottom: 6px;
 }

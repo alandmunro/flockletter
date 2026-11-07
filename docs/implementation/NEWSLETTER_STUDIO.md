@@ -22,6 +22,8 @@ Studio v1 stores Flockletter block data in the campaign’s existing versioned c
 
 For a Studio revision, the blocks determine the order of headings, text, buttons, images and columns. Classic heading, body and CTA fields remain a compatibility projection for existing integrations. Clients updating a Studio draft must preserve the complete block document and collect its ordered, distinct image IDs. Classic drafts can continue through their existing commands. A customer’s product description, photos, catalog and commerce settings remain owned by the source system.
 
+With a Studio draft open, expand **Add original images** to upload JPEG, PNG or WebP files to the campaign’s own brand. After the files are saved, choose an Image block to place one. Uploading does not commit your draft edits. The standalone Image library also lets an owner select among their workspace’s brands.
+
 A document supports up to 60 blocks including column layouts and their children, six image placements, 300 text runs, 24,000 text characters and 64 KiB of serialized content. A two-column layout holds leaf blocks in each column. Links use public HTTPS URLs.
 
 The server renders the reviewed revision to email HTML and meaningful plain text. The HTML uses table layouts, inline styles and responsive column rules. Authored text and URL attributes are escaped. In a captured message, the content ID for an inline image derives from the original bytes. The plain-text version includes link destinations and image alternative text. Desktop and mobile browser previews show Flockletter’s rendering at those widths. Gmail, Outlook and native mobile email clients have independent rendering engines.

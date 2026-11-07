@@ -1,3 +1,4 @@
+import { verifyStudioImageUpload } from './check-studio-image.js';
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -273,6 +274,7 @@ try {
     await editorJourney(page, site);
     await legacyJourney(page, site);
     await unknownJourney(page, site);
+    await verifyStudioImageUpload(page, site);
   } catch (error) {
     console.error(await page.locator('main').ariaSnapshot());
     throw error;

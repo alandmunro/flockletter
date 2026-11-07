@@ -292,6 +292,10 @@ export class CommandService {
         const input = commands[name].schema.parse(raw);
         const current = await campaign(sql, actor, input.id);
         requireCondition(current.version === input.expectedVersion, 409, 'version_conflict', 'Reload the saved draft before previewing.');
+        if(current.content.studio!==undefined){
+          const issue=studioProblem(current.content.studio);
+          requireCondition(!issue,422,'studio_unsupported',issue??'This saved Studio format is unsupported.');
+        }
         const images = await sql.query<AssetRow>('SELECT name,mime,bytes,id FROM assets WHERE brand_id=$1 AND id=ANY($2::uuid[])', [current.brandId, current.content.assetIds]);
         const ordered = current.content.assetIds.map(id => images.rows.find(i => i.id === id));
         requireCondition(ordered.every(Boolean), 422, 'image_unavailable', 'A selected image is unavailable.');
