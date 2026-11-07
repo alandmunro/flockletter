@@ -1,6 +1,6 @@
 # Flockletter software requirements
 
-Version 0.5. Release requirements with an authorized foundation workstream. Updated November 6, 2026.
+Version 0.6. Release requirements with an authorized foundation workstream. Updated November 7, 2026.
 
 Flockletter is an open-source mailing SaaS for small retailers and general small businesses that want to build permission-based audiences and send newsletters and announcements. Large enterprises are outside its target market. The hosted service includes delivery and subscription management. Frosty Flamingo Apparel is the first intended customer, with complimentary service; the product must operate independently for other businesses and for self-hosters.
 
@@ -32,7 +32,7 @@ Success requires both the ordinary flow and failure handling: a payment redirect
 
 ## Release scope
 
-Release one is an MVP. It proposes public product/pricing pages; account signup and login; customer and platform administration; three hosted tiers; verified senders; subscriber import/export and confirmation forms; lists, basic segments, templates and media; previews, test sends, immediate and scheduled broadcasts; basic delivery reporting; email support with AI replies; and equivalent API/MCP operations. Account provisioning and included delivery must work for a new paying customer as well as complimentary FFA.
+Release one is an MVP. It proposes public product/pricing pages; account signup and login; customer and platform administration; three hosted tiers; verified senders; subscriber import/export and confirmation forms; lists, basic segments, a Flockletter-branded visual Newsletter Studio with templates and media; previews, test sends, immediate and scheduled broadcasts; basic delivery reporting; email support with AI replies; and equivalent API/MCP operations. Account provisioning and included delivery must work for a new paying customer as well as complimentary FFA.
 
 The following are deferred: discussion lists and inbound mailboxes; running a general-purpose public SMTP relay; SMS or push; branching customer journeys; abandoned-cart automation; AI-generated campaigns; purchased audience acquisition; agency resale; bespoke enterprise contracts; and automatic usage-overage billing. A feature offered by an upstream engine is not automatically part of Flockletter's public product.
 
@@ -45,6 +45,8 @@ The following are deferred: discussion lists and inbound mailboxes; running a ge
 **FL-PROD-003 — Public and portable source.** Original application, administration, API, MCP, billing and operational code SHALL be published under AGPLv3 with necessary build and deployment instructions. A self-hosted mode SHALL work with user-supplied infrastructure and delivery configuration without a Flockletter subscription. Private keys and customer data SHALL NOT be included.
 
 **FL-PROD-004 — Commercial clarity.** Public pricing and onboarding SHALL explain included delivery, relevant limits, billing period, cancellation terms and sending prerequisites. Unimplemented features, guaranteed inbox placement and unmeasured service levels SHALL NOT be advertised as available.
+
+**FL-PROD-005 — Third-party editor licensing and customer branding.** A visual editor integrated into Flockletter SHALL permit commercial SaaS use, modification, Flockletter branding and independent self-hosting under its actual installed license and dependency terms. The preferred candidate is Resend's `@react-email/editor` (published as MIT-licensed), not the separately maintained `react-email-editor` wrapper for Unlayer. Before incorporating a specific version, verify its distributed license and all transitive licenses, bundled assets, trademark/branding rules and external-service dependencies; preserve required upstream copyright and permission notices in distributed source and third-party notice material. Keep Flockletter's original code AGPL-3.0-only. Under the candidate MIT terms, no React Email logo, attribution footer or "powered by" message is required in the customer-facing editor or outbound newsletters; this does not waive retained copyright notices in distributed copies or independent obligations for imported assets, fonts, templates or other software. Record the final version and license evidence before implementation.
 
 The pricing objective is inexpensive service below major competitors and most smaller competitors for comparable use. The owner approved monthly USD prices of $15, $25 and $39 and the recipient limits below after a cost review. Competitor comparisons must disclose different send allowances, features and free plans; no universal cheapest-service claim is approved. [Cost assumptions](COST_MODEL.md) are planning estimates, not measured operating costs or permission to purchase services.
 
@@ -136,7 +138,7 @@ The owner requested policies similar to the existing SaaS. The following is the 
 
 ## Campaign creation and delivery
 
-**FL-CAM-001 — Authoring.** Provide reusable templates, accessible editing, subject/from/reply-to fields, plain-text alternatives, preview and bounded media management. Validate message content and uploads, including active content, unsafe URLs and unsupported formats. Do not expose private attachment or engine-storage paths through public messages.
+**FL-CAM-001 — Authoring.** Provide reusable templates, a Flockletter-branded visual newsletter editor, accessible editing, subject/from/reply-to fields, plain-text alternatives, preview and bounded media management. The MVP SHALL support core email-safe blocks such as text/headings, images, links/buttons, spacing/dividers and simple layouts; brand-aware defaults and reusable templates SHALL reduce the need to write HTML. Validate message content and uploads, including active content, unsafe URLs and unsupported formats. Do not expose private attachment or engine-storage paths through public messages.
 
 **FL-CAM-002 — Complete preflight.** Before requesting a send, report sender readiness, audience and exclusion counts, content errors, subscription access, consent/suppression checks, rate/usage limits and provider readiness. Missing critical checks SHALL block dispatch; a successful preview alone SHALL not imply delivery eligibility.
 
@@ -149,6 +151,10 @@ The owner requested policies similar to the existing SaaS. The following is the 
 **FL-CAM-006 — Eligibility at execution.** Immediately before provider submission, recheck workspace/subscription eligibility, send authority, sender verification, current suppression and remaining reserved budget. Expired, revoked or invalid work SHALL stop with an actionable reason. Marketing jobs SHALL not be used for unrelated retail fulfillment or payment operations.
 
 **FL-CAM-007 — Honest reporting.** Separate queued, submitted, provider-accepted, delivered, bounced, complained and unsubscribed outcomes. Explain that open/click measurements can be incomplete or affected by client behavior. Respect tracking configuration and retention; show freshness and incomplete provider feedback rather than fabricated success.
+
+**FL-CAM-008 — Newsletter Studio draft fidelity.** The visual studio SHALL save an editable, versioned draft representation in the authorized workspace and brand, and reopen it without silently losing supported layout, text, images or links. Render HTML and a meaningful plain-text alternative from the reviewed revision for preview, test send and eventual dispatch. Provide desktop/mobile previews, a clear saved/unsaved/error state and an explicit human review before send or schedule. Edits to the draft after authorization invalidate the prior reviewed-send intent under FL-CAM-003. Template/media reuse SHALL enforce workspace/brand boundaries and source licenses; publishing a product or saving a draft is not permission to send a campaign.
+
+**FL-CAM-009 — Replaceable editor and rendering boundary.** Evaluate `@react-email/editor` and compatible React Email rendering as the preferred Newsletter Studio implementation. Keep the editor interchangeable behind Flockletter's canonical draft, asset, preview and send contracts (FL-API-001/003), without requiring the recipient to load editor JavaScript, a proprietary hosted editor, or Resend's delivery service. Before implementation, validate the pinned candidate with Flockletter's React/TypeScript/Vite stack, durable serialization and round-trip migration, sanitized links/assets, HTML/plain-text rendering, Listmonk-compatible handoff, and representative Gmail/Outlook/mobile email clients. Unsupported editor features and imported HTML SHALL fail visibly or use a documented safe fallback rather than silently corrupting messages. The specific package/version is subject to O-014; editor selection alone does not authorize live sending.
 
 ## Included delivery and abuse controls
 
