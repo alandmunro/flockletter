@@ -574,6 +574,14 @@ describe('FFA first-party subscriber intake', () => {
     expect((await post()).status).toBe(503);
     await expect(mode(true)).rejects.toMatchObject({ code: 'preparation_limit' });
   });
+  it('isolates the signup network limit from unrelated workspace operations', async () => {
+    let response: Response | undefined;
+    for (let i = 0; i < 121; i++) response = await post(form(), id(), 'invalid');
+    expect(response?.status).toBe(429);
+    expect((await post({}, id(), 'ordinary-test-session', '/api/v1/commands/workspace.get')).status).toBe(
+      200,
+    );
+  });
   it.each(['issuer', 'connection'])(
     'rechecks %s revocation after acceptance and before confirmation dispatch',
     async (kind) => {

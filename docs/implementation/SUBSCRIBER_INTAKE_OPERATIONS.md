@@ -45,4 +45,10 @@ Rollback starts by disabling the brand and stopping the worker. Keep the additiv
 - FI-014 includes `npm run check`, generated OpenAPI parity and `node --import tsx scripts/prove-intake.ts local`. The latter runs an actual HTTP consumer with a disposable restricted Postgres role and an in-memory confirmation mailbox. The corresponding `staging` mode runs on private Render loopback, with an isolated synthetic workspace in the real Flockletter staging database; it pauses that fixture and revokes its credential on exit.
 - FI-015 keeps public FFA collection, real confirmation sending and production gated. End-to-end testing through FFA's storefront requires the separate PR #181 implementation. Real provider acceptance requires its own verified sender, signed feedback setup, acceptable-use decision and approved test recipient.
 
+### November 7 staging proof
+
+Revision `40e2805` passed 114 tests, lint, strict type checking and the production build. CI also checked generated OpenAPI parity and audited the dependency graph. [CI run](https://github.com/alandmunro/flockletter/actions/runs/42396875843)
+
+The isolated Render release process applied migration 002 to the existing `flockletter_staging` database with the dedicated migrator. `scripts/prove-intake.ts staging` then passed against the restricted staging runtime role. The FFA-format HTTP consumer received the expected 202, replay, conflict and validation responses. One captured confirmation was generated, GET left it pending, explicit POST confirmed it once, and opt-out survived a fresh signup. The private fixture revoked its token, verified the resulting 401 and paused its brand. The live storefront, live mail provider and real customer addresses were outside this controlled exercise.
+
 The local model drafted the admin intake panel, the signup schema tests and the first operator notes. Chat corrected the tests' consent/source fixture and the UI's assumed response shape, credential recovery and connection-list refresh. Chat implemented the data, authorization, worker, provider-safety and confirmation boundaries and reviewed the integrated result.

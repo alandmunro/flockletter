@@ -9,6 +9,15 @@ import { authorizeIntake } from './intake.js';
 import { applyFeedback } from '../confirmation/feedback.js';
 
 const actions = z.enum(['confirm', 'unsubscribe']);
+function networkLimit(limit: number) {
+  return rateLimit({
+    windowMs: 60_000,
+    limit,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: { code: 'rate_limited', message: 'Too many requests. Try again later.' } },
+  });
+}
 export function subscriberRoutes(
   app: Express,
   config: Config,
@@ -17,7 +26,8 @@ export function subscriberRoutes(
 ) {
   app.post(
     '/api/v1/brands/:brandId/subscriber-signups',
-    async (req, _res, next) => {
+    networkLimit(120),
+    async (req, res, next) => {
       if (!intake || !auth)
         throw new AppError(503, 'intake_unavailable', 'Subscriber intake is unavailable.');
       if (req.get('origin') || req.get('sec-fetch-site') || (config.environment === 'staging' && !req.secure))
@@ -29,7 +39,7 @@ export function subscriberRoutes(
       if (!brand.success) throw new AppError(404, 'brand_unavailable', 'The requested brand is unavailable.');
       authorizeIntake(actor, brand.data);
       if (!req.is('application/json')) throw new AppError(415, 'json_required', 'Send application/json.');
-      _res.locals.intakeActor = actor;
+      res.locals.intakeActor = actor;
       next();
     },
     express.json({ limit: 8192, strict: true, inflate: false }),
@@ -48,6 +58,7 @@ export function subscriberRoutes(
   );
   app.post(
     '/api/v1/confirmation-feedback',
+    networkLimit(120),
     express.raw({ type: 'application/json', limit: '32kb', inflate: false }),
     async (req, res) => {
       if (!intake) throw new AppError(503, 'feedback_unavailable', 'Confirmation feedback is unavailable.');
@@ -60,26 +71,16 @@ export function subscriberRoutes(
       res.sendStatus(204);
     },
   );
-  app.use(
-    '/subscriptions',
-    rateLimit({
-      windowMs: 60000,
-      limit: 60,
-      standardHeaders: 'draft-8',
-      legacyHeaders: false,
-      message: { error: { code: 'rate_limited', message: 'Too many requests. Try again later.' } },
-    }),
-    (_req, res, next) => {
-      res.set({
-        'Cache-Control': 'no-store',
-        'Referrer-Policy': 'no-referrer',
-        'X-Robots-Tag': 'noindex, nofollow',
-        'Content-Security-Policy':
-          "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'",
-      });
-      next();
-    },
-  );
+  app.use('/subscriptions', networkLimit(60), (_req, res, next) => {
+    res.set({
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+      'X-Robots-Tag': 'noindex, nofollow',
+      'Content-Security-Policy':
+        "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'",
+    });
+    next();
+  });
   app.get('/subscriptions/:action', (req, res) => {
     if (!actions.safeParse(req.params.action).success)
       throw new AppError(404, 'not_found', 'This link is unavailable.');

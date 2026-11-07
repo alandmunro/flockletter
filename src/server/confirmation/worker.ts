@@ -45,6 +45,17 @@ export class ConfirmationWorker {
   private tx<T>(fn: (sql: Sql) => Promise<T>) {
     return this.db.brand(this.binding.workspaceId, this.binding.brandId, fn);
   }
+  private async issuerActive(issuer: string) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Membership lookup timed out.')), 5000);
+      });
+      return await Promise.race([this.isOwner(issuer, this.binding.workspaceId), deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   private envelope(job: Job): ConfirmationMessage | undefined {
     const b = this.binding;
     if (
@@ -148,7 +159,7 @@ export class ConfirmationWorker {
       let outcome: DispatchOutcome;
       let issuerActive: boolean;
       try {
-        issuerActive = await this.isOwner(job.issuer_id, b.workspaceId);
+        issuerActive = await this.issuerActive(job.issuer_id);
       } catch {
         if (job.attempts >= 6)
           await this.finish(sql, id, job.uncertain ? 'unknown' : 'failed', 'membership_unavailable');

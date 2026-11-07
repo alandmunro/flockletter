@@ -46,7 +46,9 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     res.status(gaps.length ? 503 : 200).json({ ready: gaps.length === 0, gaps, sendingEnabled: false });
   });
   app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), plans, sendingEnabled: false }));
-  app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: { code: 'rate_limited', message: 'Too many requests. Retry in a minute.' } } }));
+  app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false,
+    skip: req => req.method==='POST' && (/^\/brands\/[^/]+\/subscriber-signups\/?$/i.test(req.path) || /^\/confirmation-feedback\/?$/i.test(req.path)),
+    message: { error: { code: 'rate_limited', message: 'Too many requests. Retry in a minute.' } } }));
   app.use('/api/v1', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     const origin = req.get('origin');
