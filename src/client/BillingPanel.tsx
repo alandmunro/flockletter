@@ -9,6 +9,7 @@ type BillingView = {
   plan: PlanId | null;
   trialEnd: string | null;
   canOpenPortal: boolean;
+  restartableId: string | null;
 };
 export function BillingPanel({ api }: { api: Api }) {
   const [data, setData] = useState<BillingView>(),
@@ -38,8 +39,14 @@ export function BillingPanel({ api }: { api: Api }) {
     setError('');
     try {
       const result = await api.call<{ url: string | null; status?: string }>(
-        portal ? 'billing.portal' : 'billing.checkout',
-        portal ? { operationKey: key.current } : { operationKey: key.current, plan },
+        portal ? 'billing.portal' : data?.restartableId ? 'billing.restart' : 'billing.checkout',
+        portal
+          ? { operationKey: key.current }
+          : {
+              operationKey: key.current,
+              plan,
+              ...(data?.restartableId ? { expiredId: data.restartableId } : {}),
+            },
       );
       key.current = operationKey();
       if (result.url) {
@@ -75,7 +82,7 @@ export function BillingPanel({ api }: { api: Api }) {
             <select
               id="billing-plan"
               value={plan}
-              disabled={busy || !!data.plan}
+              disabled={busy || (!!data.plan && !data.restartableId)}
               onChange={(e) => {
                 setPlan(e.target.value as PlanId);
                 key.current = operationKey();
@@ -90,7 +97,7 @@ export function BillingPanel({ api }: { api: Api }) {
             <p>Test card required for a 14-day trial. Use Stripe test data only.</p>
             <div className="actions">
               <button className="btn" disabled={busy} onClick={() => void open(false)}>
-                Open test checkout
+                {data.restartableId ? 'Restart expired test checkout' : 'Open test checkout'}
               </button>
               {data.canOpenPortal && (
                 <button className="btn secondary" disabled={busy} onClick={() => void open(true)}>

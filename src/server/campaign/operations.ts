@@ -2,7 +2,7 @@ import type { Sql } from '../db.js';
 export async function operations(sql: Sql) {
   const events = (
     await sql.query<{ id: string; action: string; actor: string; at: Date }>(`SELECT id,action,
-    CASE WHEN actor_id LIKE 'connection:%' THEN 'connection' ELSE 'owner' END AS actor,created_at AS at
+    CASE WHEN actor_id LIKE 'connection:%' THEN 'connection' ELSE 'workspace member' END AS actor,created_at AS at
     FROM audit ORDER BY created_at DESC,id DESC LIMIT 12`)
   ).rows;
   const totals = { queued: 0, blocked: 0, captured: 0, overdue: 0 };

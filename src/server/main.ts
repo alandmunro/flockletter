@@ -21,7 +21,7 @@ if (configurationGaps(config).length === 0) {
   await db.verifyBoundary();
   const identity=config.localIdentity ? localIdentity() : clerkIdentity(config);
   service = new CommandService(db, new SubscriberIntake(db, loadIntakeBinding(config), loadLinkBinding(config)),identity.isOwner,undefined,
-    new SandboxBilling(db,sandboxGateway(config.origin),process.env.FLOCKLETTER_COMPLIMENTARY_WORKSPACE));
+    new SandboxBilling(db,sandboxGateway(config.origin),process.env.FLOCKLETTER_COMPLIMENTARY_WORKSPACE),identity.team);
   auth = new Authenticator(db, identity);
   const binding=captureBinding(process.env);
   if(binding) {

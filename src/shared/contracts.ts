@@ -7,6 +7,8 @@ import { importPreviewInput } from './import-preview.js';
 import { exportPageInput } from './audience-export.js';
 import { senderDomain } from './sender.js';
 import { companyOrBrandName } from './companies.js';
+import {segmentAction,segmentEmails,segmentName} from './segments.js';
+import {clerkUserId,teamRole} from './team.js';
 
 export type { IntakeStatus } from './subscriber.js';
 export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse'] as const;
@@ -29,7 +31,7 @@ export const emptyContent = (): CampaignContent => ({ title: '', subject: '', pr
 export type AssetSummary = { id: string; name: string; mime: string; size: number; width: number; height: number; sha256: string; createdAt: string };
 export type Campaign = { id: string; brandId: string; version: number; content: CampaignContent; createdAt: string; updatedAt: string; status: 'draft' };
 export type Brand = { id: string; name: string };
-export type Workspace = { name: string; hasDraft?:boolean; brands: Brand[]; entitlement: 'not_activated'|'complimentary'; canManageConnections: boolean; preparationLimits: typeof limits; plans: typeof plans };
+export type Workspace = { name: string; hasDraft?:boolean; canEdit?:boolean; brands: Brand[]; entitlement: 'not_activated'|'complimentary'; canManageConnections: boolean; preparationLimits: typeof limits; plans: typeof plans };
 export type Gap = { code: string; title: string; detail: string; area: 'content' | 'sender' | 'audience' | 'billing' | 'delivery' };
 export type Preflight = { campaignId: string; version: number; canSend: false; contentReady: boolean; gaps: Gap[]; audience?: { confirmed: number; excluded: number } };
 export type Connection = { id: string; name: string; scopes: Capability[]; brandIds: string[]; createdAt: string; expiresAt: string; revokedAt: string | null };
@@ -44,6 +46,10 @@ export const commands = {
   'workspace.initialize': descriptor('Create the current Clerk organization workspace and first brand once. Does not activate a subscription.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(100), brandName: z.string().trim().min(1).max(100) }),
   'workspace.access': descriptor('Read the workspace access source and, for owners, practice usage. Live sends and payments are disabled.', 'read', false, {}),
   'workspace.operations': descriptor('View recent workspace actions and aggregate capture queue health.', 'owner',false,{}),
+  'workspace.retention':descriptor('Preview the 90-day review date for a verified sandbox service end.', 'owner',false,{}),
+  'team.list':descriptor('List verified Clerk workspace members, brand access and seat capacity.', 'owner',false,{offset:z.number().int().min(0).max(10000000).default(0)}),
+  'team.grant':descriptor('Give an existing Clerk workspace member explicit brand preparation access.', 'owner',true,{operationKey:key,userId:clerkUserId,permission:teamRole,brandIds:z.array(id).min(1).max(5)}),
+  'team.revoke':descriptor('Remove a member’s Flockletter brand access without changing their Clerk account.', 'owner',true,{operationKey:key,userId:clerkUserId}),
   'company.list':descriptor('List workspace companies, brands and applicable plan limits.', 'owner',false,{}),
   'company.create':descriptor('Create a company within the workspace-wide plan cap.', 'owner',true,{operationKey:key,name:companyOrBrandName}),
   'company.rename':descriptor('Rename a workspace company.', 'owner',true,{operationKey:key,id,name:companyOrBrandName}),
@@ -52,6 +58,7 @@ export const commands = {
   'brand.move':descriptor('Move an existing brand to another company in this workspace.', 'owner',true,{operationKey:key,id,companyId:id}),
   'billing.status': descriptor('View workspace-specific Stripe sandbox setup and verified status.', 'owner',false,{}),
   'billing.checkout': descriptor('Open or resume the workspace’s isolated Stripe test checkout.', 'owner',true,{operationKey:z.uuid(),plan:z.enum(['starter','growth','pro'])}),
+  'billing.restart': descriptor('Restart a verified, unused expired Stripe test checkout with a new attempt.', 'owner',true,{operationKey:z.uuid(),expiredId:z.uuid(),plan:z.enum(['starter','growth','pro'])}),
   'billing.portal': descriptor('Open the billing portal for this workspace’s sandbox customer.', 'owner',true,{operationKey:z.uuid()}),
   'template.list': descriptor('List built-in newsletter layouts.', 'read', false, {}),
   'sender.status': descriptor('Read the sender ownership challenge and provider status for this brand.', 'owner',false,{brandId:id}),
@@ -59,7 +66,7 @@ export const commands = {
   'sender.verify': descriptor('Check the public domain ownership TXT record. This never activates a provider.', 'owner',true,{operationKey:key,brandId:id}),
   'campaign.fromTemplate': descriptor('Create a campaign draft from a newsletter layout.', 'draft:write', true, {operationKey:key,brandId:id,templateId:z.enum(templateIds)}),
   'campaign.fromProduct': descriptor('Prepare a draft from approved product details and existing brand images.', 'draft:write', true, {operationKey:key,brandId:id,...productFields,assetIds:contentSchema.shape.assetIds}),
-  'rehearsal.review': descriptor('Freeze this draft and its test mailbox or confirmed synthetic recipients for review.', 'campaign:rehearse', true, {operationKey:key,brandId:id,campaignId:id,expectedVersion:z.number().int().positive(),audience:z.enum(rehearsalAudiences),dueAt:z.iso.datetime({offset:true}).optional()}),
+  'rehearsal.review': descriptor('Freeze this draft and its test mailbox or confirmed synthetic recipients. Optionally choose one same-brand group for confirmed recipients.', 'campaign:rehearse', true, {operationKey:key,brandId:audienceId,campaignId:id,expectedVersion:z.number().int().positive(),audience:z.enum(rehearsalAudiences),segmentId:audienceId.optional(),dueAt:z.iso.datetime({offset:true}).optional()}),
   'rehearsal.approve': descriptor('Queue the exact reviewed capture. No external email is sent.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
   'rehearsal.cancel': descriptor('Cancel a reviewed or queued capture and release its practice reservation.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
   'rehearsal.process': descriptor('Run one due capture for the chosen brand and rehearsal.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
@@ -78,6 +85,12 @@ export const commands = {
   'asset.uploadBatch': descriptor('Upload original JPEG, PNG or WebP images with per-file outcomes. Max 10 files, 5 MiB each, 20 MiB total. Names are metadata; files are never fetched from URLs.', 'assets:write', true, { operationKey: key, brandId: id, files: z.array(z.object({ itemKey: key, name: z.string().trim().min(1).max(160), base64: z.string().max(Math.ceil(limits.batchBytes / 3) * 4) }).strict()).min(1).max(limits.batchFiles).refine(files => new Set(files.map(f => f.itemKey)).size === files.length, 'Each file needs a unique item key.') }),
   'connection.list': descriptor('List scoped API/MCP connections without secrets. Owner session required.', 'owner', false, {}),
   'intake.status': descriptor('Inspect subscriber intake readiness and aggregate counts for one brand.', 'owner', false, { brandId: id }),
+  'segment.list': descriptor('List named groups and counts for the current owner and brand.', 'owner', false, { brandId: audienceId }),
+  'segment.create': descriptor('Create a named group in the selected brand.', 'owner', true, { brandId: audienceId, operationKey: key, name: segmentName }),
+  'segment.rename': descriptor('Rename one group in the selected brand.', 'owner', true, { brandId: audienceId, operationKey: key, segmentId: audienceId, name: segmentName }),
+  'segment.delete': descriptor('Delete one group and preserve its contacts and consent records.', 'owner', true, { brandId: audienceId, operationKey: key, segmentId: audienceId }),
+  'segment.members': descriptor('Add or remove existing brand contacts from a group. Returns counts only.', 'owner', true, { brandId: audienceId, operationKey: key, segmentId: audienceId, action: segmentAction, emails: segmentEmails }),
+  'segment.summary': descriptor('Read aggregate states for one known group in the granted brand.', 'audience:summary', false, { brandId: audienceId, segmentId: audienceId }),
   'audience.summary': descriptor('Count subscriber states for one granted brand. Returns counts only.', 'audience:summary', false, { brandId: audienceId }),
   'audience.list': descriptor('Find contacts for one brand by status or exact email. Owner session required.', 'owner', false, {
     brandId: audienceId, state: stateFilter.optional(), email: normalizedEmail.optional(),

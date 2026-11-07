@@ -60,9 +60,13 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
     await expect(verifyRuntimeBoundary(runtime,expected)).resolves.toMatchObject({protected_tables:tables.length});
     await control.query('GRANT UPDATE (token_hash) ON subscriber_marketing_links TO flockletter_staging_runtime');
     await expect(verifyRuntimeBoundary(runtime,expected)).rejects.toThrow('Unexpected runtime privileges for subscriber_marketing_links');
+    // Simulate a previously applied 009 schema alongside an unintended column privilege.
+    await control.query('ALTER TABLE audience_segment_members DROP CONSTRAINT segment_contact_membership');
+    await control.query('ALTER TABLE audience_segment_members ADD CONSTRAINT earlier_segment_fk FOREIGN KEY (workspace_id,brand_id,subscriber_id) REFERENCES subscribers(workspace_id,brand_id,id)');
     const repaired=run('apply');
     expect(repaired.status,repaired.stderr).toBe(0);
     expect((await runtime.query("SELECT has_column_privilege(current_user,'subscriber_marketing_links','token_hash','UPDATE') AS writable")).rows[0].writable).toBe(false);
+    expect((await control.query("SELECT confdeltype FROM pg_constraint WHERE conrelid='audience_segment_members'::regclass AND confrelid='subscribers'::regclass")).rows).toEqual([{confdeltype:'c'}]);
     await control.query('CREATE POLICY extra_fixture_policy ON sandbox_checkouts FOR SELECT USING(true)');
     try {
       await expect(verifyRuntimeBoundary(runtime,expected)).rejects.toThrow('workspace and brand policies');

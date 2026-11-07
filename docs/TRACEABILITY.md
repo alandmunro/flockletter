@@ -44,6 +44,8 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
+FL-AT-003/017/021/025/028/030/031/034/035 have additional partial coverage for existing Clerk members with brand-specific editor/viewer access, static groups feeding immutable review, signed expired checkout recovery, support drafting and isolated PostgreSQL restores. A verified sandbox end date yields a 90-day preview. Real inbox automation, destructive purge, customer delivery and production recovery have separate acceptance gates. [Workspace workflows](implementation/WORKSPACE_OPERATIONS.md) · [Team verification](implementation/TEAM_ACCESS.md) · [Recovery drill](implementation/SELF_HOST.md)
+
 FL-AT-003/011/017–026/031–034 have additional partial coverage for canonical plans, company/brand limits, operator grants, scoped sandbox billing, templates, product drafts, DNS challenges and captured reviewed campaigns. Tests exercise quota reservation, attended approval, suppressed/new recipients, cancellation, changed authority and independent engine rendering. Live provider delivery, paid seat enforcement and public launch acceptance remain open. [Pilot](implementation/CAMPAIGN_PILOT.md)
 
 FL-AUD-001/002/004, FL-CAM-002 and FL-API-001/002 have targeted coverage for contact lookup, consent history, permanent opt-out, brand-specific aggregate grants and current preview counts. Automated tests exercise isolated PostgreSQL, HTTP, MCP and desktop/mobile browsers. The release-wide acceptance cases for imports, reviewed snapshots and sending remain open. [Audience verification](implementation/AUDIENCE.md)

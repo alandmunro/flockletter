@@ -120,6 +120,7 @@ export function PublicPlans() {
           {hostedTrial.cardRequired ? ' The hosted trial requires a card at signup.' : ''}
         </p>
       </section>
+      <a href="/help">Email support</a>
     </main>
   );
 }

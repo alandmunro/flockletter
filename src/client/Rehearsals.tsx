@@ -8,6 +8,7 @@ import {
   type Usage,
 } from '../shared/rehearsal.js';
 import { operationKey, type Api } from './api.js';
+import type { SegmentDirectory } from '../shared/segments.js';
 
 const showError = (e: unknown) =>
   e instanceof Error ? e.message : 'Flockletter could not complete this request.';
@@ -20,13 +21,39 @@ const reasonText: Record<string, string> = {
 type Message = { subject: string; text: string; html: string; mailbox: string };
 export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
   const [audience, setAudience] = useState<RehearsalAudience>('test');
-  const [at, setAt] = useState('');
+  const [chosenGroup, setChosenGroup] = useState({ brandId: '', id: '' });
+  const [groups, setGroups] = useState<{ brandId: string; directory: SegmentDirectory } | null>(null);
+  const [groupError, setGroupError] = useState('');
+  const selectedGroup = chosenGroup.brandId === draft.brandId ? chosenGroup.id : '';
+  const groupOptions = groups?.brandId === draft.brandId ? groups.directory.items : null;
+  const selectionMissing = Boolean(
+    selectedGroup && groupOptions && !groupOptions.some((group) => group.id === selectedGroup),
+  );
+  const [scheduled, setScheduled] = useState(false);
+  const scheduleTime = useRef<HTMLInputElement>(null);
   const [items, setItems] = useState<Rehearsal[]>([]);
   const [message, setMessage] = useState<Message | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [revision, refresh] = useState(0);
   const keys = useRef(new Map<string, string>());
+  useEffect(() => {
+    if (audience !== 'confirmed') return;
+    let active = true;
+    setGroupError('');
+    setGroups(null);
+    api
+      .call<SegmentDirectory>('segment.list', { brandId: draft.brandId })
+      .then((directory) => {
+        if (active) setGroups({ brandId: draft.brandId, directory });
+      })
+      .catch((e: unknown) => {
+        if (active) setGroupError(showError(e));
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, audience, draft.brandId, revision]);
   useEffect(() => {
     let current = true;
     api
@@ -89,14 +116,50 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
               <option value="confirmed">Confirmed test contacts in this brand</option>
             </select>
           </div>
+          {audience === 'confirmed' && (
+            <div className="field">
+              <label htmlFor="capture-group">Audience group</label>
+              <select
+                id="capture-group"
+                disabled={!groupOptions}
+                value={selectedGroup}
+                onChange={(event) => setChosenGroup({ brandId: draft.brandId, id: event.target.value })}
+              >
+                <option value="">Entire brand</option>
+                {selectionMissing && (
+                  <option value={selectedGroup}>Group unavailable · choose another</option>
+                )}
+                {groupOptions?.map((group) => (
+                  <option value={group.id} key={group.id}>
+                    {group.name}
+                  </option>
+                ))}
+              </select>
+              {groupError && (
+                <p role="alert">
+                  {groupError}{' '}
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => refresh((value) => value + 1)}
+                  >
+                    Reload groups
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
           <div className="field">
-            <label htmlFor="capture-time">Schedule (local time, optional)</label>
-            <input
-              id="capture-time"
-              type="datetime-local"
-              value={at}
-              onChange={(e) => setAt(e.target.value)}
-            />
+            <label>
+              <input type="checkbox" checked={scheduled} onChange={(e) => setScheduled(e.target.checked)} />{' '}
+              Schedule for later
+            </label>
+            {scheduled && (
+              <>
+                <label htmlFor="capture-time">Scheduled time (local)</label>
+                <input ref={scheduleTime} id="capture-time" type="datetime-local" required />
+              </>
+            )}
           </div>
         </div>
         <p className="help">
@@ -107,12 +170,17 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
         <button
           className="btn"
           type="button"
+          disabled={audience === 'confirmed' && (!groupOptions || selectionMissing)}
           onClick={() =>
             void action(async () => {
+              const at = scheduled ? scheduleTime.current?.value : '';
+              if (scheduled && (!at || !Number.isFinite(Date.parse(at)) || Date.parse(at) <= Date.now()))
+                throw new Error('Enter a future local time before creating this scheduled review.');
               await mutate('rehearsal.review', {
                 ...context,
                 expectedVersion: draft.version,
                 audience,
+                ...(audience === 'confirmed' && selectedGroup ? { segmentId: selectedGroup } : {}),
                 ...(at ? { dueAt: new Date(at).toISOString() } : {}),
               });
             })
@@ -129,7 +197,8 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
       {items.map((item) => (
         <article className="card" key={item.id}>
           <h3>
-            {item.audience === 'test' ? 'Test mailbox' : 'Confirmed test audience'} · version {item.version}
+            {item.segment?.name ?? (item.audience === 'test' ? 'Test mailbox' : 'Confirmed test audience')} ·
+            version {item.version}
           </h3>
           <p>
             <strong>{item.state}</strong> · {new Date(item.dueAt).toLocaleString()} · {item.selected} selected

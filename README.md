@@ -24,6 +24,10 @@ The application uses TypeScript, React/Vite, Express and PostgreSQL. You can cre
 
 ## Local setup
 
+See the [workspace workflows](docs/implementation/WORKSPACE_OPERATIONS.md) for group rehearsals, team permissions, billing recovery, retention and support.
+
+For a standalone Docker installation, a synthetic loopback owner demo or a scoped PostgreSQL restore drill, see the [self-hosting guide](docs/implementation/SELF_HOST.md).
+
 Use Node 24 and a disposable loopback PostgreSQL instance:
 
 1. Run `npm ci`.

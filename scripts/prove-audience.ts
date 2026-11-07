@@ -8,6 +8,7 @@ import { chromium, type Browser, type Page } from 'playwright-core';
 import { startDatabase } from './database-fixture.js';
 import { verifyCompanies } from './check-companies.js';
 import { verifyPublicPlans } from './check-public-plans.js';
+import { verifySegments } from './check-segments-browser.js';
 import { verifyAuthoring } from './check-authoring-browser.js';
 import { createApp } from '../src/server/app.js';
 import { Authenticator, localIdentity } from '../src/server/auth.js';
@@ -238,6 +239,19 @@ async function verify(page: Page, origin: string) {
   await page.getByRole('heading',{name:'Captured email',exact:true}).waitFor();
   await page.frameLocator('iframe[title="Captured campaign email"]').getByRole('heading',{name:'November on the trail'}).waitFor();
   await photo(page,'campaign-capture');
+  await page.getByRole('checkbox',{name:'Schedule for later'}).check();
+  await button('Review capture').click();
+  await page.getByText('Enter a future local time before creating this scheduled review.',{exact:true}).waitFor();
+  const when=new Date(Date.now()+3600000);
+  const localTime=new Date(when.getTime()-when.getTimezoneOffset()*60000).toISOString().slice(0,16);
+  await page.getByLabel('Scheduled time (local)').fill(localTime);
+  await button('Review capture').click();
+  const reviewed=page.locator('article').filter({has:button('Approve capture')});
+  await reviewed.waitFor();
+  assert.ok((await reviewed.innerText()).includes(new Date(localTime).toLocaleTimeString('en-US')),'Saved future time matches selection');
+  await reviewed.getByRole('button',{name:'Approve capture'}).click();
+  await button('Process if due').waitFor();
+  await button('Cancel rehearsal').click();
   await button('API & MCP').click();
   const totalsScope = page.getByRole('checkbox', { name: 'Read audience totals by status' });
   assert.equal(await totalsScope.isChecked(), false);
@@ -253,35 +267,41 @@ async function verify(page: Page, origin: string) {
 }
 const fixture = await startDatabase();
 const db = new Database(fixture.url);
-const server = createServer();
 let browser: Browser | undefined;
 try {
   await db.verifyBoundary();
   const service = new CommandService(db,undefined,localIdentity().isOwner);
   await seed(db, service);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  if (!address || typeof address === 'string') throw Error('Expected a local HTTP port.');
-  const origin = 'http://127.0.0.1:' + address.port;
-  const config = loadConfig({
-    APP_ENV: 'local',
-    APP_ORIGIN: origin,
-    LOCAL_TEST_IDENTITY: 'true',
-    DATABASE_URL: fixture.url,
-  });
-  server.on('request', createApp(config, service, new Authenticator(db, localIdentity())));
   browser = await chromium.launch({ channel: process.env.FLOCKLETTER_BROWSER_CHANNEL ?? 'chromium' });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
-  page.setDefaultTimeout(8000);
-  await verify(page, origin);
-  await verifyPublicPlans(page,origin,photo);
-  await verifyAuthoring(page,origin,photo);
-  await verifyCompanies(page,origin,fixture.adminUrl,actor.workspaceId);
-  console.log('Audience, pricing, onboarding, campaign authoring and company management browser checks passed using disposable sample data.');
+  const journeys: ((page:Page,origin:string)=>Promise<void>)[] = [
+    verify,
+    (page,origin)=>verifyPublicPlans(page,origin,photo),
+    (page,origin)=>verifyAuthoring(page,origin,photo),
+    (page,origin)=>verifySegments(page,origin,fixture.adminUrl,actor.workspaceId),
+    (page,origin)=>verifyCompanies(page,origin,fixture.adminUrl,actor.workspaceId),
+  ];
+  // Each independent journey gets a fresh browser session and server-side rate-limit window.
+  for (const journey of journeys) {
+    const server = createServer();
+    const page = await browser.newPage({viewport:{width:1280,height:900},locale:'en-US'});
+    try {
+      server.listen(0,'127.0.0.1');
+      await once(server,'listening');
+      const address=server.address();
+      if(!address||typeof address==='string') throw Error('Expected a local HTTP port.');
+      const origin='http://127.0.0.1:'+address.port;
+      const config=loadConfig({APP_ENV:'local',APP_ORIGIN:origin,LOCAL_TEST_IDENTITY:'true',DATABASE_URL:fixture.url});
+      server.on('request',createApp(config,service,new Authenticator(db,localIdentity())));
+      page.setDefaultTimeout(8000);
+      await journey(page,origin);
+    } finally {
+      await page.close();
+      if(server.listening) await new Promise<void>(resolve=>server.close(()=>resolve()));
+    }
+  }
+  console.log('Audience, groups, pricing, onboarding, campaign authoring and company management browser checks passed using disposable sample data.');
 } finally {
   await browser?.close();
-  if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
   await db.close();
   await fixture.stop();
 }

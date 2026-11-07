@@ -135,6 +135,104 @@ describe('isolated billing sandbox', () => {
     expect(await new CommandService(db).execute('workspace.get', {}, actor)).toMatchObject({
       entitlement: 'not_activated',
     });
+    const service = new CommandService(db);
+    expect(await service.execute('workspace.retention', {}, actor)).toMatchObject({
+      status: 'no_verified_closure',
+      purgeEnabled: false,
+    });
+    const end = new Date(Date.now() - 92 * 86400000);
+    providerState = { ...providerState, status: 'canceled', effectiveEnd: end };
+    await billing.feedback(raw('evt_end', 'customer.subscription.deleted', 'sub_123'), 'signed');
+    expect(await service.execute('workspace.retention', {}, actor)).toMatchObject({
+      status: 'operator_review_due',
+      effectiveEnd: end.toISOString(),
+      purgeEnabled: false,
+    });
+  });
+  it('restarts only a signed, unused expiration once and preserves its evidence across unknown outcomes', async () => {
+    const sourceKey = key();
+    await billing.checkout(actor, 'starter', sourceKey);
+    const previous = calls[0]!;
+    const expire = (event: string) =>
+      Buffer.from(
+        JSON.stringify({
+          id: event,
+          kind: 'checkout.session.expired',
+          workspace,
+          intent: previous,
+          objectId: providerState.id,
+        }),
+      );
+    providerState = { ...providerState, status: 'expired', url: null };
+    await billing.checkout(actor, 'starter', key());
+    expect((await status()).restartableId).toBeNull();
+    await expect(billing.restart(actor, 'pro', previous, key())).rejects.toMatchObject({
+      code: 'checkout_not_restartable',
+    });
+    const receipt = expire('evt_expired');
+    await billing.feedback(receipt, 'signature');
+    expect((await status()).restartableId).toBe(previous);
+    await expect(billing.restart(actor, 'pro', previous, sourceKey)).rejects.toMatchObject({
+      code: 'operation_conflict',
+    });
+    providerState = {
+      ...providerState,
+      id: 'cs_test_' + key(),
+      status: 'open',
+      url: 'https://checkout.stripe.com/c/pay/new',
+    };
+    rejectOnce = true;
+    const restartKey = key();
+    await expect(billing.restart(actor, 'pro', previous, restartKey)).rejects.toMatchObject({
+      code: 'checkout_pending',
+    });
+    const replay = await Promise.all([
+      billing.restart(actor, 'pro', previous, restartKey),
+      billing.restart(actor, 'pro', previous, restartKey),
+    ]);
+    expect(replay.every((r) => r.status === 'open')).toBe(true);
+    await expect(billing.restart(actor, 'pro', previous, key())).rejects.toMatchObject({
+      code: 'checkout_not_restartable',
+    });
+    await expect(billing.restart(actor, 'growth', previous, restartKey)).rejects.toMatchObject({
+      code: 'operation_conflict',
+    });
+    expect(new Set(calls).size).toBe(2);
+    await billing.feedback(receipt, 'signature');
+    expect(await status()).toMatchObject({ status: 'open', plan: 'pro', restartableId: null });
+    expect(
+      await db.tenant(
+        workspace,
+        async (sql) => (await sql.query('SELECT id,replacement_id FROM sandbox_expired_checkouts')).rows,
+      ),
+    ).toEqual([{ id: previous, replacement_id: calls.at(-1) }]);
+    expect(
+      await db.tenant(
+        'org_other',
+        async (sql) => (await sql.query('SELECT id FROM sandbox_expired_checkouts')).rowCount,
+      ),
+    ).toBe(0);
+  });
+  it('does not restart an expired session that already created a customer', async () => {
+    await billing.checkout(actor, 'starter', key());
+    const intent = calls[0]!;
+    providerState = { ...providerState, status: 'expired', url: null, customer: 'cus_already_created' };
+    await billing.feedback(
+      Buffer.from(
+        JSON.stringify({
+          id: 'evt_used',
+          kind: 'checkout.session.expired',
+          workspace,
+          intent,
+          objectId: providerState.id,
+        }),
+      ),
+      'signature',
+    );
+    expect((await status()).restartableId).toBeNull();
+    await expect(billing.restart(actor, 'pro', intent, key())).rejects.toMatchObject({
+      code: 'checkout_not_restartable',
+    });
   });
   it('keeps opted-out sandbox configuration and complimentary accounts away from provider calls', async () => {
     await expect(new SandboxBilling(db).checkout(actor, 'starter', key())).rejects.toMatchObject({

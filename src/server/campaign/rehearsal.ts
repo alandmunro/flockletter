@@ -12,6 +12,7 @@ import {
   type RehearsalAudience,
 } from '../../shared/rehearsal.js';
 import { reservePractice, utcPeriod, workspaceAccess } from './access.js';
+import { requireSegment } from '../subscribers/segments.js';
 
 // This transport has no network or external provider. Only reserved test destinations can enter its mailbox.
 export function isPracticeAddress(address: string) {
@@ -27,6 +28,8 @@ type Row = {
   creator_id: string;
   actor_id: string;
   audience: RehearsalAudience;
+  segment_id: string | null;
+  segment_name: string | null;
   state: Rehearsal['state'];
   due_at: Date;
   reviewed_at: Date;
@@ -52,6 +55,9 @@ export async function rehearsalReport(sql: Sql, id: string): Promise<Rehearsal> 
     campaignId: row.campaign_id,
     version: row.version,
     audience: row.audience,
+    ...(row.segment_id && row.segment_name
+      ? { segment: { id: row.segment_id, name: row.segment_name } }
+      : {}),
     state: row.state,
     dueAt: row.due_at.toISOString(),
     selected: row.selected,
@@ -79,7 +85,14 @@ export async function reviewRehearsal(
   expectedVersion: number,
   audience: RehearsalAudience,
   due?: string,
+  segmentId?: string,
 ) {
+  requireCondition(
+    !segmentId || audience === 'confirmed',
+    422,
+    'invalid_segment_audience',
+    'Choose a group only for confirmed test contacts.',
+  );
   requireCondition(
     draft.version === expectedVersion,
     409,
@@ -108,6 +121,7 @@ export async function reviewRehearsal(
     'A complimentary plan is required for a brand audience rehearsal.',
   );
   const id = randomUUID();
+  let segment: { id: string; name: string } | undefined;
   let selected = 1,
     excluded = 0;
   let recipients: { id: string; email_normalized: string }[] = [];
@@ -118,13 +132,22 @@ export async function reviewRehearsal(
       'scope_required',
       'Grant audience totals to review a brand audience.',
     );
-    // Protect admission before expanding the result. A larger selection requires explicit segment support.
+    if (segmentId) segment = await requireSegment(sql, segmentId, true);
+    // Take audience totals and confirmed test contacts from the same statement snapshot.
     const hits = (
-      await sql.query<{ id: string; email_normalized: string }>(
-        `SELECT id,email_normalized FROM subscribers WHERE state='confirmed'
-      AND (lower(split_part(email_normalized,'@',2)) LIKE '%.test' OR lower(split_part(email_normalized,'@',2)) IN ('example.com','example.net','example.org'))
-      ORDER BY id LIMIT $1`,
-        [maxPracticeRecipients + 1],
+      await sql.query<{ id: string; email_normalized: string; total: number }>(
+        `WITH population AS MATERIALIZED (
+          SELECT s.id,s.email_normalized,s.state FROM subscribers s
+          WHERE $2::uuid IS NULL OR EXISTS (
+            SELECT FROM audience_segment_members m
+            WHERE (m.workspace_id,m.brand_id,m.subscriber_id)=(s.workspace_id,s.brand_id,s.id) AND m.segment_id=$2
+          )
+        )
+        SELECT id,email_normalized,(SELECT count(*)::int FROM population) AS total FROM population
+        WHERE state='confirmed' AND (lower(split_part(email_normalized,'@',2)) LIKE '%.test'
+          OR lower(split_part(email_normalized,'@',2)) IN ('example.com','example.net','example.org'))
+        ORDER BY id LIMIT $1`,
+        [maxPracticeRecipients + 1, segmentId ?? null],
       )
     ).rows;
     requireCondition(
@@ -135,7 +158,7 @@ export async function reviewRehearsal(
     );
     recipients = hits;
     selected = hits.length;
-    excluded = Number((await sql.query('SELECT count(*) FROM subscribers')).rows[0]!.count) - selected;
+    excluded = hits[0]!.total - selected;
   }
   const assetIds = draft.content.assetIds;
   const assets = (
@@ -154,7 +177,7 @@ export async function reviewRehearsal(
   const rendered = renderPreview(draft, images as typeof assets);
   await sql.query(
     `INSERT INTO campaign_rehearsals(workspace_id,brand_id,id,campaign_id,version,content,creator_id,actor_id,
-    audience,access_revision,selected,excluded,due_at,period,render_html,render_text) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+    audience,access_revision,selected,excluded,due_at,period,render_html,render_text,segment_id,segment_name) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
     [
       actor.workspaceId,
       draft.brandId,
@@ -172,6 +195,8 @@ export async function reviewRehearsal(
       utcPeriod(dueAt),
       rendered.html,
       rendered.text,
+      segment?.id ?? null,
+      segment?.name ?? null,
     ],
   );
   if (audience === 'test') {

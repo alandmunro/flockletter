@@ -17,6 +17,7 @@ export type BillingIntent = {
   subscription_id: string | null;
   status: string;
   created_at: Date;
+  observed_at: Date | null;
   trial_end: Date | null;
 };
 export type GatewayEvent = { id: string; kind: string; workspace: string; intent: string; objectId: string };
@@ -27,6 +28,7 @@ export type SessionResult = {
   subscription: string | null;
   status: string;
   trialEnd: Date | null;
+  effectiveEnd?: Date | null;
 };
 export interface BillingGateway {
   account: string;
@@ -132,6 +134,10 @@ export function sandboxGateway(
       status,
       customer: ref(s.customer),
       subscription: ref(s.subscription),
+      effectiveEnd:
+        subscription?.status === 'canceled' && subscription.ended_at
+          ? new Date(subscription.ended_at * 1000)
+          : null,
       trialEnd,
     };
   }

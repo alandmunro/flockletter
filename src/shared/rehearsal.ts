@@ -19,6 +19,7 @@ export type Rehearsal = {
   campaignId: string;
   version: number;
   audience: RehearsalAudience;
+  segment?: { id: string; name: string };
   state: 'reviewed' | 'queued' | 'completed' | 'cancelled' | 'blocked';
   dueAt: string;
   selected: number;

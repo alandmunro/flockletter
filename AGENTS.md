@@ -12,6 +12,8 @@ The owner has authorized the foundation implementation and staging verification,
 
 Read [the SRD](docs/SRD.md), [decisions](docs/DECISIONS.md) and [phase 1 review](docs/PHASE_1.md) before work. Accepted owner decisions, proposed requirements and unresolved decisions are distinct. Do not silently promote a proposal to an accepted decision. Later explicit owner instructions take precedence; update the documents to reflect them.
 
+D-035 covers brand-specific member preparation, static group capture, support drafts, retention preview and isolated self-host recovery under D-030. These workflows use explicit scopes and the same source of authority in UI, API and MCP. [Workspace workflows](docs/implementation/WORKSPACE_OPERATIONS.md)
+
 ## Product and public repository boundaries
 
 - The product is Flockletter; the repository slug is `flockletter`.
