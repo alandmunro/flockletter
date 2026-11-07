@@ -1,0 +1,204 @@
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.audience-brand {
+  display: block;
+  max-width: 25rem;
+  margin: 0 0 1.25rem;
+}
+.audience-counts {
+  margin: 1.5rem 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+.audience-counts div {
+  padding: 1rem 1.25rem;
+}
+.audience-counts div + div {
+  border-left: 1px solid var(--border);
+}
+.audience-counts dt {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.audience-counts dd {
+  margin: 0;
+  color: var(--wine);
+  font-size: 1.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.audience-controls,
+.audience-controls form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.audience-controls {
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+}
+.audience-controls label,
+.audience-brand {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.audience-controls form label {
+  margin-bottom: 0;
+}
+.audience-controls input,
+.audience-controls select,
+.audience-brand select {
+  margin-top: 0.25rem;
+}
+.audience-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.audience-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.94rem;
+}
+.audience-table-scroll th,
+.audience-table-scroll td {
+  text-align: left;
+  padding: 0.8rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.audience-table-scroll th {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.contact-link {
+  background: transparent;
+  border: 0;
+  color: var(--wine);
+  padding: 0.45rem 0.15rem;
+  text-align: left;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  overflow-wrap: anywhere;
+}
+.contact-state {
+  display: inline-block;
+  background: #f6e7eb;
+  color: #6a1936;
+  border-radius: 6px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+}
+.state-confirmed {
+  background: #e5f2eb;
+  color: #22593e;
+}
+.state-pending {
+  background: #fbefd9;
+  color: #71470e;
+}
+.audience-pager {
+  margin-top: 1rem;
+}
+.contact-detail-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  align-items: start;
+}
+.contact-identity h2,
+.consent-timeline dd {
+  overflow-wrap: anywhere;
+}
+.contact-identity dl,
+.consent-timeline dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem 0.8rem;
+}
+.contact-identity dd,
+.consent-timeline dd {
+  margin: 0;
+}
+.contact-identity dt,
+.consent-timeline dt {
+  color: var(--muted);
+}
+.consent-timeline {
+  list-style: none;
+  padding-left: 1rem;
+  margin: 0;
+}
+.consent-timeline li {
+  position: relative;
+  border-left: 1px solid var(--border);
+  padding: 0 0 1.25rem 1.15rem;
+}
+.consent-timeline li:last-child {
+  padding-bottom: 0;
+}
+.consent-timeline li::before {
+  content: '';
+  position: absolute;
+  left: -0.3rem;
+  top: 0.5rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.consent-timeline p {
+  margin: 0 0 0.4rem;
+}
+.consent-timeline time {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.consent-timeline dl {
+  margin: 0;
+  font-size: 0.88rem;
+}
+.unsubscribe-review {
+  border-block-start: 1px solid var(--border);
+  padding-top: 1rem;
+}
+.audience-preview-count {
+  padding-block: 0.5rem;
+}
+@media (max-width: 750px) {
+  .audience-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .audience-counts div:nth-child(3) {
+    border-left: 0;
+  }
+  .audience-counts div:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
+  .contact-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .audience-controls form {
+    width: 100%;
+  }
+}
+@media (max-width: 480px) {
+  .audience-counts div {
+    padding: 0.75rem;
+  }
+  .audience-table-scroll table {
+    min-width: 25rem;
+  }
+}

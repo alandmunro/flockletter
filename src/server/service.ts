@@ -4,6 +4,7 @@ import { Database, type Sql } from './db.js';
 import { AppError, requireCondition } from './errors.js';
 import { deliveryGaps, digest, inspectImage, preflight, renderPreview } from './content.js';
 import { SubscriberIntake } from './subscribers/intake.js';
+import { audienceSummary, contactDetail, listContacts, unsubscribeContact } from './subscribers/audience.js';
 
 export type Actor = { workspaceId: string; userId: string; actorId: string; owner: boolean; kind: 'session' | 'connection'; scopes: Capability[]; brandIds: string[] | null };
 type CampaignRow = { id: string; brand_id: string; version: number; content: CampaignContent; created_at: Date; updated_at: Date };
@@ -24,6 +25,10 @@ async function brand(sql: Sql, actor: Actor, id: string) {
   const found = await sql.query('SELECT id FROM brands WHERE id=$1', [id]);
   requireCondition(found.rowCount, 404, 'not_found', 'This brand is unavailable.');
 }
+async function audienceBrand(sql: Sql, actor: Actor, id: string) {
+  await brand(sql, actor, id);
+  await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [id]);
+}
 async function campaign(sql: Sql, actor: Actor, id: string) {
   const result = await sql.query<CampaignRow>('SELECT * FROM campaigns WHERE id=$1', [id]);
   const row = result.rows[0];
@@ -42,13 +47,21 @@ export class CommandService {
   async execute(name: CommandName, raw: unknown, actor: Actor): Promise<unknown> {
     authorize(actor, name);
     const definition = commands[name];
-    const input = definition.schema.parse(raw);
+    const parsed = definition.schema.safeParse(raw);
+    if (!parsed.success) {
+      if (name.startsWith('audience.')) throw new AppError(422, 'invalid_audience_input', 'Review the brand, contact, email, status or page.');
+      throw parsed.error;
+    }
+    const input = parsed.data;
+    const optOut = name === 'audience.unsubscribe' ? commands[name].schema.parse(raw) : null;
     return this.db.tenant(actor.workspaceId, async sql => {
       let requestHash = '';
       let operationKey = '';
       if (definition.mutation) {
         await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [actor.workspaceId]);
-        operationKey = (input as { operationKey: string }).operationKey;
+        if (optOut) await audienceBrand(sql, actor, optOut.brandId);
+        // A permanent opt-out has one replay identity per owner, brand and contact.
+        operationKey = optOut ? `unsubscribe:${optOut.brandId}:${optOut.id}` : (input as { operationKey: string }).operationKey;
         requestHash = digest(JSON.stringify({ name, input }));
         const prior = await sql.query<{ request_hash: string; result: unknown }>('SELECT request_hash,result FROM operations WHERE actor_id=$1 AND operation_key=$2', [actor.actorId, operationKey]);
         if (prior.rows[0]) {
@@ -56,7 +69,7 @@ export class CommandService {
           return prior.rows[0].result;
         }
         const disablingIntake = name === 'intake.configure' && 'enabled' in input && input.enabled === false;
-        if (name !== 'connection.revoke' && !disablingIntake) {
+        if (name !== 'connection.revoke' && !disablingIntake && !optOut) {
           const count = (await sql.query<{ count: string }>('SELECT count(*) FROM operations')).rows[0];
           requireCondition(Number(count?.count) < limits.preparationOperations, 422, 'preparation_limit', 'This foundation workspace has reached its preparation operation limit. Contact the operator; connection revocation remains available.');
         }
@@ -66,7 +79,7 @@ export class CommandService {
         // Connection secrets are returned once, never persisted in replay records or audit.
         const stored = name === 'connection.create' ? { ...(result as Record<string, unknown>), token: undefined, secretAlreadyIssued: true } : result;
         await sql.query('INSERT INTO operations(workspace_id,actor_id,operation_key,request_hash,result) VALUES($1,$2,$3,$4,$5)', [actor.workspaceId, actor.actorId, operationKey, requestHash, JSON.stringify(stored)]);
-        await sql.query('INSERT INTO audit(workspace_id,id,actor_id,action) VALUES($1,$2,$3,$4)', [actor.workspaceId, randomUUID(), actor.actorId, name]);
+        await sql.query('INSERT INTO audit(workspace_id,id,actor_id,action,resource_id) VALUES($1,$2,$3,$4,$5)', [actor.workspaceId, randomUUID(), actor.actorId, name, optOut?.id ?? null]);
       }
       return result;
     });
@@ -113,7 +126,14 @@ export class CommandService {
         requireCondition(result.rows[0], 409, 'version_conflict', 'This draft changed. Reload before saving.');
         return campaignView(result.rows[0]);
       }
-      case 'campaign.preflight': return preflight(await campaign(sql, actor, commands[name].schema.parse(raw).id));
+      case 'campaign.preflight': {
+        const draft = await campaign(sql, actor, commands[name].schema.parse(raw).id);
+        const review = preflight(draft);
+        if (actor.kind !== 'session' && !actor.scopes.includes('audience:summary')) return review;
+        await audienceBrand(sql, actor, draft.brandId);
+        const counts = await audienceSummary(sql);
+        return { ...review, audience: { confirmed: counts.confirmed, excluded: counts.total - counts.confirmed } };
+      }
       case 'campaign.preview': {
         const input = commands[name].schema.parse(raw);
         const current = await campaign(sql, actor, input.id);
@@ -160,6 +180,22 @@ export class CommandService {
         return { results, storageBytes: storage, storageLimitBytes: limits.workspaceBytes };
       }
       case 'connection.list': return (await sql.query<ConnectionRow>('SELECT id,name,scopes,brand_ids,created_at,expires_at,revoked_at FROM connections ORDER BY created_at DESC LIMIT 100')).rows.map(connectionView);
+      case 'audience.summary': {
+        await audienceBrand(sql, actor, commands[name].schema.parse(raw).brandId);
+        return audienceSummary(sql);
+      }
+      case 'audience.list': {
+        const input = commands[name].schema.parse(raw);
+        await audienceBrand(sql, actor, input.brandId);
+        return listContacts(sql, input);
+      }
+      case 'audience.contact': {
+        const input = commands[name].schema.parse(raw);
+        await audienceBrand(sql, actor, input.brandId);
+        return contactDetail(sql, input.id, input.cursor);
+      }
+      case 'audience.unsubscribe':
+        return unsubscribeContact(sql, commands[name].schema.parse(raw).id);
       case 'intake.status': {
         const input=commands[name].schema.parse(raw);
         await brand(sql,actor,input.brandId);

@@ -75,8 +75,9 @@ export async function recordTransition(
 export async function suppress(
   sql: Sql,
   subscriberId: string,
-  evidenceId: string,
+  evidenceId: string | null,
   state: 'unsubscribed' | 'hard_bounced' | 'complained',
+  source: string = state,
 ) {
   const update = await sql.query(
     `UPDATE subscribers SET state=$2,updated_at=now() WHERE id=$1 AND state<>$2
@@ -92,7 +93,15 @@ export async function suppress(
     "UPDATE subscriber_outbox SET state='cancelled',lease_id=NULL,lease_until=NULL WHERE subscriber_id=$1 AND state IN ('pending','leased') AND attempts=0",
     [subscriberId],
   );
-  await recordTransition(sql, evidenceId, state === 'unsubscribed' ? 'unsubscribed' : 'suppressed', state);
+  if (evidenceId) {
+    await recordTransition(sql, evidenceId, state === 'unsubscribed' ? 'unsubscribed' : 'suppressed', source);
+  } else {
+    // An owner can stop a legacy contact even if no original signup evidence is available.
+    if (state !== 'unsubscribed' || source !== 'workspace-owner') throw new Error('A source consent event is required.');
+    await sql.query(`INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain)
+      SELECT workspace_id,brand_id,$2,id,'unsubscribed','brand_marketing','owner-opt-out-v1',$3,'workspace-owner',''
+      FROM subscribers WHERE id=$1`, [subscriberId, randomUUID(), hash('Stop marketing to this contact for this brand.')]);
+  }
 }
 
 export class SubscriberIntake {

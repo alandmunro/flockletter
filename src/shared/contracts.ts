@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { normalizedEmail } from './subscriber.js';
+import { stateFilter } from './audience.js';
 
 export type { IntakeStatus } from './subscriber.js';
-export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup'] as const;
+export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary'] as const;
 export type Capability = typeof capabilities[number];
 export const limits = { fileBytes: 5 * 1024 * 1024, batchBytes: 20 * 1024 * 1024, batchFiles: 10, imagePixels: 25_000_000, campaignImages: 6, workspaceBytes: 100 * 1024 * 1024, assets: 500, drafts: 100, connections: 10, preparationOperations: 2000 } as const;
 export const plans = [
@@ -22,11 +24,12 @@ export type Campaign = { id: string; brandId: string; version: number; content: 
 export type Brand = { id: string; name: string };
 export type Workspace = { name: string; brands: Brand[]; entitlement: 'not_activated'; canManageConnections: boolean; preparationLimits: typeof limits; plans: typeof plans };
 export type Gap = { code: string; title: string; detail: string; area: 'content' | 'sender' | 'audience' | 'billing' | 'delivery' };
-export type Preflight = { campaignId: string; version: number; canSend: false; contentReady: boolean; gaps: Gap[] };
+export type Preflight = { campaignId: string; version: number; canSend: false; contentReady: boolean; gaps: Gap[]; audience?: { confirmed: number; excluded: number } };
 export type Connection = { id: string; name: string; scopes: Capability[]; brandIds: string[]; createdAt: string; expiresAt: string; revokedAt: string | null };
 
 const key = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/, 'Use a stable operation key of 16–128 letters, digits, dashes or underscores.');
 const id = z.uuid();
+const audienceId = id.toLowerCase();
 const descriptor = <T extends z.ZodRawShape>(description: string, scope: Capability | 'owner', mutation: boolean, shape: T) => ({ description, scope, mutation, schema: z.object(shape).strict() });
 export const commands = {
   'workspace.get': descriptor('Inspect workspace, plan catalogue and preparation limits. Does not create records.', 'read', false, {}),
@@ -42,8 +45,17 @@ export const commands = {
   'asset.uploadBatch': descriptor('Upload original JPEG, PNG or WebP images with per-file outcomes. Max 10 files, 5 MiB each, 20 MiB total. Names are metadata; files are never fetched from URLs.', 'assets:write', true, { operationKey: key, brandId: id, files: z.array(z.object({ itemKey: key, name: z.string().trim().min(1).max(160), base64: z.string().max(Math.ceil(limits.batchBytes / 3) * 4) }).strict()).min(1).max(limits.batchFiles).refine(files => new Set(files.map(f => f.itemKey)).size === files.length, 'Each file needs a unique item key.') }),
   'connection.list': descriptor('List scoped API/MCP connections without secrets. Owner session required.', 'owner', false, {}),
   'intake.status': descriptor('Inspect subscriber intake readiness and aggregate counts for one brand.', 'owner', false, { brandId: id }),
+  'audience.summary': descriptor('Count subscriber states for one granted brand. Returns counts only.', 'audience:summary', false, { brandId: audienceId }),
+  'audience.list': descriptor('Find contacts for one brand by status or exact email. Owner session required.', 'owner', false, {
+    brandId: audienceId, state: stateFilter.optional(), email: normalizedEmail.optional(),
+    cursor: audienceId.optional(), limit: z.number().int().min(1).max(50).default(25),
+  }),
+  'audience.contact': descriptor('Read one contact and a page of its consent history. Owner session required.', 'owner', false, {
+    brandId: audienceId, id: audienceId, cursor: audienceId.optional(),
+  }),
+  'audience.unsubscribe': descriptor('Stop marketing for this contact and brand. The contact identity makes retries idempotent. Owner session required.', 'owner', true, { brandId: audienceId, id: audienceId }),
   'intake.configure': descriptor('Enable or pause subscriber intake for one configured brand. Does not enable campaigns.', 'owner', true, { brandId: id, enabled: z.boolean(), operationKey: key }),
-  'connection.create': descriptor('Issue a scoped, expiring connection. Secret is displayed once and omitted from retries. Owner session required.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(80), scopes: z.array(z.enum(capabilities)).min(1).max(3), brandIds: z.array(id).min(1).max(5), expiresInDays: z.number().int().min(1).max(90) }),
+  'connection.create': descriptor('Issue a scoped, expiring connection. Secret is displayed once and omitted from retries. Owner session required.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(80), scopes: z.array(z.enum(capabilities)).min(1).max(4), brandIds: z.array(id).min(1).max(5), expiresInDays: z.number().int().min(1).max(90) }),
   'connection.revoke': descriptor('Revoke a connection immediately. Owner session required.', 'owner', true, { operationKey: key, id }),
 } as const;
 export type CommandName = keyof typeof commands;

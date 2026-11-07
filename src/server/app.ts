@@ -62,7 +62,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   app.get('/api/v1/schema', async (req, res) => {
     const actor=await auth!.authenticate(req);
     if (actor.scopes.includes('subscriber:signup')) throw new AppError(403,'scope_required','This connection only accepts subscriber signups.');
-    res.json({ version: 'v1', commands: Object.fromEntries(Object.entries(commands).map(([name, c]) => [name, { description: c.description, requiredScope: c.scope, mutation: c.mutation, inputSchema: c.schema.toJSONSchema() }])) });
+    res.json({ version: 'v1', commands: Object.fromEntries(Object.entries(commands).map(([name, c]) => [name, { description: c.description, requiredScope: c.scope, mutation: c.mutation, inputSchema: c.schema.toJSONSchema({io:'input'}) }])) });
   });
   app.post('/api/v1/commands/:name', async (req, res, next) => {
     // Authenticate before parsing a potentially large upload.
@@ -78,7 +78,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
       const release = () => { if (!released) { activeUploads--; released = true; } };
       res.once('finish', release); res.once('close', release);
     }
-    express.json({ limit: name === 'asset.uploadBatch' ? '29mb' : '64kb', strict: true })(req, res, error => {
+    express.json({ limit: name === 'asset.uploadBatch' ? '29mb' : name.startsWith('audience.') ? '4kb' : '64kb', strict: true })(req, res, error => {
       if (error) return next(error);
       void service!.execute(name, req.body, actor).then(result => res.json({ result })).catch(next);
     });

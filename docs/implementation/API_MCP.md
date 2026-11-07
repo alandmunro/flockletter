@@ -15,7 +15,7 @@ Normal preparation uses a few batch calls, not one call per image. Authenticatio
 
 ## Owner-managed access
 
-The dashboard's **API & MCP** page creates connections for the current brand with read, draft-write and image-upload scopes chosen separately. The UI defaults to read-only and a 30-day expiry. The API supports a maximum 90-day expiry and explicit existing-brand lists. Only a current owner session may issue, list or revoke connections; a connection cannot issue another connection. Removing the issuing owner's Clerk authority invalidates its connection on the next authenticated request.
+The dashboard's **API & MCP** page creates connections for the brands the owner selects. Read, draft-write, image-upload and audience totals are separate capabilities. The UI defaults to read-only for the first brand and a 30-day expiry. The API supports a maximum 90-day expiry. Only a current owner session may issue, list or revoke connections. Removing the issuing owner's Clerk authority invalidates its connection on the next authenticated request.
 
 The secret is shown once. Store it in the MCP host's secret/environment facility. It is hashed in the database and is never returned by listing or retrying issuance. If the creation response is lost, list connections, revoke the affected one and issue a replacement. Never paste a token into a URL, repository, prompt or published screenshot. Rotation is create replacement, update the consumer, verify it, then revoke the old connection.
 
@@ -23,7 +23,7 @@ The secret is shown once. Store it in the MCP host's secret/environment facility
 
 `POST /api/v1/commands/{command}` accepts a JSON object and an `Authorization: Bearer …` header. Replies use `{ "result": … }`; failures use `{ "error": { "code", "message", "details"? } }`. `GET /api/v1/schema` exposes the current schemas to an authenticated caller. The generated [OpenAPI specification](../api/openapi.json) lists the same input contracts. Browser calls require the configured same origin; arbitrary website origins are rejected. API clients must not follow redirects with credentials.
 
-Mutations require `operationKey`: 16–128 letters, digits, `_` or `-`. Use a UUID. Identical retries return the saved result; changed input under the same key returns `409 operation_conflict`. Keys are scoped to workspace and actor. Connection issuance is the deliberate one-time-secret exception above. `expectedVersion` protects draft saves and previews. Reads never create records or send messages.
+Most mutations require an `operationKey` of 16–128 letters, digits, `_` or `-`. Use a UUID. Identical retries return the saved result. Changed input under the same key returns `409 operation_conflict`. Keys are scoped to workspace and actor. The owner-only `audience.unsubscribe` derives its permanent replay key from the brand and contact IDs. Connection issuance follows the one-time-secret rule above. `expectedVersion` protects draft saves and previews.
 
 ## MCP setup
 
@@ -46,4 +46,4 @@ FLOCKLETTER_ASSET_ROOT=/absolute/path/to/approved/photos
 
 The photo root is optional. Without it, local-file tools are absent. With it, `asset_upload_files` accepts relative paths, rejects paths/symlinks outside the root, bounds reads, and sends bytes to the configured Flockletter origin only. No supplier downloads or remote image fetches occur. Use a narrowly chosen photo folder, not the home directory. Other MCP tool names replace the HTTP command dot with `_`; for example, `campaign.preview` becomes `campaign_preview` and `asset.uploadBatch` becomes `asset_uploadBatch`.
 
-Only `read`, `draft:write` and `assets:write` exist in this foundation. Send/test/import/export/member/billing scopes must be added with their actual implementations and acceptance tests, rather than as nonfunctional permissions.
+Use `audience_summary` with `{"brandId":"<granted brand UUID>"}` for totals across the five subscriber states. This requires `audience:summary`. Combining `read` and `audience:summary` adds confirmed and excluded counts to `campaign_preflight`. Individual contacts, consent history and owner unsubscribe are available only to a current Clerk owner session. The separate `subscriber:signup` connection serves its single brand through the dedicated HTTP signup endpoint. [Audience walkthrough](AUDIENCE.md)

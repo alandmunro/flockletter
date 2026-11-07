@@ -126,6 +126,8 @@ The owner requested policies similar to the existing SaaS. The following is the 
 
 **FL-AUD-001 — Subscriber lifecycle.** Support scoped lists, subscriber attributes and basic segments. Keep subscription, unconfirmed, unsubscribed, hard-bounce and complaint states distinct. Normalize and deduplicate addresses under a documented policy; do not merge unrelated mailboxes using guessed provider-specific alias rules.
 
+The first owner workflow covers brand selection, exact-address lookup, status filters, paged consent history and unsubscribe. A separately granted assistant connection can obtain totals for selected brands. Campaign preflight reports current confirmed and excluded counts. [D-033 and verification](implementation/AUDIENCE.md)
+
 **FL-AUD-002 — Evidence and forms.** Record consent source, time, purpose and relevant confirmation/version evidence. Subscriber signup forms SHALL default to double opt-in: confirmation is required before a new signup becomes send-eligible. Open and click tracking SHALL default off until an authorized customer enables it under the approved policy. Provide preference forms with abuse controls. A purchase, uploaded file or another brand's contact record alone SHALL not be treated as consent. Import confirmation, consent wording and permissions to change privacy settings remain O-010.
 
 **FL-AUD-003 — Imports and exports.** Imports SHALL support a preflight summary, field mapping, size/row limits, duplicate/invalid-row reporting and an explicit permission-to-contact declaration. Process large work asynchronously and scope exports to authorized members. Retries SHALL not duplicate subscribers; reimport SHALL not erase suppression or consent history.
