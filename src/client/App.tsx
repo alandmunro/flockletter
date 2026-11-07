@@ -75,7 +75,7 @@ function WorkspaceMedia({api,brands,canWrite=true}:{api:Api;brands:Brand[];canWr
 }
 function Media({api,brand,canWrite}:{api:Api;brand:Brand;canWrite:boolean}){
   const {assets:items,error,accept,retry,ready}=useBrandImages(api,brand.id);
-  return <><h1 className="page-heading">Image library</h1><p className="page-intro">Original photos for {brand.name}.</p>
+  return <><h1 className="page-heading">Image library</h1><p className="page-intro">Original photos for {brand.name}. {canWrite?'Upload originals for your drafts.':'Read-only image library.'}</p>
     <Alert error={error}/>{error&&<button className="btn secondary" onClick={retry}>Retry image library</button>}
     {canWrite&&<section className="card"><BrandImageUpload api={api} brandId={brand.id} onUploaded={accept}/></section>}
     <div className="media-grid">{items.map(asset=><ImageTile key={asset.id} asset={asset} api={api}/>)}</div>
