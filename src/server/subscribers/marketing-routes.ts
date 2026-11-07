@@ -21,7 +21,7 @@ const receiptMarkup =
   '<main><h1>Unsubscribe request received</h1><p>If this link matches a subscription, marketing email from this brand is stopped.</p></main>';
 function page(main: string) {
   return (
-    '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Unsubscribe | Flockletter</title><link rel="stylesheet" href="/subscriber-action.css"></head><body><header>Flockletter<img src="/brand/frosty-flamingo-software.png" alt="Frosty Flamingo Software"></header>' +
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe | Flockletter</title><link rel="stylesheet" href="/subscriber-action.css"></head><body><header>Flockletter<img src="/brand/frosty-flamingo-software.png" alt="Frosty Flamingo Software"></header>' +
     main +
     '</body></html>'
   );
@@ -93,7 +93,10 @@ export function marketingUnsubscribeRoutes(
     next();
   });
   // Mail scanners may fetch the URL. GET and HEAD never check a subscriber or change state.
-  app.get(marketingUnsubscribePath, (_req, res) => res.type('html').send(page(formMarkup)));
+  app.get(marketingUnsubscribePath, (_req, res) => {
+    // no-referrer turns a native browser form's Origin into "null". strict-origin preserves only the origin.
+    res.set('Referrer-Policy', 'strict-origin').type('html').send(page(formMarkup));
+  });
   app.post(
     marketingUnsubscribePath,
     (req, _res, next) => {

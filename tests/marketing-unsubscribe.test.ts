@@ -172,7 +172,7 @@ describe('signed brand marketing unsubscribe', () => {
     expect(get.body).not.toContain(token);
     expect(get.body).not.toContain('<script');
     expect(get.headers['cache-control']).toBe('no-store');
-    expect(get.headers['referrer-policy']).toBe('no-referrer');
+    expect(get.headers['referrer-policy']).toBe('strict-origin');
     expect(get.headers['set-cookie']).toBeUndefined();
     expect((await http(url, 'HEAD')).body).toBe('');
     expect(await inspect(id)).toEqual({ state: 'confirmed', optOuts: [] });
@@ -194,6 +194,7 @@ describe('signed brand marketing unsubscribe', () => {
     // Ordinary account cookies are never needed. Browser UI uses one intentional same-origin submission.
     const browser = await post(url, { origin, 'sec-fetch-site': 'same-origin', cookie: 'ignored=fake' });
     expect(browser.status).toBe(200);
+    expect(browser.headers['referrer-policy']).toBe('no-referrer');
     expect(browser.body).not.toContain(token);
     expect(browser.body).not.toContain(id);
   });
