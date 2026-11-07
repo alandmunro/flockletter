@@ -448,6 +448,32 @@ describe('FFA first-party subscriber intake', () => {
     expect((await post(form(), id(), another.token)).status).toBe(429);
     expect(await rows('SELECT id FROM subscriber_outbox')).toHaveLength(1);
   });
+  it('FI-012: each rate window keeps its allowance until its full duration has elapsed', async () => {
+    expect((await post()).status).toBe(202);
+    for (const [bucket, limit, recentAge, expiredAge] of [
+      ['brand-minute', 60, '15 seconds', '61 seconds'],
+      ['brand-day', 1000, '2 hours', '25 hours'],
+    ] as const) {
+      // Offset from the boundary so the old calendar-based reset fails at every time of day.
+      const window = await rows(
+        `UPDATE subscriber_rate_buckets SET requests=$2,
+          window_at=date_trunc('second', clock_timestamp()) - $3::interval - interval '250 milliseconds'
+          WHERE bucket=$1 RETURNING window_at`,
+        [bucket, limit, recentAge],
+      );
+      expect(window).toHaveLength(1);
+      expect((await post()).status).toBe(429);
+      const afterRejection = await rows('SELECT window_at FROM subscriber_rate_buckets WHERE bucket=$1', [bucket]);
+      expect(afterRejection).toEqual(window);
+      await rows('UPDATE subscriber_rate_buckets SET window_at=clock_timestamp()-$2::interval WHERE bucket=$1', [
+        bucket, expiredAge,
+      ]);
+      expect((await post()).status).toBe(202);
+      const afterExpiry = await rows('SELECT requests FROM subscriber_rate_buckets WHERE bucket=$1', [bucket]);
+      expect(afterExpiry).toEqual([{ requests: 1 }]);
+    }
+    expect(await rows('SELECT id FROM subscriber_outbox')).toHaveLength(1);
+  });
   it('FI-013: only a signed feedback event tied to this delivery can suppress; replay and soft bounce are harmless', async () => {
     const key = 'whsec_' + randomBytes(32).toString('base64');
     const live = { ...binding, mode: 'live' as const, webhookSecret: key };
