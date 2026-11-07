@@ -8,6 +8,7 @@ import { AppError } from './errors.js';
 import { configurationGaps, type Config } from './config.js';
 import type { Authenticator } from './auth.js';
 import { authorize, type CommandService } from './service.js';
+import { subscriberRoutes } from './subscribers/routes.js';
 
 export function createApp(config: Config, service?: CommandService, auth?: Authenticator) {
   const app = express();
@@ -41,11 +42,13 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   app.get('/readyz', async (_req, res) => {
     const gaps = configurationGaps(config);
     if (!service || !auth) gaps.push('service_not_ready');
-    if (service) { try { await service.db.pool.query('SELECT 1'); } catch { gaps.push('database_unavailable'); } }
+    if (service) { try { await service.db.verifyBoundary(); } catch { gaps.push('database_unavailable'); } }
     res.status(gaps.length ? 503 : 200).json({ ready: gaps.length === 0, gaps, sendingEnabled: false });
   });
   app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), plans, sendingEnabled: false }));
-  app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: { code: 'rate_limited', message: 'Too many requests. Retry in a minute.' } } }));
+  app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false,
+    skip: req => req.method==='POST' && (/^\/brands\/[^/]+\/subscriber-signups\/?$/i.test(req.path) || /^\/confirmation-feedback\/?$/i.test(req.path)),
+    message: { error: { code: 'rate_limited', message: 'Too many requests. Retry in a minute.' } } }));
   app.use('/api/v1', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     const origin = req.get('origin');
@@ -54,8 +57,10 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     if (!service || !auth) return next(new AppError(503, 'setup_required', 'Workspace operations require the Flockletter database and Clerk backend connection.'));
     next();
   });
+  subscriberRoutes(app, config, service?.intake, auth);
   app.get('/api/v1/schema', async (req, res) => {
-    await auth!.authenticate(req);
+    const actor=await auth!.authenticate(req);
+    if (actor.scopes.includes('subscriber:signup')) throw new AppError(403,'scope_required','This connection only accepts subscriber signups.');
     res.json({ version: 'v1', commands: Object.fromEntries(Object.entries(commands).map(([name, c]) => [name, { description: c.description, requiredScope: c.scope, mutation: c.mutation, inputSchema: c.schema.toJSONSchema() }])) });
   });
   app.post('/api/v1/commands/:name', async (req, res, next) => {
@@ -93,6 +98,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     if (error instanceof AppError) return void res.status(error.status).json({ error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) } });
     if (error instanceof ZodError) return void res.status(422).json({ error: { code: 'invalid_input', message: 'Review the highlighted input requirements.', details: error.issues.map(i => ({ path: i.path.join('.'), message: i.message })) } });
     const status = (error as { status?: number })?.status;
+    if (status === 415) return void res.status(415).json({error:{code:'unsupported_encoding',message:'Use an uncompressed JSON body.'}});
     if (status === 413 || status === 400) return void res.status(status).json({ error: { code: status === 413 ? 'request_too_large' : 'invalid_json', message: status === 413 ? 'This request is too large. Split the batch.' : 'Send valid JSON.' } });
     // Never return provider responses, request bodies, connection strings or tokens.
     res.status(500).json({ error: { code: 'service_error', message: 'The operation could not finish. Retry with the same operation key.' } });

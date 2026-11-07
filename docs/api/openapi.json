@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Flockletter preparation API",
-    "version": "0.1.0",
-    "description": "Foundation only. No send, payment or subscriber operations. Generated from canonical command schemas."
+    "title": "Flockletter API",
+    "version": "0.2.0",
+    "description": "Campaign preparation and separately gated first-party subscriber intake. Generated from canonical schemas."
   },
   "paths": {
     "/api/v1/commands/workspace.get": {
@@ -934,6 +934,143 @@
         }
       }
     },
+    "/api/v1/commands/intake.status": {
+      "post": {
+        "operationId": "intake_status",
+        "summary": "Inspect subscriber intake readiness and aggregate counts for one brand.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "owner",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "brandId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/intake.configure": {
+      "post": {
+        "operationId": "intake_configure",
+        "summary": "Enable or pause subscriber intake for one configured brand. Does not enable campaigns.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "owner",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  }
+                },
+                "required": [
+                  "brandId",
+                  "enabled",
+                  "operationKey"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
     "/api/v1/commands/connection.create": {
       "post": {
         "operationId": "connection_create",
@@ -971,7 +1108,8 @@
                       "enum": [
                         "read",
                         "draft:write",
-                        "assets:write"
+                        "assets:write",
+                        "subscriber:signup"
                       ]
                     }
                   },
@@ -1102,6 +1240,137 @@
           }
         }
       }
+    },
+    "/api/v1/brands/{brandId}/subscriber-signups": {
+      "post": {
+        "operationId": "subscriber_signup",
+        "summary": "Accept an attested first-party signup for one configured brand.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "subscriber:signup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "brandId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "const": "ffa_product_marketing"
+                  },
+                  "consentAffirmed": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "consentVersion": {
+                    "type": "string",
+                    "const": "ffa-newsletter-v1"
+                  },
+                  "consentText": {
+                    "type": "string",
+                    "const": "Email me product launches, promotions, and occasional updates from Frosty Flamingo Apparel. I can unsubscribe anytime."
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "storefront-footer",
+                      "storefront-homepage"
+                    ]
+                  },
+                  "sourceDomain": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  }
+                },
+                "required": [
+                  "email",
+                  "purpose",
+                  "consentAffirmed",
+                  "consentVersion",
+                  "consentText",
+                  "source",
+                  "sourceDomain"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Durably accepted without disclosing subscriber status.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "status": "pending_confirmation",
+                  "message": "If this address can be subscribed, check your inbox for a confirmation email."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON."
+          },
+          "401": {
+            "description": "Invalid or expired credential."
+          },
+          "403": {
+            "description": "Server client or scope required."
+          },
+          "404": {
+            "description": "Unavailable brand."
+          },
+          "409": {
+            "description": "Operation key reused with different input."
+          },
+          "413": {
+            "description": "Body exceeds 8 KiB."
+          },
+          "415": {
+            "description": "Unsupported content type."
+          },
+          "422": {
+            "description": "Invalid consent or input."
+          },
+          "429": {
+            "description": "Rate limited."
+          },
+          "503": {
+            "description": "Intake or its confirmation worker is unavailable."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1109,7 +1378,7 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "A Clerk session token, or an owner-issued scoped Flockletter connection token. Connection tokens cannot invoke owner-only commands."
+        "description": "Use only a single-brand signup connection for subscriber intake. Owner-only commands require a Clerk owner session."
       }
     }
   }

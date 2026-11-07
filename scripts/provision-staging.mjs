@@ -1,6 +1,6 @@
 // Run only in a protected release shell. Inputs are read from stdin, never argv or service env.
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { applyMigrations } from './apply-migrations.mjs';
 import { createInterface } from 'node:readline/promises';
 import process from 'node:process';
 import console from 'node:console';
@@ -119,16 +119,14 @@ async function provision(admin) {
   await admin.query(`ALTER ROLE ${migrator} LOGIN`);
   await admin.query(`ALTER ROLE ${runtime} LOGIN`);
   await using(connect(target, migrator, passwords[migrator]), async release => {
-    await release.query("SELECT pg_advisory_lock(hashtext('flockletter:migrations'))");
-    await release.query(await readFile(new URL('../migrations/001_foundation.sql', import.meta.url), 'utf8'));
-    await release.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${runtime}`);
+    await applyMigrations(release, runtime);
   });
   await using(connect(target, runtime, passwords[runtime]), async app => {
     const check = (await app.query(`SELECT current_database() AS database, current_user AS role,
       (SELECT count(*)::int FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind='r' AND relrowsecurity AND relforcerowsecurity) AS protected_tables,
       has_schema_privilege(current_user,'public','CREATE') AS schema_create,
       has_database_privilege(current_user,current_database(),'CREATE') AS database_create`)).rows[0];
-    if (check.database !== target || check.role !== runtime || check.protected_tables !== 7 || check.schema_create || check.database_create) throw new Error('Runtime isolation check failed.');
+    if (check.database !== target || check.role !== runtime || check.protected_tables !== 15 || check.schema_create || check.database_create) throw new Error('Runtime isolation check failed.');
     console.log(JSON.stringify({ verified: true, foreignCatalogsChecked: other.rowCount, ...check }));
   });
 }

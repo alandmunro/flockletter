@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-export const capabilities = ['read', 'draft:write', 'assets:write'] as const;
+export type { IntakeStatus } from './subscriber.js';
+export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup'] as const;
 export type Capability = typeof capabilities[number];
 export const limits = { fileBytes: 5 * 1024 * 1024, batchBytes: 20 * 1024 * 1024, batchFiles: 10, imagePixels: 25_000_000, campaignImages: 6, workspaceBytes: 100 * 1024 * 1024, assets: 500, drafts: 100, connections: 10, preparationOperations: 2000 } as const;
 export const plans = [
@@ -40,6 +41,8 @@ export const commands = {
   'asset.list': descriptor('List private images for the authorized brand.', 'read', false, { brandId: id }),
   'asset.uploadBatch': descriptor('Upload original JPEG, PNG or WebP images with per-file outcomes. Max 10 files, 5 MiB each, 20 MiB total. Names are metadata; files are never fetched from URLs.', 'assets:write', true, { operationKey: key, brandId: id, files: z.array(z.object({ itemKey: key, name: z.string().trim().min(1).max(160), base64: z.string().max(Math.ceil(limits.batchBytes / 3) * 4) }).strict()).min(1).max(limits.batchFiles).refine(files => new Set(files.map(f => f.itemKey)).size === files.length, 'Each file needs a unique item key.') }),
   'connection.list': descriptor('List scoped API/MCP connections without secrets. Owner session required.', 'owner', false, {}),
+  'intake.status': descriptor('Inspect subscriber intake readiness and aggregate counts for one brand.', 'owner', false, { brandId: id }),
+  'intake.configure': descriptor('Enable or pause subscriber intake for one configured brand. Does not enable campaigns.', 'owner', true, { brandId: id, enabled: z.boolean(), operationKey: key }),
   'connection.create': descriptor('Issue a scoped, expiring connection. Secret is displayed once and omitted from retries. Owner session required.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(80), scopes: z.array(z.enum(capabilities)).min(1).max(3), brandIds: z.array(id).min(1).max(5), expiresInDays: z.number().int().min(1).max(90) }),
   'connection.revoke': descriptor('Revoke a connection immediately. Owner session required.', 'owner', true, { operationKey: key, id }),
 } as const;

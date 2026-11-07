@@ -1,6 +1,6 @@
 # API and MCP preparation workflow
 
-The foundation implements preparation only. It does not send test messages or campaigns, activate a trial, change billing, import subscribers, or call a supplier. The administration UI, HTTP commands and MCP tools use the same `CommandService`, schemas and database policies.
+The campaign foundation exposes preparation commands through the administration UI, HTTP and MCP. Owners use `intake.status` and `intake.configure` through the same command layer. First-party signup has a distinct server-to-server HTTP operation and a single-brand `subscriber:signup` credential. General assistant tools keep their existing preparation scopes. [Intake contract](FFA_SUBSCRIBER_INTAKE.md)
 
 ## Start by reporting gaps
 

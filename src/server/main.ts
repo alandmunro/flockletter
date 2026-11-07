@@ -5,6 +5,8 @@ import { Database } from './db.js';
 import { CommandService } from './service.js';
 import { Authenticator, clerkIdentity, localIdentity } from './auth.js';
 import { createApp } from './app.js';
+import { loadIntakeBinding, loadLinkBinding } from './subscribers/config.js';
+import { SubscriberIntake } from './subscribers/intake.js';
 
 if (existsSync('.env')) loadEnvFile('.env');
 const config = loadConfig();
@@ -13,7 +15,7 @@ let auth: Authenticator | undefined;
 if (configurationGaps(config).length === 0) {
   const db = new Database(config.databaseUrl!);
   await db.verifyBoundary();
-  service = new CommandService(db);
+  service = new CommandService(db, new SubscriberIntake(db, loadIntakeBinding(config), loadLinkBinding(config)));
   auth = new Authenticator(db, config.localIdentity ? localIdentity() : clerkIdentity(config));
 }
 const server = createApp(config, service, auth).listen(config.port, config.host, () => {

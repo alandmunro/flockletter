@@ -2,6 +2,8 @@
 
 ## Current authorization
 
+The owner authorized implementation of Flockletter PR #2 on November 7, 2026. This adds the Flockletter side of first-party subscriber intake, scoped owner controls, confirmation and unsubscribe, suppression and captured staging tests. Keep public FFA collection, production and live-provider activation behind the gates in [the intake specification](docs/implementation/FFA_SUBSCRIBER_INTAKE.md). FFA PR #181 is the separate storefront proposal.
+
 The owner has authorized the foundation implementation and staging verification, and asked the assistant to make reasonable implementation decisions without routine confirmation. Build the independent application shell, isolated database setup, canonical UI/API/MCP operations, campaign drafts, bounded batch images, preview and actionable validation. Use the approved visual system and exact supplied logo. Record decisions and evidence in docs/implementation. Production deployment, live mailing and paid public activation are outside this workstream. Existing FFA staging may be resumed when needed; this does not authorize changing production or another application's data/settings. Gather genuinely missing configuration together after completing independent work.
 
 Read [the SRD](docs/SRD.md), [decisions](docs/DECISIONS.md) and [phase 1 review](docs/PHASE_1.md) before work. Accepted owner decisions, proposed requirements and unresolved decisions are distinct. Do not silently promote a proposal to an accepted decision. Later explicit owner instructions take precedence; update the documents to reflect them.

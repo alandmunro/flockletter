@@ -1,6 +1,6 @@
 import { loadEnvFile } from 'node:process';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { applyMigrations } from './apply-migrations.mjs';
 import pg from 'pg';
 
 if (existsSync('.env')) loadEnvFile('.env');
@@ -11,9 +11,6 @@ if (!new URL(url).pathname.startsWith('/flockletter_')) throw new Error('Migrati
 const client = new pg.Client({ connectionString: url });
 await client.connect();
 try {
-  await client.query("SELECT pg_advisory_lock(hashtext('flockletter:migrations'))");
-  await client.query(await readFile(new URL('../migrations/001_foundation.sql', import.meta.url), 'utf8'));
-  await client.query(`GRANT USAGE ON SCHEMA public TO "${role}"`);
-  await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO "${role}"`);
-  console.info('Foundation schema applied. Validate effective runtime privileges before activation.');
+  await applyMigrations(client, role);
+  console.info('Flockletter migrations applied.');
 } finally { await client.end(); }

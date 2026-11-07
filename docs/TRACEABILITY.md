@@ -44,6 +44,8 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
+FL-AUD-001/002/004, FL-API-002/005, FL-DEL-003/004/005 and FL-OPS-007 have targeted evidence for the FFA signup endpoint, double opt-in, consent history, suppression and private capture. The FI-001–015 test and deployment record distinguishes captured confirmation from live delivery. [Intake verification](implementation/SUBSCRIBER_INTAKE_OPERATIONS.md)
+
 The deployed foundation passed Clerk passwordless sign-in, workspace creation, partial image-batch validation, and saved campaign preview and reload. The second synthetic organization's campaign list was empty. The shared-host release verified seven forced row-level policies and the runtime role's restricted access. [Foundation verification](implementation/VERIFICATION.md)
 
 Design-only browser checks and screen/story coverage are recorded in [design verification](design/VERIFICATION.md). They do not mark any FL-AT case complete.

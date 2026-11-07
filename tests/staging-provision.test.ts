@@ -42,7 +42,7 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
     const result = run('apply');
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('"verified":true');
-    expect(result.stdout).toContain('"protected_tables":7');
+    expect(result.stdout).toContain('"protected_tables":15');
     for (const value of [releaseInput.adminUrl, releaseInput.migratorPassword, releaseInput.runtimePassword]) {
       expect(result.stdout + result.stderr).not.toContain(value);
     }
