@@ -44,6 +44,6 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
-Foundation evidence covers campaign preparation, scoped access, disposable PostgreSQL isolation and hosted Clerk passwordless sign-in. The staged database was prepared on the existing host. Hosted workspace writes and cross-organization tests await activation of its restricted roles and Clerk backend connection. [Foundation verification](implementation/VERIFICATION.md)
+The deployed foundation passed Clerk passwordless sign-in, workspace creation, partial image-batch validation, and saved campaign preview and reload. The second synthetic organization's campaign list was empty. The shared-host release verified seven forced row-level policies and the runtime role's restricted access. [Foundation verification](implementation/VERIFICATION.md)
 
 Design-only browser checks and screen/story coverage are recorded in [design verification](design/VERIFICATION.md). They do not mark any FL-AT case complete.

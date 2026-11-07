@@ -1,6 +1,6 @@
 # Flockletter product decisions
 
-Updated November 6, 2026. Accepted decisions below reflect the owner's instructions. Proposed choices are review items, not implementation authority. No runtime implementation or infrastructure activation is authorized.
+Updated November 7, 2026. D-030 authorizes the foundation implementation and staging verification. D-031 records the hostname, sender and support addresses, and spending approval threshold. Proposed choices still require resolution before their dependent workstreams.
 
 ## Accepted decisions
 
@@ -86,4 +86,4 @@ The owner can resolve these incrementally. Missing decisions must be exposed bef
 | 2026-11-06 | Draft 0.4 records the approved Google/Apple/Microsoft/email-code launch options and synchronizes signup, sign-in, account screens, stories and acceptance planning. Live authentication and application implementation remain unauthorized. |
 | 2026-11-06 | Added the owner-supplied Frosty Flamingo Software logo to the shared mockup headers and refreshed design captures. Original artwork is preserved. |
 
-Foundation status: O-003/O-013 are resolved narrowly for owner-only preparation with fresh Clerk checks and scoped connections. Full member roles, live Clerk configuration and recovery verification remain open. O-005 has a single-process staging setup preview; shared-database capacity and activation are not presumed. Other release gates remain as listed.
+O-003/O-013 cover owner-only preparation with current Clerk membership checks and scoped connections. Flockletter's staging Clerk application and restricted database roles are active. Two synthetic organizations completed workspace setup, and the first saved and reopened a campaign in the dedicated database. Full team roles, recovery, production capacity and delivery still have separate acceptance gates. [Staging evidence](implementation/VERIFICATION.md)
