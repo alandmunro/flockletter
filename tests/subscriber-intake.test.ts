@@ -563,6 +563,17 @@ describe('FFA first-party subscriber intake', () => {
     expect(capture.messages.size).toBe(0);
     expect(await rows('SELECT state FROM subscriber_outbox')).toEqual([{ state: 'cancelled' }]);
   });
+  it('allows an owner to pause intake when the workspace preparation operation limit has been reached', async () => {
+    await db.tenant(binding.workspaceId, (sql) =>
+      sql.query(
+        "INSERT INTO operations(workspace_id,actor_id,operation_key,request_hash,result) SELECT $1,'fixture',i::text,'fixture','{}'::jsonb FROM generate_series(1,2000) i",
+        [binding.workspaceId],
+      ),
+    );
+    await mode(false);
+    expect((await post()).status).toBe(503);
+    await expect(mode(true)).rejects.toMatchObject({ code: 'preparation_limit' });
+  });
   it.each(['issuer', 'connection'])(
     'rechecks %s revocation after acceptance and before confirmation dispatch',
     async (kind) => {

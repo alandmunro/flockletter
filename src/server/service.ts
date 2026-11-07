@@ -55,7 +55,7 @@ export class CommandService {
           requireCondition(prior.rows[0].request_hash === requestHash, 409, 'operation_conflict', 'This operation key was already used for different input. Retry the original request or use a new key.');
           return prior.rows[0].result;
         }
-        const disablingIntake = name==='intake.configure' && (input as {enabled:boolean}).enabled===false;
+        const disablingIntake = name === 'intake.configure' && 'enabled' in input && input.enabled === false;
         if (name !== 'connection.revoke' && !disablingIntake) {
           const count = (await sql.query<{ count: string }>('SELECT count(*) FROM operations')).rows[0];
           requireCondition(Number(count?.count) < limits.preparationOperations, 422, 'preparation_limit', 'This foundation workspace has reached its preparation operation limit. Contact the operator; connection revocation remains available.');
