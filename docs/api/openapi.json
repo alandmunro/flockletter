@@ -1242,6 +1242,66 @@
       }
     },
     "/api/v1/brands/{brandId}/subscriber-signups": {
+      "head": {
+        "operationId": "subscriber_intake_readiness",
+        "summary": "Check one brand and source without submitting a signup.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "subscriber:signup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "brandId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Flockletter-Source-Domain",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Ready for this source.",
+            "headers": {
+              "X-Flockletter-Confirmation-Mode": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "capture",
+                    "live"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential."
+          },
+          "403": {
+            "description": "Invalid client or scope."
+          },
+          "404": {
+            "description": "Unavailable brand."
+          },
+          "429": {
+            "description": "Probe rate limit."
+          },
+          "503": {
+            "description": "Brand, source or confirmation worker is unavailable."
+          }
+        }
+      },
       "post": {
         "operationId": "subscriber_signup",
         "summary": "Accept an attested first-party signup for one configured brand.",

@@ -21,6 +21,8 @@ Start a continuously running confirmation worker with `npm run confirmation:work
 
 ## Storefront contract and confirmation
 
+The storefront can probe the signup URL with a server-to-server HEAD, its signup credential and `X-Flockletter-Source-Domain`. HTTP 204 and `X-Flockletter-Confirmation-Mode` report a matching, enabled brand with a current worker. Capture is for synthetic testing. The probe reads no subscribers and does not queue mail.
+
 Send `POST /api/v1/brands/{brandId}/subscriber-signups` with `Authorization: Bearer`, `Content-Type: application/json` and `Idempotency-Key`. Use the [PR #2 request fields](FFA_SUBSCRIBER_INTAKE.md). The example in FFA PR #181 is illustrative. The accepted path includes `/api`, the operation key belongs in the header and Flockletter assigns the timestamp. Unknown fields are rejected. The strict body limit is 8 KiB. A 202 acknowledges committed intent. First-time, duplicate and suppressed addresses have the same response.
 
 The email policy preserves the ASCII local part, dots and plus tags, trims exterior whitespace and lowercases the domain. Each connection has a limit of 30 requests per minute. Each brand shares limits of 60 requests per minute and 1,000 per 24 hours. Each window starts with its first request. Exhausting it returns HTTP 429 until its full duration elapses. A pending address receives at most one confirmation in 24 hours and three in seven days. Operation records have a seven-day minimum replay window. Signup never reactivates an unsubscribed, hard-bounced or complained address.

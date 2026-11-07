@@ -106,6 +106,14 @@ export class SubscriberIntake {
       ? this.binding
       : undefined;
   }
+  async probe(actor: Actor, brand: string, sourceDomain: string | undefined) {
+    authorizeIntake(actor, brand);
+    const binding = this.forBrand(actor.workspaceId, brand);
+    if (!binding || binding.sourceDomain !== sourceDomain) throw unavailable();
+    const settings = await this.db.brand(actor.workspaceId, brand, sql => gate(sql));
+    if (!settings?.enabled || !ready(settings, binding)) throw unavailable();
+    return binding.mode;
+  }
   async status(sql: Sql, actor: Actor, brand: string): Promise<IntakeStatus> {
     await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand]);
     const binding = this.forBrand(actor.workspaceId, brand);
