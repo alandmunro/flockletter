@@ -1,13 +1,20 @@
 import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ClerkProvider, SignIn, SignUp, UserButton, OrganizationSwitcher, CreateOrganization, useAuth } from '@clerk/react';
+import { ClerkProvider, SignIn, SignUp, UserButton, OrganizationSwitcher, CreateOrganization, useAuth, useClerk } from '@clerk/react';
 import { Portal, Header } from './App.js';
 import './app.css';
 
 type PublicConfig = { environment: string; localIdentity: boolean; clerkPublishableKey: string | null; setupGaps: string[]; sendingEnabled: false };
 function Hosted({ workspaceConfigured }: { workspaceConfigured: boolean }) {
-  const { isLoaded, isSignedIn, orgId, getToken } = useAuth();
-  const token = useCallback(() => getToken(), [getToken]);
+  const { isLoaded, isSignedIn, orgId, sessionId } = useAuth();
+  const clerk = useClerk();
+  const token = useCallback(async (refresh = false) => {
+    const session = clerk.session;
+    const stillSelected = () => clerk.session?.id === sessionId && clerk.organization?.id === orgId;
+    if (!session || !orgId || !stillSelected()) return null;
+    const value = await session.getToken({ organizationId: orgId, skipCache: refresh });
+    return stillSelected() ? value : null;
+  }, [clerk, orgId, sessionId]);
   const account = <><OrganizationSwitcher hidePersonal afterSelectOrganizationUrl="/" afterCreateOrganizationUrl="/" /><UserButton /></>;
   if (!isLoaded) return <><Header /><main className="main">Loading sign-in…</main></>;
   if (!isSignedIn) return <><Header /><main className="main"><section className="auth-card"><h1 className="page-heading">A thoughtful hello.</h1><p>Sign in to prepare your next newsletter.</p>{window.location.pathname === '/sign-up' ? <SignUp routing="hash" signInUrl="/" forceRedirectUrl="/" /> : <SignIn routing="hash" signUpUrl="/sign-up" forceRedirectUrl="/" />}</section></main></>;
