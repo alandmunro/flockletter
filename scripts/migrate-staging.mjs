@@ -5,6 +5,7 @@ import console from 'node:console';
 import { URL } from 'node:url';
 import pg from 'pg';
 import { applyMigrations } from './apply-migrations.mjs';
+import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
 
 async function run() {
   const tag = process.argv[2];
@@ -47,7 +48,14 @@ async function run() {
   } finally {
     await client.end();
   }
-  console.log('Flockletter migration 002 applied to isolated staging.');
+  const runtimeCheck = new pg.Client({connectionString:runtime.href,connectionTimeoutMillis:8000,statement_timeout:30000});
+  await runtimeCheck.connect();
+  try {
+    await verifyRuntimeBoundary(runtimeCheck,{database:'flockletter_staging',role:'flockletter_staging_runtime'});
+  } finally {
+    await runtimeCheck.end();
+  }
+  console.log('Flockletter migrations applied to isolated staging.');
 }
 try {
   await run();
