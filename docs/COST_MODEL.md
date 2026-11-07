@@ -1,6 +1,6 @@
 # Flockletter launch pricing and cost model
 
-Updated November 6, 2026. Plan prices, recipient limits, trial limits and Clerk-owned hosted memberships are accepted owner decisions D-024–D-026. Dollar amounts below are USD. Infrastructure sizing, provider activation and spending are not authorized by this planning document.
+Updated November 7, 2026 with a delivery-provider comparison (D-034). Plan prices, recipient limits, trial limits and Clerk-owned hosted memberships are accepted owner decisions D-024–D-026. Dollar amounts below are USD. Infrastructure sizing, provider activation and spending are not authorized by this planning document.
 
 ## Accepted catalogue
 
@@ -33,7 +33,28 @@ The card-required trial is 14 days with 250 active contacts and 500 total recipi
 
 Arithmetic uses integer cents or exact decimal calculations. Payment assumption: standard domestic card processing at 2.9% + $0.30 plus Stripe Billing at 0.7%, producing 3.6% + $0.30 per successful monthly payment. This excludes other products, taxes, international-card/currency costs, disputes, refunds and failed-payment economics. [Stripe payments](https://stripe.com/pricing), [Stripe Billing](https://stripe.com/billing/pricing).
 
-Delivery is budgeted conservatively at $0.20/1,000. SES currently lists $0.10/1,000 outbound emails under à la carte or $0.16/1,000 under Essentials, with applicable data/other charges. New-account defaults and optional features affect the actual bill. The planning budget is not an SES quote or provider selection; production approval, feedback, tenant attribution, reputation and quota design remain open. Dedicated-IP services and paid higher-tier features are not included. [SES pricing](https://aws.amazon.com/ses/pricing/).
+Delivery is budgeted conservatively at $0.20/1,000. SES currently lists $0.10/1,000 outbound emails under à la carte or $0.16/1,000 under Essentials, with applicable data/other charges. New account/region combinations may start on Essentials and can be switched to à la carte subject to published change timing. The planning budget is not an SES quote or final provider selection; production approval, feedback, tenant attribution, reputation and quota design remain open. Dedicated-IP services and paid higher-tier features are not included. [SES pricing](https://aws.amazon.com/ses/pricing/).
+
+### Delivery-provider comparison (published rates checked November 7, 2026)
+
+| Category | Amazon SES | Resend |
+| --- | --- | --- |
+| Cost structure for managed transport | À la carte: $0.10/1,000 outbound recipient emails; Essentials: $0.16/1,000 including selected deliverability tools; no monthly fixed plan fee for either. | Transactional API: Free 3,000/month with 100/day ceiling; Pro $20/month for 50,000; Scale $90/month for 100,000; paid extra email usage listed at $0.90/1,000. Marketing Broadcasts have **separate contact-based** billing. |
+| Multi-customer identities and reputation | SES Tenants supports per-customer identities, configuration sets, reputation findings, tenant pauses and optional tenant-scoped suppression. Tenant-level reputation controls are **not** full AWS-account reputation or IP isolation. | Domains and API/webhook capabilities vary by plan; per-customer blast reputation isolation and cross-customer suppression must be independently evaluated. |
+| Fit with Flockletter | Low marginal delivery cost. Listmonk SMTP can potentially set SES tenant/configuration headers, subject to verified Listmonk and SES adapter behavior; AWS setup, production access and reputation operations add complexity. | Simpler API experience. Transactional `/emails` can be used for consented newsletters with required unsubscribe headers; marketing `/broadcasts` duplicates some Listmonk/Flockletter contact and campaign capabilities. No assumption that one price model covers both routes. |
+| Preferred next step | Evaluate SES à la carte + SES Tenants first; compare Essentials features against its incremental $0.06/1,000 rate. | Maintain as alternate and a separately controlled confirmation-email option, not a commitment to buy. |
+
+SES Tenants add **$0.005 per tenant per month plus $0.005 per 1,000 outbound emails** when used as an add-on. Representative **full-allotment costs per paid workspace**, assuming **one SES tenant per workspace**, are:
+
+| Plan | Monthly recipient emails | SES à la carte (base only) | SES à la carte + Tenants | SES Essentials + Tenants |
+| --- | ---: | ---: | ---: | ---: |
+| Starter ($15) | 5,000 | $0.50 | $0.53 | $0.83 |
+| Growth ($25) | 25,000 | $2.50 | $2.63 | $4.13 |
+| Pro ($39) | 100,000 | $10.00 | $10.51 | $16.51 |
+
+Illustrative 100-customer mix (50 Starter, 40 Growth, 10 Pro) at full monthly allowance: **2,250,000 recipient emails**, **$2,140 subscription revenue**, **$225.00 SES à la carte sending**, **$360.00 Essentials sending**, plus **$11.75 tenant charges** (100 tenants × $0.005 + 2,250,000/1,000 × $0.005). This gives **$236.75 SES à la carte + Tenants** or **$371.75 Essentials + Tenants** before email data, eventing, monitoring, dedicated IPs, engine compute, staging, Stripe, Clerk, support, refunds and taxes. The tier-table amounts are rounded to cents only for display; billing calculations retain unrounded fractions.
+
+The existing $0.20/1,000 direct-cost budget is **intentionally unchanged**, so the previously approved catalogue, margin examples and approximate break-even are not silently recalculated. It is a conservative planning placeholder, not a target provider fee or a guarantee that additional SES features fit the reserve. Resend transactional and marketing rates cannot be directly compared on identical volume without modeling account-wide subscriptions, aggregate verified domains, tenant boundaries and whether Flockletter or Resend owns the audience and sending path. **Neither service is contracted or activated by this comparison.** [SES pricing](https://aws.amazon.com/ses/pricing/), [SES Tenants](https://docs.aws.amazon.com/ses/latest/dg/tenants.html), [Resend pricing](https://resend.com/pricing).
 
 The $7 mailing service is a per-subscription compute assumption for the proposed isolated Listmonk engine, not per brand and not a measured capacity guarantee. Import volume, engine memory, database connections, concurrency, storage, rollout overlap and sender throughput must be tested before activation. A failed fit requires a revised architecture/cost review, not silently weakened isolation. [Render pricing](https://render.com/pricing).
 
@@ -73,7 +94,7 @@ The owner requires approval for each individual expense above USD 25. Render quo
 
 ## Unresolved cost and policy gates
 
-- Final delivery provider, account approval, reputation architecture and any dedicated-IP requirement.
+- Final delivery provider approval (SES à la carte + Tenants is the preferred candidate), validated Listmonk tenant headers, feedback, account/region sandbox exit, shared reputation controls and any dedicated-IP requirement.
 - Measured Render capacity, connection limits, storage ceilings and actual launch funding.
 - Billing anchors/rollover, cumulative active-contact counting, pending-invitation seat counting and trial-to-paid accounting.
 - Trial campaign/seat/company/brand caps and explicit test-send recipient/rate limits.
