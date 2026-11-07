@@ -4,6 +4,8 @@ Flockletter is a planned open-source mailing SaaS for small retailers and genera
 
 ## Current status
 
+Staging supports campaign rehearsals, public pricing, workspace onboarding, original newsletter layouts, company and brand limits, DNS ownership checks, and an optional Stripe test integration. A rehearsal freezes the draft and synthetic recipients, reserves practice allowance, rechecks eligibility and stores the resulting message in a private capture mailbox. [Staging pilot](docs/implementation/CAMPAIGN_PILOT.md)
+
 Owners can search a brand’s contacts, review consent history and honor unsubscribe requests in **Audience**. Assistants can read counts by status with an explicit brand grant. Campaign previews show the current confirmed and excluded totals. [Audience walkthrough](docs/implementation/AUDIENCE.md)
 
 The repository includes campaign preparation, isolated workspace storage, shared UI/API/MCP operations and a separately gated first-party subscriber intake endpoint. Workspace owners can inspect intake readiness and manage a dedicated brand credential. Hosted public collection requires a verified confirmation provider. [Foundation evidence](docs/implementation/VERIFICATION.md) · [Subscriber intake](docs/implementation/FFA_SUBSCRIBER_INTAKE.md)

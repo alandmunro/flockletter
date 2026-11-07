@@ -96,11 +96,18 @@ export async function suppress(
   if (evidenceId) {
     await recordTransition(sql, evidenceId, state === 'unsubscribed' ? 'unsubscribed' : 'suppressed', source);
   } else {
-    // An owner can stop a legacy contact even if no original signup evidence is available.
-    if (state !== 'unsubscribed' || source !== 'workspace-owner') throw new Error('A source consent event is required.');
-    await sql.query(`INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain)
-      SELECT workspace_id,brand_id,$2,id,'unsubscribed','brand_marketing','owner-opt-out-v1',$3,'workspace-owner',''
-      FROM subscribers WHERE id=$1`, [subscriberId, randomUUID(), hash('Stop marketing to this contact for this brand.')]);
+    // Preserve a factual opt-out for a legacy contact whose signup evidence is unavailable.
+    if (state !== 'unsubscribed' || !['workspace-owner', 'marketing-unsubscribe-link'].includes(source)) {
+      throw new Error('A source consent event is required.');
+    }
+    const ownerAction = source === 'workspace-owner';
+    await sql.query(
+      `INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain)
+      SELECT workspace_id,brand_id,$2,id,'unsubscribed','brand_marketing',$3,$4,$5,''
+      FROM subscribers WHERE id=$1`,
+      [subscriberId, randomUUID(), ownerAction ? 'owner-opt-out-v1' : 'marketing-opt-out-v1',
+        hash(ownerAction ? 'Stop marketing to this contact for this brand.' : 'Unsubscribe from marketing email from this brand.'), source],
+    );
   }
 }
 

@@ -9,6 +9,12 @@ concurrency:
   group: foundation-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  listmonk-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - run: bash scripts/listmonk-capture/run.sh
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -22,5 +28,6 @@ jobs:
       - run: npm run check
       - run: npx playwright-core install --with-deps chromium
       - run: npm run audience:verify
+      - run: node --import tsx scripts/prove-marketing-unsubscribe.ts
       - run: node --import tsx scripts/generate-api.ts && git diff --exit-code -- docs/api/openapi.json
       - run: npm audit --audit-level=moderate

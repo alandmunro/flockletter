@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
 import { limits, type Campaign, type Gap } from '../shared/contracts.js';
 import { AppError } from './errors.js';
+import { renderAuthoringLayout } from './authoring-layout.js';
 
 export const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 export const escapeHtml = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
@@ -37,10 +38,22 @@ export function preflight(campaign: Campaign) {
   const gaps = [...content, ...deliveryGaps()];
   return { campaignId: campaign.id, version: campaign.version, canSend: false as const, contentReady: content.length === 0, gaps };
 }
-export function renderPreview(campaign: Campaign, images: { name: string; mime: string; bytes: Buffer }[]) {
+type PreviewImage = {name:string;mime:string;bytes:Buffer}|{name:string;sha256:string};
+function previewSource(image:PreviewImage) {
+  if ('bytes' in image) return `data:${image.mime};base64,${image.bytes.toString('base64')}`;
+  if (!/^[a-f0-9]{64}$/.test(image.sha256)) throw new Error('Invalid stored image digest.');
+  return 'cid:'+image.sha256;
+}
+export function renderPreview(campaign: Campaign, images: PreviewImage[]) {
   const c = campaign.content;
   const text = [c.heading, c.body, c.ctaLabel && safeLink(c.ctaUrl) ? `${c.ctaLabel}: ${c.ctaUrl}` : ''].filter(Boolean).join('\n\n');
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>${escapeHtml(c.subject || 'Campaign preview')}</title></head><body style="margin:0;background:#fff7f8;color:#1b1d21;font:16px/1.65 system-ui"><main style="max-width:600px;margin:auto;background:white;padding:30px;overflow-wrap:anywhere"><p style="color:#69515d">${escapeHtml(c.fromName)}</p><p>${escapeHtml(c.preheader)}</p><h1 style="font:36px Georgia;color:#4a0a1e">${escapeHtml(c.heading)}</h1>${images.map(i => `<img alt="${escapeHtml(i.name)}" style="width:100%;height:auto;margin:12px 0" src="data:${i.mime};base64,${i.bytes.toString('base64')}">`).join('')}<div style="white-space:pre-wrap">${escapeHtml(c.body)}</div>${c.ctaLabel && safeLink(c.ctaUrl) ? `<p><a rel="noopener noreferrer" href="${escapeHtml(c.ctaUrl)}" style="color:#a41f2d">${escapeHtml(c.ctaLabel)}</a></p>` : ''}<hr><p style="font-size:12px;color:#69515d">Preview only. Verified sender details and unsubscribe controls are required before delivery.</p></main></body></html>`;
+  const heading = `<h1 style="font:36px Georgia;color:#4a0a1e">${escapeHtml(c.heading)}</h1>`;
+  const photos = images.map(i => `<img alt="${escapeHtml(i.name)}" style="width:100%;height:auto;margin:12px 0" src="${previewSource(i)}">`).join('');
+  const story = `<div style="white-space:pre-wrap">${escapeHtml(c.body)}</div>`;
+  const link = c.ctaLabel && safeLink(c.ctaUrl)
+    ? `<p><a rel="noopener noreferrer" href="${escapeHtml(c.ctaUrl)}" style="color:#a41f2d">${escapeHtml(c.ctaLabel)}</a></p>`: '';
+  const layoutBody = renderAuthoringLayout(c.layout, { heading, photos, story, link });
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>${escapeHtml(c.subject || 'Campaign preview')}</title></head><body style="margin:0;background:#fff7f8;color:#1b1d21;font:16px/1.65 system-ui"><main style="max-width:600px;margin:auto;background:white;padding:30px;overflow-wrap:anywhere"><p style="color:#69515d">${escapeHtml(c.fromName)}</p><p>${escapeHtml(c.preheader)}</p>${layoutBody}<hr><p style="font-size:12px;color:#69515d">Preview only. Verified sender details and unsubscribe controls are required before delivery.</p></main></body></html>`;
   return { campaignId: campaign.id, version: campaign.version, html, text };
 }
 export async function inspectImage(base64: string) {

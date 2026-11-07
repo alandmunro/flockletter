@@ -25,7 +25,12 @@ The secret is shown once. Store it in the MCP host's secret/environment facility
 
 Most mutations require an `operationKey` of 16–128 letters, digits, `_` or `-`. Use a UUID. Identical retries return the saved result. Changed input under the same key returns `409 operation_conflict`. Keys are scoped to workspace and actor. The owner-only `audience.unsubscribe` derives its permanent replay key from the brand and contact IDs. Connection issuance follows the one-time-secret rule above. `expectedVersion` protects draft saves and previews.
 
+## Recipient unsubscribe
+
+Recipients can opt out without a login through `GET` and `POST /mail/unsubscribe?t=<opaque capability>`. GET and HEAD show an intentional confirmation form and make no database writes. A mailbox provider posts the single RFC 8058 form pair to the canonical HTTPS origin. Only a private, preauthorized worker may construct these links. Capabilities do not appear in owner previews, API/MCP results or tokens issued to assistants. [Marketing unsubscribe contract and verification](MARKETING_UNSUBSCRIBE.md)
+
 ## MCP setup
+
 
 This release supplies a standard **stdio** MCP bridge, with token storage owned by the local MCP host. It does not advertise a remote OAuth endpoint or pretend that a static token is an OAuth consent flow. Remote Clerk OAuth MCP remains a later adapter workstream.
 
@@ -47,3 +52,5 @@ FLOCKLETTER_ASSET_ROOT=/absolute/path/to/approved/photos
 The photo root is optional. Without it, local-file tools are absent. With it, `asset_upload_files` accepts relative paths, rejects paths/symlinks outside the root, bounds reads, and sends bytes to the configured Flockletter origin only. No supplier downloads or remote image fetches occur. Use a narrowly chosen photo folder, not the home directory. Other MCP tool names replace the HTTP command dot with `_`; for example, `campaign.preview` becomes `campaign_preview` and `asset.uploadBatch` becomes `asset_uploadBatch`.
 
 Use `audience_summary` with `{"brandId":"<granted brand UUID>"}` for totals across the five subscriber states. This requires `audience:summary`. Combining `read` and `audience:summary` adds confirmed and excluded counts to `campaign_preflight`. Individual contacts, consent history and owner unsubscribe are available only to a current Clerk owner session. The separate `subscriber:signup` connection serves its single brand through the dedicated HTTP signup endpoint. [Audience walkthrough](AUDIENCE.md)
+
+The owner-only `audience.previewImport` command accepts `brandId`, a base64-encoded UTF-8 CSV and a zero-based `emailColumn`. `audience.exportPage` returns up to 500 contacts for one brand. Submit its opaque cursor and revision to read another page. Both operations use the authenticated owner session. Assistant connections have no access to either operation. [CSV walkthrough](AUDIENCE.md#preview-a-csv)

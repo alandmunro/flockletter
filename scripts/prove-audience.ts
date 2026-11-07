@@ -6,6 +6,9 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import { startDatabase } from './database-fixture.js';
+import { verifyCompanies } from './check-companies.js';
+import { verifyPublicPlans } from './check-public-plans.js';
+import { verifyAuthoring } from './check-authoring-browser.js';
 import { createApp } from '../src/server/app.js';
 import { Authenticator, localIdentity } from '../src/server/auth.js';
 import { loadConfig } from '../src/server/config.js';
@@ -74,7 +77,8 @@ async function seed(db: Database, service: CommandService) {
     {
       brandId: first,
       operationKey: randomUUID(),
-      content: { ...emptyContent(), title: 'November field notes' },
+      content: { ...emptyContent(), title: 'November field notes',subject:'November field notes',fromName:'Alpine Field Notes',
+        replyTo:'shop@example.test',heading:'November on the trail',body:'The trail is ready for winter.' },
     },
     actor,
   );
@@ -91,6 +95,67 @@ async function photo(page: Page, name: string) {
   });
   await page.screenshot({ path: path.join(dir, name + '.png') });
 }
+async function verifyCsv(page: Page) {
+  let previewRequests = 0;
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/v1/commands/audience.previewImport') previewRequests++;
+  });
+  await page.getByText('Preview a contact CSV', { exact: true }).click();
+  const csv =
+    'Notes,Reader\r\n' +
+    'a'.repeat(5000) +
+    ',' +
+    reader +
+    '\r\nother,join@example.test\r\ndup,join@EXAMPLE.TEST\r\nmissing,';
+  await page.getByLabel('CSV file', { exact: true }).setInputFiles({
+    name: 'fictional.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csv),
+  });
+  await page.getByLabel('Email column', { exact: true }).selectOption('1');
+  assert.equal(previewRequests, 0, 'File selection and column mapping stay local');
+  await page.getByRole('button', { name: 'Preview CSV', exact: true }).click();
+  const report = page.getByRole('region', { name: 'CSV preview results', exact: true });
+  await report.waitFor();
+  assert.equal(previewRequests, 1);
+  for (const [label, value] of [
+    ['Data rows', '4'],
+    ['New addresses', '1'],
+    ['Already confirmed', '1'],
+    ['Duplicate rows', '1'],
+    ['Invalid rows', '1'],
+  ]) {
+    const actual = await report
+      .getByText(label!, { exact: true })
+      .evaluate((el) => el.nextElementSibling?.textContent);
+    assert.equal(actual, value);
+  }
+  assert.ok(!(await report.innerText()).includes('@'));
+  await page.getByRole('button', { name: 'Clear file', exact: true }).click();
+  assert.equal(await report.count(), 0);
+  await page.getByText('Preview a contact CSV', { exact: true }).click();
+}
+async function verifyExport(page: Page) {
+  await page.getByText('Export brand contacts', { exact: true }).click();
+  assert.equal(await page.getByRole('link', { name: /Download CSV/ }).count(), 0);
+  await page.getByRole('button', { name: 'Prepare export', exact: true }).click();
+  const link = page.getByRole('link', { name: 'Download CSV (27 contacts)', exact: true });
+  await link.waitFor();
+  const url = await link.getAttribute('href');
+  assert.ok(url?.startsWith('blob:') && !url.includes(reader));
+  const download = page.waitForEvent('download');
+  await link.click();
+  assert.match((await download).suggestedFilename(), /^flockletter-contacts-[\d-]+\.csv$/);
+  await page.getByRole('button', { name: 'Discard file', exact: true }).click();
+  assert.equal(await link.count(), 0);
+  await page.getByRole('button', { name: 'Prepare export', exact: true }).click();
+  await link.waitFor();
+  await page.getByLabel('Brand', { exact: true }).selectOption({ label: secondary });
+  await page.getByText('No contacts match this view.', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('link', { name: /Download CSV/ }).count(), 0);
+  await page.getByLabel('Brand', { exact: true }).selectOption({ label: primary });
+  await page.getByRole('table', { name: 'Audience contacts' }).waitFor();
+}
 async function verify(page: Page, origin: string) {
   const failures: string[] = [];
   page.on('pageerror', (e) => failures.push(e.message));
@@ -106,6 +171,8 @@ async function verify(page: Page, origin: string) {
   assert.equal(await total.evaluate((el) => el.nextElementSibling?.textContent), '27');
   assert.equal(await list.locator('tbody tr').count(), 25);
   await photo(page, 'audience-directory');
+  await verifyCsv(page);
+  await verifyExport(page);
   await button('Next contacts').click();
   await button('reader-26@example.test').waitFor();
   assert.equal(await list.locator('tbody tr').count(), 2);
@@ -165,6 +232,12 @@ async function verify(page: Page, origin: string) {
   const previewCounts = page.locator('.audience-preview-count');
   await previewCounts.waitFor();
   assert.match(await previewCounts.innerText(), /5 confirmed · 22 excluded/);
+  await button('Review capture').click();
+  await button('Approve capture').click();
+  await button('Open captured email').click();
+  await page.getByRole('heading',{name:'Captured email',exact:true}).waitFor();
+  await page.frameLocator('iframe[title="Captured campaign email"]').getByRole('heading',{name:'November on the trail'}).waitFor();
+  await photo(page,'campaign-capture');
   await button('API & MCP').click();
   const totalsScope = page.getByRole('checkbox', { name: 'Read audience totals by status' });
   assert.equal(await totalsScope.isChecked(), false);
@@ -184,7 +257,7 @@ const server = createServer();
 let browser: Browser | undefined;
 try {
   await db.verifyBoundary();
-  const service = new CommandService(db);
+  const service = new CommandService(db,undefined,localIdentity().isOwner);
   await seed(db, service);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -202,7 +275,10 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
   page.setDefaultTimeout(8000);
   await verify(page, origin);
-  console.log('Audience browser checks passed on desktop and mobile using disposable sample contacts.');
+  await verifyPublicPlans(page,origin,photo);
+  await verifyAuthoring(page,origin,photo);
+  await verifyCompanies(page,origin,fixture.adminUrl,actor.workspaceId);
+  console.log('Audience, pricing, onboarding, campaign authoring and company management browser checks passed using disposable sample data.');
 } finally {
   await browser?.close();
   if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));

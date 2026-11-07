@@ -9,6 +9,7 @@ import { configurationGaps, type Config } from './config.js';
 import type { Authenticator } from './auth.js';
 import { authorize, type CommandService } from './service.js';
 import { subscriberRoutes } from './subscribers/routes.js';
+import { marketingUnsubscribeRoutes } from './subscribers/marketing-routes.js';
 
 export function createApp(config: Config, service?: CommandService, auth?: Authenticator) {
   const app = express();
@@ -48,7 +49,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), plans, sendingEnabled: false }));
   app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false,
     skip: req => (['HEAD','POST'].includes(req.method) && /^\/brands\/[^/]+\/subscriber-signups\/?$/i.test(req.path)) ||
-      (req.method==='POST' && /^\/confirmation-feedback\/?$/i.test(req.path)),
+      (req.method==='POST' && /^\/(confirmation-feedback|billing\/stripe-events)\/?$/i.test(req.path)),
     message: { error: { code: 'rate_limited', message: 'Too many requests. Retry in a minute.' } } }));
   app.use('/api/v1', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -59,6 +60,17 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     next();
   });
   subscriberRoutes(app, config, service?.intake, auth);
+  marketingUnsubscribeRoutes(app,config,service?.db);
+  app.post('/api/v1/billing/stripe-events',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'128kb'}),async(req,res)=>{
+    if(!Buffer.isBuffer(req.body)) throw new AppError(415,'json_required','Send the raw signed Stripe event.');
+    await service!.billing.feedback(req.body,req.get('stripe-signature')??'');
+    res.json({received:true});
+  });
+  app.get('/api/v1/connection/identity', async (req,res)=>{
+    const actor=await auth!.authenticate(req);
+    if(actor.kind!=='connection'||actor.scopes.includes('subscriber:signup')) throw new AppError(403,'connection_required','Use a preparation connection to inspect its own identity.');
+    res.json({id:actor.actorId.slice('connection:'.length),workspaceId:actor.workspaceId,brandIds:actor.brandIds,scopes:actor.scopes});
+  });
   app.get('/api/v1/schema', async (req, res) => {
     const actor=await auth!.authenticate(req);
     if (actor.scopes.includes('subscriber:signup')) throw new AppError(403,'scope_required','This connection only accepts subscriber signups.');
@@ -78,7 +90,8 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
       const release = () => { if (!released) { activeUploads--; released = true; } };
       res.once('finish', release); res.once('close', release);
     }
-    express.json({ limit: name === 'asset.uploadBatch' ? '29mb' : name.startsWith('audience.') ? '4kb' : '64kb', strict: true })(req, res, error => {
+    const limit = name==='asset.uploadBatch' ? '29mb' : name==='audience.previewImport' ? '350kb' : name.startsWith('audience.') ? '4kb' : '64kb';
+    express.json({ limit, strict: true })(req, res, error => {
       if (error) return next(error);
       void service!.execute(name, req.body, actor).then(result => res.json({ result })).catch(next);
     });

@@ -240,6 +240,8 @@ Clerk owns hosted login and organization membership facts. Flockletter's applica
 
 ## Verification and phase gates
 
+Staging now exercises the campaign lifecycle with synthetic recipients, immutable reviews, version checks, periodic processing, independent usage reservations and scoped reporting. Operators can issue complimentary access, while Stripe test facts and live marketing remain separate. [Pilot evidence and operating scope](implementation/CAMPAIGN_PILOT.md)
+
 The [traceability matrix](TRACEABILITY.md) maps every requirement to a planned acceptance case. Foundation implementation evidence is recorded separately in [verification](implementation/VERIFICATION.md); full release acceptance remains open. Prototype navigation and visual checks are recorded separately as design verification only. For later implementation, verify unit/domain invariants, real database isolation/concurrency, provider contracts and end-to-end browser/API/MCP parity with focused tests appropriate to the change.
 
 Before starting a dependent workstream, resolve the relevant open decisions and record its requirement IDs, adapter contracts and test plan. Before staged acceptance, use two synthetic customer workspaces, not just FFA, to test isolation and failure paths. External mail checks must use only approved recipients. Billing checks must use test environments until separately authorized.

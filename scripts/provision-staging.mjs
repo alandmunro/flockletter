@@ -1,6 +1,7 @@
 // Run only in a protected release shell. Inputs are read from stdin, never argv or service env.
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import { applyMigrations } from './apply-migrations.mjs';
+import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
 import { createInterface } from 'node:readline/promises';
 import process from 'node:process';
 import console from 'node:console';
@@ -122,11 +123,7 @@ async function provision(admin) {
     await applyMigrations(release, runtime);
   });
   await using(connect(target, runtime, passwords[runtime]), async app => {
-    const check = (await app.query(`SELECT current_database() AS database, current_user AS role,
-      (SELECT count(*)::int FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind='r' AND relrowsecurity AND relforcerowsecurity) AS protected_tables,
-      has_schema_privilege(current_user,'public','CREATE') AS schema_create,
-      has_database_privilege(current_user,current_database(),'CREATE') AS database_create`)).rows[0];
-    if (check.database !== target || check.role !== runtime || check.protected_tables !== 15 || check.schema_create || check.database_create) throw new Error('Runtime isolation check failed.');
+    const check = await verifyRuntimeBoundary(app,{database:target,role:runtime});
     console.log(JSON.stringify({ verified: true, foreignCatalogsChecked: other.rowCount, ...check }));
   });
 }

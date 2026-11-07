@@ -47,6 +47,8 @@ Open signup describes the intended launched product. The foundation provides cam
 | --- | --- | --- |
 | D-033 | Give current workspace owners a brand-specific contact directory, consent history and unsubscribe action. Make aggregate counts an optional, brand-specific connection scope. Show current counts in campaign preflight. | The owner requested continued development. The implementation team selected the audience workflow from FL-AUD-001/002/004 and FL-CAM-002. Import policy, tracking, recipient snapshots and live delivery remain separate work. [Audience workflow](implementation/AUDIENCE.md) |
 
+**D-034 · Staging pilot implementation.** Under the owner's instruction to build what can proceed independently, use reversible staging defaults for the capture mailbox, reserved test domains, one-to-25 reviewed recipients, UTC practice periods and the separate billing sandbox. Public prices and limits use the approved catalogue. A protected operator selects a complimentary workspace and grant. Only current owners export contacts or manage companies. Keep CSV imports in preview pending consent policy. No practice result counts toward paid usage. Actual FFA allowance, provider activation, trust policy, retention exceptions and commercial terms still require their respective decisions. [Pilot](implementation/CAMPAIGN_PILOT.md)
+
 ## Proposed baseline
 
 These choices shape the full release SRD and remain subject to owner review. Selected providers are now accepted; their integration designs are still proposals.

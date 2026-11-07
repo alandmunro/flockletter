@@ -11,6 +11,7 @@ const sourceLabels: Record<string, string> = {
   'storefront-footer': 'Storefront footer',
   'storefront-homepage': 'Storefront homepage',
   'workspace-owner': 'Workspace owner',
+  'marketing-unsubscribe-link': 'Marketing unsubscribe link',
   'confirmation-link': 'Confirmation link',
   unsubscribed: 'Unsubscribe link',
   hard_bounced: 'Hard bounce',
