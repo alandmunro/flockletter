@@ -1,6 +1,6 @@
 # Flockletter requirement traceability
 
-This matrix maps the proposed requirements in [the SRD](SRD.md) to planned acceptance cases. All cases below are **planned, not run**. Phase 1 contains documentation and separately recorded nonproduction design checks; no implementation test or live provider verification is claimed.
+This matrix maps the proposed requirements in [the SRD](SRD.md) to planned acceptance cases. The table lists full-release acceptance cases. The authorized foundation now has targeted implementation evidence in [foundation verification](implementation/VERIFICATION.md). This does not mark broader cases or live provider checks complete.
 
 Later evidence must identify the implementation revision, environment, input scenario, observed result and any remaining external check. Use two synthetic customer workspaces for isolation tests. Keep secrets, personal data and sensitive provider responses out of public evidence.
 
@@ -15,7 +15,7 @@ Later evidence must identify the implementation revision, environment, input sce
 | FL-AT-007 | FL-BIL-002, FL-BIL-004 | Card entry occurs in the payment-provider flow. Reject foreign customer/price IDs, invalid workspace bindings and duplicate purchase intents; store currency and integer amounts. |
 | FL-AT-008 | FL-BIL-003 | In billing test environments, verify success without a browser return, invalid signatures, wrong account/environment, delayed/duplicate/out-of-order events and unknown outcomes. Access follows reconciled provider facts. |
 | FL-AT-009 | FL-BIL-005 | Approved upgrade, downgrade, cancellation and payment-failure rules change sending predictably, preserve data and retain necessary billing/unsubscribe/export access. |
-| FL-AT-010 | FL-BIL-006 | Before paid launch, verify the selected US customer market and business identity, pending DBA completion, approved terms/tax setup and provider configuration; existing merchant settings remain unchanged. |
+| FL-AT-010 | FL-BIL-006 | Before paid launch, verify the selected US customer market and business identity, owner-confirmed Colorado DBA registration, approved terms/tax setup and provider configuration; existing merchant settings remain unchanged. |
 | FL-AT-011 | FL-USG-001, FL-USG-002, FL-USG-003 | Concurrent UI/API/MCP sends cannot exceed allowance; retries settle usage once; bounces, suppressed recipients, real test sends and unknown results follow the documented unit rules. |
 | FL-AT-012 | FL-USG-004, FL-OPS-002 | A signup/import/send burst remains within approved aggregate spend, connection and compute budgets; other workspaces receive service; failed provisioning is recoverable. |
 | FL-AT-013 | FL-ONB-005, FL-AUD-001, FL-AUD-002 | Subscriber signup/preferences work without a paid login. A new form signup is unconfirmed until double opt-in succeeds; tracking defaults off across UI/API/MCP and remains off until an authorized change. Preserve consent evidence and distinct states; purchases or another brand's records do not establish consent. |
@@ -44,6 +44,6 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
-The only completed checks in this phase concern documentation structure, references, requirement coverage and public-repository contents. They do not satisfy the implementation acceptance cases above. Add implementation evidence only after coding is authorized and the relevant checks actually run.
+The deployed foundation passed Clerk passwordless sign-in, workspace creation, partial image-batch validation, and saved campaign preview and reload. The second synthetic organization's campaign list was empty. The shared-host release verified seven forced row-level policies and the runtime role's restricted access. [Foundation verification](implementation/VERIFICATION.md)
 
 Design-only browser checks and screen/story coverage are recorded in [design verification](design/VERIFICATION.md). They do not mark any FL-AT case complete.

@@ -1,6 +1,6 @@
 # Flockletter product decisions
 
-Updated November 6, 2026. Accepted decisions below reflect the owner's instructions. Proposed choices are review items, not implementation authority. No runtime implementation or infrastructure activation is authorized.
+Updated November 7, 2026. D-030 authorizes the foundation implementation and staging verification. D-031 records the hostname, sender and support addresses, and spending approval threshold. Proposed choices still require resolution before their dependent workstreams.
 
 ## Accepted decisions
 
@@ -24,7 +24,7 @@ Updated November 6, 2026. Accepted decisions below reflect the owner's instructi
 | D-016 | Use Clerk for hosted authentication and support Google and Apple sign-in; D-028 extends the launch selection. | Owner selected provider and social logins. Credentials and identity data remain independent of other applications. |
 | D-017 | Default to confirmation-based signup (double opt-in) and open/click tracking off until enabled. | Owner accepted the proposed privacy defaults. Import policy and consent wording still need definition. |
 | D-018 | Retain canceled account data for 90 days, then purge it. | Owner selected duration and deletion. Clock definition, backup expiry and narrowly necessary record exceptions require an explicit policy. |
-| D-019 | Launch for US customers under Frosty Flamingo Software, LLC. Record the owner's planned Colorado DBA filing as a launch prerequisite. | Owner supplied business identity, geography and filing intention; filing is not claimed complete. |
+| D-019 | Launch for US customers under Frosty Flamingo Software, LLC. The Colorado DBA registration for Flockletter is complete. | The owner confirmed registration on November 6, 2026. |
 | D-020 | Offer email support only, with AI automation in replies. | Owner selected channel and automation; provider, escalation and response commitments remain open. |
 | D-021 | FFA uses Flockletter as a customer with a 100% complimentary entitlement, bypassing Stripe and card payments. | Explicit exception to the ordinary paid/trial flow. This is not a Stripe coupon or simulated payment. |
 | D-022 | Use Listmonk, Stripe and Clerk, and host Flockletter on Render. Other services remain discussable. | Owner selected the core stack and host; versions, delivery provider and topology remain open. |
@@ -35,12 +35,14 @@ Updated November 6, 2026. Accepted decisions below reflect the owner's instructi
 | D-027 | Produce nonproduction UI mockups through ChatGPT Sites using Cadence's visual stylesheet, publish design artifacts to GitHub, and document user stories. | Explicit design authorization; no production application implementation, live provider configuration, sending, payments or Render deployment. Only bounded visual styling may be adapted; no private runtime code or data. |
 | D-028 | Offer Google, Apple, Microsoft, or email with a one-time verification code at launch, all through Clerk. Password-based login is not proposed for launch; other social providers are deferred. | Owner approved the recommended four-option launch screen. D-026 continues to govern hosted membership. Customer MFA, account-linking safeguards and recovery details remain O-003. This approval updates documentation and nonproduction mockups only. |
 | D-029 | Display the owner-supplied Frosty Flamingo Software logo in the upper-right header across the design mockups, sized responsively. | Owner supplied the transparent PNG and requested its placement on every page where appropriate. Include the exact asset in the published design artifacts; do not alter its artwork. Reader pages retain their sending-brand identity and login-free flow. This does not authorize application implementation. |
+| D-030 | Build the bounded application foundation and test it locally and in staging; make reasonable decisions without routine confirmation stops. Use the approved visual system/logo, shared UI/API/MCP commands and local-model delegation with primary review. | Owner explicitly authorized implementation on November 6, 2026 and authorized resuming staging when needed. This supersedes earlier design-only restrictions. Production, real mailing and public paid activation remain outside this workstream. See [foundation decisions](implementation/FOUNDATION.md). |
+| D-031 | Use `flockletter.frostyflamingosoftware.com` for Flockletter, `flockletter@frostyflamingosoftware.com` as its platform sender and `support@frostyflamingosoftware.com` for support. Obtain approval for each individual expense above USD 25. | Owner selected the hostname, addresses and expense threshold on November 6, 2026. Customer brands retain their own sending identities. |
 
-Open signup describes the intended launched product. The public documentation repository does not currently provide signup, a paid service or email delivery.
+Open signup describes the intended launched product. The foundation provides campaign preparation; a paid service and email delivery are not active.
 
 ## Proposed baseline
 
-These choices shape SRD draft 0.4 and remain subject to owner review. Selected providers are now accepted; their integration designs are still proposals.
+These choices shape the full release SRD and remain subject to owner review. Selected providers are now accepted; their integration designs are still proposals.
 
 | ID | Proposal | Reason and consequence |
 | --- | --- | --- |
@@ -64,14 +66,14 @@ These choices shape SRD draft 0.4 and remain subject to owner review. Selected p
 | O-005 | Exact Render topology, region and ownership of extracted UI components | Restricted logical databases; independently deployable SaaS and engine. No shared capacity is presumed available | Deployment design |
 | O-006 | Exact billing adaptation, trial campaign/seat/company/brand caps and paid transition, refunds, annual option/discount and failed-payment behavior | 14-day card-required trial with 250 active contacts and 500 total recipient emails is accepted. SRD proposes immediate prorated upgrades, end-of-period downgrades/cancellation, suspension on day 6 and closure on day 30; no refund or annual-discount commitment yet | Billing implementation and terms |
 | O-007 | Sender onboarding, initial trust limits, escalation and acceptable-use policy | Discussion deferred by D-023. Retain verified sender/consent, finite recipient limits and suppression requirements; define thresholds and response before sending is built | Sending implementation |
-| O-008 | DBA completion, customer eligibility wording, terms, privacy and tax determination | US launch and business identity are settled; no filing, registration or tax-account change is performed by documentation | Public paid launch |
+| O-008 | Customer eligibility wording, terms, privacy and tax determination | US launch and business identity are settled. The owner confirmed Colorado DBA registration. | Public paid launch |
 | O-009 | Retention clock, backups/deletion evidence, minimal record exceptions, residency and recovery targets | Accepted 90-day canceled-account retention; propose counting from effective service end. US customer eligibility does not by itself set all provider storage locations | Data-lifecycle implementation |
 | O-010 | Signup-form wording, imported-list confirmation, brand consent and who may enable tracking | Double opt-in on and tracking off are accepted defaults; do not silently infer permission from an import or another brand | Subscriber and analytics implementation |
 | O-011 | FFA integration contract, assigned tier/allowances and complimentary-grant lifecycle | Customer workflows with an operator-issued complimentary grant; no Stripe/card dependency or exemption from sending controls | FFA integration implementation |
-| O-012 | Initial budget, expected customers/audience volume, service targets, AI support provider and escalation policy | Email support with AI replies is accepted. Accepted prices use the documented cost assumptions, including Clerk Enhanced B2B; actual capacity and spending approval remain open; propose human escalation for sensitive or uncertain support | Capacity acceptance and support implementation |
+| O-012 | Initial budget, expected customers/audience volume, service targets, AI support provider and escalation policy | Email support with AI replies is accepted. Accepted prices use the documented cost assumptions, including Clerk Enhanced B2B; capacity and the total operating budget remain open. Each individual expense above $25 requires owner approval. Propose human escalation for sensitive or uncertain support | Capacity acceptance and support implementation |
 | O-013 | Exact initial role/capability matrix and approval policy | Owner, editor, analyst and separate platform operator; send permission explicitly granted | Authorization implementation |
 
-The owner can resolve these incrementally. Missing decisions must be exposed before dependent implementation starts; they are not defaults that an agent may silently fill during deployment.
+The owner can resolve these incrementally. Missing decisions must be exposed before dependent implementation starts. Under D-030, the assistant may resolve reasonable foundation choices and must record them explicitly; provider secrets, legal facts and live sending readiness cannot be invented.
 
 ## Change record
 
@@ -83,3 +85,5 @@ The owner can resolve these incrementally. Missing decisions must be exposed bef
 | 2026-11-06 | Draft 0.3 accepts the $15/$25/$39 tiers and recipient caps, trial limits, and Clerk-owned memberships; records the $250 shared-cost assumption and authorizes design-only Sites mockups plus user stories. |
 | 2026-11-06 | Draft 0.4 records the approved Google/Apple/Microsoft/email-code launch options and synchronizes signup, sign-in, account screens, stories and acceptance planning. Live authentication and application implementation remain unauthorized. |
 | 2026-11-06 | Added the owner-supplied Frosty Flamingo Software logo to the shared mockup headers and refreshed design captures. Original artwork is preserved. |
+
+O-003/O-013 cover owner-only preparation with current Clerk membership checks and scoped connections. Flockletter's staging Clerk application and restricted database roles are active. Two synthetic organizations completed workspace setup, and the first saved and reopened a campaign in the dedicated database. Full team roles, recovery, production capacity and delivery still have separate acceptance gates. [Staging evidence](implementation/VERIFICATION.md)

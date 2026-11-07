@@ -1,3 +1,5 @@
+> Update November 6, 2026: the owner has now authorized the [foundation implementation](implementation/FOUNDATION.md) and staging verification (D-030). The design-only restrictions below describe the earlier planning phase and are superseded for that bounded scope. Full SaaS launch, live sending and production remain gated.
+
 # Flockletter phase 1 product review
 
 Phase 1 turns the product idea into a reviewable software requirements document. It includes this public repository and its planning material. It additionally includes owner-authorized nonproduction screen mockups through Sites, published design artifacts and user stories. It does not include production application code, test scaffolds, Render provisioning, live provider setup or operational deployment.
@@ -12,7 +14,7 @@ The value of the hosted service is managed operation, delivery integration, conv
 
 ## What the owner has settled
 
-The name is Flockletter, the repository is public, future signup is open and self-service, hosted plans include delivery, and the license is AGPLv3. The target market is small US businesses, with inexpensive pricing and a 14-day card-required trial. FFA is the first intended customer and receives complimentary access without Stripe or card payments. The intended operator is Frosty Flamingo Software, LLC; its planned Colorado DBA filing remains pending.
+The name is Flockletter, the repository is public, future signup is open and self-service, hosted plans include delivery, and the license is AGPLv3. The target market is small US businesses, with inexpensive pricing and a 14-day card-required trial. FFA is the first intended customer and receives complimentary access without Stripe or card payments. The intended operator is Frosty Flamingo Software, LLC; the owner confirmed the Colorado DBA registration is complete.
 
 The three tiers allow 2, 5 and 20 campaigns per month, with campaign and recipient allowances pooled across each subscription. Company/brand totals are 1/1, 3/3 and 5/5; user limits are 1, 3 and unlimited. Monthly prices are $15/$25/$39, active contacts and maximum recipients per campaign are 2,500/5,000/10,000, and monthly recipient emails are 5,000/25,000/100,000. The trial is limited to 250 contacts and 500 total emails. Clerk owns all hosted login and workspace membership, with Google, Apple and Microsoft sign-in, plus email with a one-time verification code. Listmonk, Stripe and Render are also selected. Double opt-in defaults on, tracking defaults off, canceled-account data is retained 90 days then purged, and support is email-only with AI replies.
 
@@ -36,9 +38,9 @@ The product remains in documentation and design-only phase 1. These choices are 
 | Architecture and reuse choices | Proposals with identified gaps; no implementation reuse approved |
 | Acceptance cases and traceability | Planned cases only; no executable tests or verification claims |
 | Tier values and providers | Prices, recipient/campaign/company/brand/user and trial contact/email caps accepted; core providers accepted; delivery provider and counting details open |
-| Operating budget and detailed policies | Cost assumptions documented, including Clerk memberships; spending authorization, exact capacity and detailed policies remain open |
+| Operating budget and detailed policies | Cost assumptions documented, including Clerk memberships; expenses above USD 25 require individual owner approval, and capacity and detailed policies remain open |
 | User interface review | Sites concept, complete MVP screen catalogue and linked user stories; design review does not authorize implementation |
-| Final SRD approval and permission to build | Pending owner instruction |
+| Foundation permission to build | Authorized by D-030; broader release acceptance remains open |
 
 ## Documentation review criteria
 
