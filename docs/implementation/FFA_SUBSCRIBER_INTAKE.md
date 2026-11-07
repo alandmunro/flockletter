@@ -1,6 +1,6 @@
 # Flockletter — First-Party Subscriber Intake for FFA
 
-**Status:** implementation proposal; not yet deployed  
+**Status:** Flockletter implementation authorized November 7 under D-032. See the [operator runbook and acceptance evidence](SUBSCRIBER_INTAKE_OPERATIONS.md) for verified environments and remaining release gates.
 **Owner:** Flockletter  
 **Dependency:** Foundation PR #1 (`codex/foundation-workflow`)  
 **Consumer:** Frosty Flamingo Apparel (FFA), proposed FFA PR #181  

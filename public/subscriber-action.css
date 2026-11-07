@@ -1,0 +1,55 @@
+:root {
+  color: #391625;
+  background: #fff7f9;
+  font:
+    1rem/1.65 system-ui,
+    sans-serif;
+}
+body {
+  margin: 0;
+}
+header,
+main {
+  max-width: 38rem;
+  margin: auto;
+  padding: 1.5rem;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font:
+    bold 2rem Georgia,
+    serif;
+}
+header img {
+  width: 5rem;
+  height: auto;
+}
+main {
+  background: white;
+  border: 1px solid #e6ccd3;
+  border-radius: 1rem;
+  margin: 1rem auto;
+}
+h1 {
+  font:
+    bold 2rem Georgia,
+    serif;
+}
+button {
+  border: 0;
+  background: #74283e;
+  color: white;
+  border-radius: 0.5rem;
+  padding: 0.8rem 1.3rem;
+  font: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+}
+button:focus-visible {
+  outline: 0.2rem solid #377b79;
+  outline-offset: 0.2rem;
+}

@@ -57,6 +57,9 @@ export class Authenticator {
       requireCondition(/^org_[A-Za-z0-9_-]{1,120}$/.test(workspaceId), 401, 'invalid_connection', 'The connection is invalid.');
       const row = await this.db.tenant(workspaceId, async sql => (await sql.query<{ id: string; issuer_id: string; scopes: Capability[]; brand_ids: string[] }>('SELECT id,issuer_id,scopes,brand_ids FROM connections WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now()', [digest(token)])).rows[0]);
       requireCondition(row, 401, 'invalid_connection', 'The connection is invalid, expired or revoked.');
+      if (row.scopes.includes('subscriber:signup')) {
+        requireCondition(row.scopes.length===1 && row.brand_ids.length===1,401,'invalid_connection','The connection is invalid, expired or revoked.');
+      }
       requireCondition(await this.identity.isOwner(row.issuer_id, workspaceId), 403, 'membership_revoked', 'The connection owner no longer has workspace authority.');
       return { workspaceId, userId: row.issuer_id, actorId: `connection:${row.id}`, kind: 'connection', owner: true, scopes: row.scopes, brandIds: row.brand_ids };
     }

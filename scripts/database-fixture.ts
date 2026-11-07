@@ -1,6 +1,7 @@
 import EmbeddedPostgres from 'embedded-postgres';
 import pg from 'pg';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { applyMigrations } from './apply-migrations.mjs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -32,9 +33,7 @@ export async function startDatabase() {
       await admin.query(`CREATE ROLE flockletter_runtime LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
       await admin.query('REVOKE ALL ON DATABASE flockletter_test FROM PUBLIC');
       await admin.query('GRANT CONNECT ON DATABASE flockletter_test TO flockletter_runtime');
-      await admin.query(await readFile(new URL('../migrations/001_foundation.sql', import.meta.url), 'utf8'));
-      await admin.query('GRANT USAGE ON SCHEMA public TO flockletter_runtime');
-      await admin.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO flockletter_runtime');
+      await applyMigrations(admin, 'flockletter_runtime');
     } finally { await admin.end(); }
     return { url: adminUrl.replace('postgres:', 'flockletter_runtime:'), adminUrl, stop: () => postgres.stop() };
   } catch (error) { await postgres.stop(); throw error; }

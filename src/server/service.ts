@@ -3,6 +3,7 @@ import { commands, limits, plans, type AssetSummary, type Campaign, type Campaig
 import { Database, type Sql } from './db.js';
 import { AppError, requireCondition } from './errors.js';
 import { deliveryGaps, digest, inspectImage, preflight, renderPreview } from './content.js';
+import { SubscriberIntake } from './subscribers/intake.js';
 
 export type Actor = { workspaceId: string; userId: string; actorId: string; owner: boolean; kind: 'session' | 'connection'; scopes: Capability[]; brandIds: string[] | null };
 type CampaignRow = { id: string; brand_id: string; version: number; content: CampaignContent; created_at: Date; updated_at: Date };
@@ -37,7 +38,7 @@ async function checkImages(sql: Sql, actor: Actor, brandId: string, ids: string[
 }
 
 export class CommandService {
-  constructor(readonly db: Database) {}
+  constructor(readonly db: Database, readonly intake = new SubscriberIntake(db)) {}
   async execute(name: CommandName, raw: unknown, actor: Actor): Promise<unknown> {
     authorize(actor, name);
     const definition = commands[name];
@@ -54,7 +55,8 @@ export class CommandService {
           requireCondition(prior.rows[0].request_hash === requestHash, 409, 'operation_conflict', 'This operation key was already used for different input. Retry the original request or use a new key.');
           return prior.rows[0].result;
         }
-        if (name !== 'connection.revoke') {
+        const disablingIntake = name==='intake.configure' && (input as {enabled:boolean}).enabled===false;
+        if (name !== 'connection.revoke' && !disablingIntake) {
           const count = (await sql.query<{ count: string }>('SELECT count(*) FROM operations')).rows[0];
           requireCondition(Number(count?.count) < limits.preparationOperations, 422, 'preparation_limit', 'This foundation workspace has reached its preparation operation limit. Contact the operator; connection revocation remains available.');
         }
@@ -158,9 +160,24 @@ export class CommandService {
         return { results, storageBytes: storage, storageLimitBytes: limits.workspaceBytes };
       }
       case 'connection.list': return (await sql.query<ConnectionRow>('SELECT id,name,scopes,brand_ids,created_at,expires_at,revoked_at FROM connections ORDER BY created_at DESC LIMIT 100')).rows.map(connectionView);
+      case 'intake.status': {
+        const input=commands[name].schema.parse(raw);
+        await brand(sql,actor,input.brandId);
+        return this.intake.status(sql,actor,input.brandId);
+      }
+      case 'intake.configure': {
+        const input=commands[name].schema.parse(raw);
+        await brand(sql,actor,input.brandId);
+        return this.intake.configure(sql,actor,input.brandId,input.enabled);
+      }
       case 'connection.create': {
         const input = commands[name].schema.parse(raw);
         for (const id of input.brandIds) await brand(sql, actor, id);
+        if (input.scopes.includes('subscriber:signup')) {
+          requireCondition(input.scopes.length===1 && input.brandIds.length===1,422,'invalid_intake_grant','Use only subscriber signup access and exactly one brand.');
+          const view=await this.intake.status(sql,actor,input.brandIds[0]!);
+          requireCondition(view.enabled && view.ready,503,'intake_unavailable','Enable a ready brand intake policy before issuing this connection.');
+        }
         const count = (await sql.query<{ count: string }>('SELECT count(*) FROM connections WHERE revoked_at IS NULL AND expires_at>now()')).rows[0];
         requireCondition(Number(count?.count) < limits.connections, 422, 'connection_limit', 'Revoke an unused connection before creating another. Maximum 10 active connections.');
         const token = `flk_${Buffer.from(w).toString('base64url')}.${randomBytes(32).toString('base64url')}`;

@@ -4,7 +4,7 @@ Flockletter is a planned open-source mailing SaaS for small retailers and genera
 
 ## Current status
 
-The owner has authorized the first application foundation and staging verification. This repository now includes working campaign preparation, an isolated database setup, and shared UI/API/MCP operations alongside the original design review. Sending, paid signup, subscriber management and production deployment are not active. See the [foundation scope](docs/implementation/FOUNDATION.md) and [verification record](docs/implementation/VERIFICATION.md).
+The repository includes campaign preparation, isolated workspace storage, shared UI/API/MCP operations and a separately gated first-party subscriber intake endpoint. Workspace owners can inspect intake readiness and manage a dedicated brand credential. Hosted public collection requires a verified confirmation provider. [Foundation evidence](docs/implementation/VERIFICATION.md) · [Subscriber intake](docs/implementation/FFA_SUBSCRIBER_INTAKE.md)
 
 Settled choices include a public repository, AGPLv3 licensing, open self-service signup for the eventual hosted service, included email delivery and a 14-day trial with a card required. FFA will use a complimentary customer account that bypasses Stripe and card payments.
 
@@ -16,7 +16,7 @@ The planned hosted service is paid. Self-hosting must not require the owner's pr
 
 ## Working foundation
 
-The application uses TypeScript, React/Vite, Express and PostgreSQL. You can create a workspace and first brand, save campaign drafts, batch-upload original images, review safe HTML/plain-text previews, inspect setup gaps and manage scoped API/MCP connections. The supplied logo is unchanged. Sending, billing and audience features remain inactive.
+The application uses TypeScript, React/Vite, Express and PostgreSQL. You can create a workspace and first brand, save campaign drafts, batch-upload original images, review HTML/plain-text previews and manage scoped connections. First-party intake has an independent worker, double opt-in and suppression. Campaign sending and paid activation remain gated.
 
 ## Local setup
 
