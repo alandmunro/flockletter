@@ -5,7 +5,15 @@ import type { PoolClient } from 'pg';
 export type Sql = Pick<PoolClient, 'query'>;
 export class Database {
   readonly pool: pg.Pool;
-  constructor(connectionString: string) { this.pool = new pg.Pool({ connectionString, max: 5, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000, statement_timeout: 10000 }); }
+  private readonly disconnects = new Set<Promise<void>>();
+  constructor(connectionString: string) {
+    this.pool = new pg.Pool({ connectionString, max: 5, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000, statement_timeout: 10000 });
+    this.pool.on('connect', client => {
+      const ended = new Promise<void>(resolve => client.once('end', resolve));
+      this.disconnects.add(ended);
+      void ended.then(() => this.disconnects.delete(ended));
+    });
+  }
   async tenant<T>(workspaceId: string, action: (sql: Sql) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
@@ -24,5 +32,9 @@ export class Database {
       return action(sql);
     });
   }
-  async close() { await this.pool.end(); }
+  async close() {
+    // pg-pool can resolve end() after it removes an idle client but before its socket has closed.
+    await this.pool.end();
+    await Promise.all(this.disconnects);
+  }
 }
