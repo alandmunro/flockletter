@@ -39,13 +39,23 @@ async function gate(sql: Sql, lock = false) {
 function ready(g: Gate | undefined, binding: IntakeBinding | undefined) {
   return Boolean(binding && g?.fresh && g.worker_fingerprint === fingerprint(binding));
 }
-async function bump(sql: Sql, w: string, b: string, name: string, window: 'minute' | 'day', limit: number) {
+async function bump(
+  sql: Sql,
+  workspaceId: string,
+  brandId: string,
+  name: string,
+  duration: '1 minute' | '24 hours',
+  limit: number,
+) {
   const r = await sql.query<{ requests: number }>(
-    `INSERT INTO subscriber_rate_buckets(workspace_id,brand_id,bucket,window_at,requests)
-    VALUES($1,$2,$3,date_trunc($4::text,now()),1) ON CONFLICT(workspace_id,brand_id,bucket) DO UPDATE SET
-    requests=CASE WHEN subscriber_rate_buckets.window_at=excluded.window_at THEN least(subscriber_rate_buckets.requests+1,$5+1) ELSE 1 END,
-    window_at=excluded.window_at RETURNING requests`,
-    [w, b, name, window, limit],
+    `INSERT INTO subscriber_rate_buckets AS bucket(workspace_id,brand_id,bucket,window_at,requests)
+    VALUES($1,$2,$3,clock_timestamp(),1) ON CONFLICT(workspace_id,brand_id,bucket) DO UPDATE SET
+    requests=CASE WHEN excluded.window_at >= bucket.window_at + $4::interval THEN 1
+                 ELSE least(bucket.requests+1,$5+1) END,
+    window_at=CASE WHEN excluded.window_at >= bucket.window_at + $4::interval THEN excluded.window_at
+                  ELSE bucket.window_at END
+    RETURNING requests`,
+    [workspaceId, brandId, name, duration, limit],
   );
   return r.rows[0]!.requests <= limit;
 }
@@ -150,9 +160,9 @@ export class SubscriberIntake {
       if (!g?.enabled || !ready(g, binding)) throw unavailable();
       const w = actor.workspaceId,
         credential = current.rows[0]!.id;
-      const c = await bump(sql, w, brand, 'credential:' + credential, 'minute', 30);
-      const b = await bump(sql, w, brand, 'brand-minute', 'minute', 60);
-      const d = await bump(sql, w, brand, 'brand-day', 'day', 1000);
+      const c = await bump(sql, w, brand, 'credential:' + credential, '1 minute', 30);
+      const b = await bump(sql, w, brand, 'brand-minute', '1 minute', 60);
+      const d = await bump(sql, w, brand, 'brand-day', '24 hours', 1000);
       if (!c || !b || !d) {
         await sql.query('UPDATE subscriber_intake_settings SET throttled=throttled+1');
         return 'limited';
