@@ -1,0 +1,100 @@
+name: flockletter-selfhost
+
+x-postgres: &postgres
+  image: docker.io/library/postgres:18-bookworm@sha256:f1ea2a1a4fb7b68d4836be1fdcb8a6466a89b072158bf9d97663600538c294c5
+  healthcheck:
+    test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "flockletter_runtime", "-d", "postgres"]
+    interval: 2s
+    timeout: 3s
+    retries: 45
+  stop_grace_period: 30s
+x-pg-environment: &pg-environment
+  POSTGRES_USER: flockletter_bootstrap
+  POSTGRES_DB: postgres
+  POSTGRES_PASSWORD_FILE: /run/secrets/bootstrap
+  POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256 --auth-host=scram-sha-256
+x-application: &application
+  image: "${COMPOSE_PROJECT_NAME:-flockletter-selfhost}-app:local"
+  pull_policy: never
+  user: node
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=32m"]
+
+services:
+  db:
+    <<: *postgres
+    environment:
+      <<: *pg-environment
+      FLOCKLETTER_DATABASE: flockletter_demo
+      FLOCKLETTER_DISPOSABLE_FIXTURE: "${FLOCKLETTER_DISPOSABLE_FIXTURE:-0}"
+    secrets:
+      - {source: bootstrap, target: bootstrap}
+      - {source: migrator, target: migrator}
+      - {source: runtime, target: runtime}
+    volumes:
+      - source-pg:/var/lib/postgresql
+      - ./init-db.sh:/docker-entrypoint-initdb.d/10-flockletter.sh:ro
+    networks: [source]
+  migrate:
+    <<: *application
+    build: {context: .., dockerfile: selfhost/Dockerfile}
+    command: [migrate]
+    secrets: [migrator]
+    depends_on: {db: {condition: service_healthy}}
+    networks: [source]
+  web:
+    <<: *application
+    command: [web]
+    environment:
+      FLOCKLETTER_WEB_PORT: "${FLOCKLETTER_WEB_PORT:-4310}"
+    ports: ["127.0.0.1:${FLOCKLETTER_WEB_PORT:-4310}:4310"]
+    secrets: [runtime, clerk-public, clerk-secret]
+    depends_on:
+      db: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    networks: [source,web]
+    healthcheck:
+      test: ["CMD","node","-e","fetch('http://127.0.0.1:4310/healthz').then(r=>process.exit(Number(!r.ok))).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+  restore-db:
+    <<: *postgres
+    profiles: [restore]
+    environment:
+      <<: *pg-environment
+      FLOCKLETTER_DATABASE: flockletter_restore
+      FLOCKLETTER_DISPOSABLE_FIXTURE: "1"
+    secrets:
+      - {source: restore-bootstrap, target: bootstrap}
+      - {source: restore-migrator, target: migrator}
+      - {source: restore-runtime, target: runtime}
+    volumes:
+      - restore-pg:/var/lib/postgresql
+      - ./init-db.sh:/docker-entrypoint-initdb.d/10-flockletter.sh:ro
+    networks: [restore]
+  drill:
+    <<: *application
+    profiles: [restore]
+    secrets: [runtime, restore-runtime]
+    command: [verify]
+    networks: [source,restore]
+
+networks:
+  source: {internal: true}
+  restore: {internal: true}
+  web: {}
+volumes:
+  source-pg: {}
+  restore-pg: {}
+secrets:
+  bootstrap: {file: "${FLOCKLETTER_STATE_DIR:-./.state}/bootstrap"}
+  migrator: {file: "${FLOCKLETTER_STATE_DIR:-./.state}/migrator"}
+  runtime: {file: "${FLOCKLETTER_STATE_DIR:-./.state}/runtime"}
+  restore-bootstrap: {file: "${FLOCKLETTER_STATE_DIR:-./.state}/restore-bootstrap"}
+  restore-migrator: {file: "${FLOCKLETTER_STATE_DIR:-./.state}/restore-migrator"}
+  restore-runtime: {file: "${FLOCKLETTER_STATE_DIR:-./.state}/restore-runtime"}
+  clerk-public: {file: "${FLOCKLETTER_STATE_DIR:-./.state}/clerk-public"}
+  clerk-secret: {file: "${FLOCKLETTER_STATE_DIR:-./.state}/clerk-secret"}

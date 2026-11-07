@@ -4,6 +4,8 @@ The Flockletter staging web service runs in the existing Render workspace, Orego
 
 The authenticated workspace is deployed at the [staging hostname](https://flockletter.frostyflamingosoftware.com). The service uses its dedicated Clerk development application and restricted runtime connection. Render monitors `/readyz` for database readiness. [Render service](https://dashboard.render.com/web/srv-dbn5lb6gekts738v63ag) · [Verification record](VERIFICATION.md)
 
+The [staging campaign pilot](CAMPAIGN_PILOT.md) and [workspace workflows](WORKSPACE_OPERATIONS.md) extend the original foundation checks below. The in-process capture worker polls the bound synthetic brand while the free web service is awake. External delivery and live checkout remain disabled.
+
 ## Service configuration
 
 Build: `npm ci --include=dev && npm run build`.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Api } from './api.js';
-type Activity = { id: string; action: string; actor: 'owner' | 'connection'; at: string };
+type Activity = { id: string; action: string; actor: 'workspace member' | 'connection'; at: string };
 type Overview = {
   events: Activity[];
   captures: { queued: number; blocked: number; captured: number; overdue: number };

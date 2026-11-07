@@ -1,0 +1,7 @@
+# Optional host-native, synthetic-owner demo. The ordinary setup publishes no database port.
+services:
+  db:
+    ports: ["127.0.0.1:${FLOCKLETTER_DEMO_DB_PORT:-55473}:5432"]
+    networks: [source, demo-host]
+networks:
+  demo-host: {}

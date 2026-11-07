@@ -24,5 +24,10 @@
   {"name":"sandbox_portal_intents","scope":"workspace","permissions":["SELECT","INSERT"]},
   {"name":"companies","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"company_brands","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
-  {"name":"subscriber_marketing_links","scope":"brand","permissions":["SELECT","INSERT"]}
+  {"name":"subscriber_marketing_links","scope":"brand","permissions":["SELECT","INSERT"]},
+  {"name":"team_grants","scope":"workspace","permissions":["SELECT","INSERT","UPDATE","DELETE"]},
+  {"name":"team_grant_brands","scope":"workspace","permissions":["SELECT","INSERT","DELETE"]},
+  {"name":"audience_segments","scope":"brand","permissions":["SELECT","INSERT","UPDATE","DELETE"]},
+  {"name":"audience_segment_members","scope":"brand","permissions":["SELECT","INSERT","DELETE"]},
+  {"name":"sandbox_expired_checkouts","scope":"workspace","permissions":["SELECT","INSERT"]}
 ]
