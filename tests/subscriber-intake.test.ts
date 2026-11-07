@@ -167,6 +167,26 @@ afterEach(async () => {
 });
 
 describe('FFA first-party subscriber intake', () => {
+  it('NL-009/011: the scoped readiness probe checks the source and worker without enrolling anyone', async () => {
+    const probe = (site = binding.sourceDomain, token = credential) => http(path(), {
+      method: 'HEAD', headers: { authorization: 'Bearer ' + token, 'x-flockletter-source-domain': site },
+    });
+    const response = await probe();
+    expect(response.status).toBe(204);
+    expect(response.headers.get('x-flockletter-confirmation-mode')).toBe('capture');
+    expect(await rows('SELECT id FROM subscribers')).toEqual([]);
+    expect(await rows('SELECT bucket FROM subscriber_rate_buckets')).toEqual([]);
+    expect((await probe('wrong.example')).status).toBe(503);
+    const other = await issue(['read']);
+    expect((await probe(binding.sourceDomain, other.token)).status).toBe(403);
+    await mode(false);
+    expect((await probe()).status).toBe(503);
+    await mode(true);
+    await rows("UPDATE subscriber_intake_settings SET heartbeat_at=now()-interval '10 minutes'");
+    expect((await probe()).status).toBe(503);
+    removed = true;
+    expect((await probe()).status).toBe(403);
+  });
   it('FI-001/002/003: matches the FFA server contract, atomically deduplicates concurrent contacts and replays', async () => {
     const key = id();
     const results = await Promise.all([

@@ -1,4 +1,4 @@
-import express, { type Express } from 'express';
+import express, { type Express, type RequestHandler } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import type { Authenticator } from '../auth.js';
@@ -24,10 +24,8 @@ export function subscriberRoutes(
   intake?: SubscriberIntake,
   auth?: Authenticator,
 ) {
-  app.post(
-    '/api/v1/brands/:brandId/subscriber-signups',
-    networkLimit(120),
-    async (req, res, next) => {
+  const signupPath = '/api/v1/brands/:brandId/subscriber-signups';
+  const authenticateIntake: RequestHandler = async (req, res, next) => {
       if (!intake || !auth)
         throw new AppError(503, 'intake_unavailable', 'Subscriber intake is unavailable.');
       if (req.get('origin') || req.get('sec-fetch-site') || (config.environment === 'staging' && !req.secure))
@@ -38,8 +36,17 @@ export function subscriberRoutes(
       const brand = z.uuid().safeParse(req.params.brandId);
       if (!brand.success) throw new AppError(404, 'brand_unavailable', 'The requested brand is unavailable.');
       authorizeIntake(actor, brand.data);
-      if (!req.is('application/json')) throw new AppError(415, 'json_required', 'Send application/json.');
       res.locals.intakeActor = actor;
+      next();
+  };
+  app.head(signupPath, networkLimit(30), authenticateIntake, async (req, res) => {
+    const mode = await intake!.probe(res.locals.intakeActor, String(req.params.brandId), req.get('x-flockletter-source-domain'));
+    res.set('X-Flockletter-Confirmation-Mode', mode).status(204).end();
+  });
+  app.post(
+    signupPath, networkLimit(120), authenticateIntake,
+    (req, _res, next) => {
+      if (!req.is('application/json')) throw new AppError(415, 'json_required', 'Send application/json.');
       next();
     },
     express.json({ limit: 8192, strict: true, inflate: false }),

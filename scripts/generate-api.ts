@@ -9,7 +9,15 @@ const paths = Object.fromEntries(Object.entries(commands).map(([name, command]) 
   responses: { '200': { description: 'Command result in a result envelope. Batch results include per-item failures.' }, '401': { description: 'Invalid, expired or revoked authentication.' }, '403': { description: 'Missing scope, owner membership or permitted browser origin.' }, '404': { description: 'Unavailable command or scoped resource.' }, '409': { description: 'Operation-key or draft-version conflict.' }, '413': { description: 'Request or batch too large.' }, '422': { description: 'Input or preparation limit failure; all schema issues are returned.' }, '429': { description: 'Rate or concurrency limit; retry with the same operation keys.' }, '503': { description: 'Required configuration or current membership verification unavailable.' } },
 } }]));
 await mkdir('docs/api', { recursive: true });
-const signupPath = { post: {
+const signupPath = { head: {
+  operationId:'subscriber_intake_readiness',summary:'Check one brand and source without submitting a signup.',
+  security:[{bearerAuth:[]}], 'x-required-scope':'subscriber:signup',
+  parameters:[{in:'path',name:'brandId',required:true,schema:{type:'string',format:'uuid'}},
+    {in:'header',name:'X-Flockletter-Source-Domain',required:true,schema:{type:'string'}}],
+  responses:{'204':{description:'Ready for this source.',headers:{'X-Flockletter-Confirmation-Mode':{schema:{type:'string',enum:['capture','live']}}}},
+    '401':{description:'Invalid or revoked credential.'},'403':{description:'Invalid client or scope.'},'404':{description:'Unavailable brand.'},
+    '429':{description:'Probe rate limit.'},'503':{description:'Brand, source or confirmation worker is unavailable.'}},
+}, post: {
   operationId:'subscriber_signup',summary:'Accept an attested first-party signup for one configured brand.',
   security:[{bearerAuth:[]}], 'x-required-scope':'subscriber:signup',
   parameters:[{in:'path',name:'brandId',required:true,schema:{type:'string',format:'uuid'}},
