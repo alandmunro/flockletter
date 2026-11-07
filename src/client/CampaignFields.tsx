@@ -1,6 +1,7 @@
 import type { CampaignContent, AssetSummary } from '../shared/contracts.js';
 
-export function CampaignFields({ value, assets, disabled, onChange }: {
+export function CampaignFields({ value, assets, disabled, onChange, messageOnly = false }: {
+  messageOnly?: boolean;
   value: CampaignContent;
   assets: AssetSummary[];
   disabled: boolean;
@@ -85,7 +86,7 @@ export function CampaignFields({ value, assets, disabled, onChange }: {
         </div>
       </fieldset>
 
-      <fieldset disabled={disabled}>
+      {messageOnly ? null : <><fieldset disabled={disabled}>
         <legend>Content</legend>
 
         <div className="field-grid">
@@ -182,7 +183,7 @@ export function CampaignFields({ value, assets, disabled, onChange }: {
             })
           )}
         </div>
-      </fieldset>
+      </fieldset></>}
     </div>
   );
 }

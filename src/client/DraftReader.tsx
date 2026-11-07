@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import {CampaignPreview} from './CampaignPreview.js';
 import type { Api } from './api.js';
 import type { Campaign } from '../shared/contracts.js';
 export function DraftReader({ api, draft, back }: { api: Api; draft: Campaign; back: () => void }) {
@@ -31,12 +32,7 @@ export function DraftReader({ api, draft, back }: { api: Api; draft: Campaign; b
       {error && <p role="alert">{error}</p>}
       {preview && (
         <>
-          <iframe
-            sandbox=""
-            className="preview-frame"
-            title="Read-only campaign preview"
-            srcDoc={preview.html}
-          />
+          <CampaignPreview title="Read-only campaign preview" html={preview.html}/>
           <details>
             <summary>Plain text</summary>
             <pre>{preview.text}</pre>

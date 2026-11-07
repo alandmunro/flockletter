@@ -250,6 +250,7 @@ export async function approveRehearsal(sql: Sql, actor: Actor, brand: string, id
     'reviewer_required',
     'Confirm a review prepared with this same account or connection.',
   );
+  requireCondition(row.reason!=='draft_changed',409,'version_conflict','The draft changed. Review its current version.');
   requireCondition(
     row.state === 'reviewed' && Date.now() - row.reviewed_at.getTime() <= 30 * 60000,
     409,
@@ -314,6 +315,20 @@ async function finish(
     state,
     reason,
   ]);
+}
+// Called under the existing workspace lock, in the same transaction as the new campaign revision.
+export async function invalidateStudioReviews(sql:Sql,campaignId:string,version:number) {
+  await sql.query(`WITH blocked AS (
+    UPDATE campaign_rehearsals SET state='blocked',reason='draft_changed',finished_at=now()
+    WHERE campaign_id=$1 AND version<>$2 AND state IN('reviewed','queued') RETURNING id,brand_id
+  ), skipped AS (
+    UPDATE rehearsal_recipients p SET state='cancelled' FROM blocked b
+    WHERE p.rehearsal_id=b.id AND p.brand_id=b.brand_id AND p.state='pending'
+  ), captured AS (
+    SELECT b.id,b.brand_id,count(p.id) FILTER (WHERE p.state='captured')::int AS n FROM blocked b
+    LEFT JOIN rehearsal_recipients p ON p.rehearsal_id=b.id AND p.brand_id=b.brand_id GROUP BY b.id,b.brand_id
+  ) UPDATE rehearsal_reservations r SET settled=true,messages=c.n,slots=CASE WHEN c.n=0 THEN 0 ELSE r.slots END
+    FROM captured c WHERE r.rehearsal_id=c.id AND r.brand_id=c.brand_id`,[campaignId,version]);
 }
 export async function cancelRehearsal(sql: Sql, id: string) {
   const row = await rehearsalRow(sql, id);

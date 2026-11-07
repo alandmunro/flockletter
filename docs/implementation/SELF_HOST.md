@@ -2,6 +2,8 @@
 
 Run Flockletter as an independent local preparation workspace with Docker, Docker Compose and a supported Node release (22.12 through 26). The Compose project serves the public app on a loopback port. Its web service receives the restricted Flockletter runtime database credential and, if supplied, the operator's own Clerk keys. The migration credential belongs to a separate one-off service. The database container uses its own bootstrap credential to create those two restricted roles.
 
+The built image serves the [Studio dependency inventory](../../public/studio-dependencies.json) and [copyright notices](../../public/studio-notices.txt) at the corresponding root URLs. Distribute both files with custom web bundles. [Editor provenance](STUDIO_LICENSES.md)
+
 ## Start a clean installation
 
 From the repository root:

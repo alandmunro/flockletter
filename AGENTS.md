@@ -14,6 +14,8 @@ Read [the SRD](docs/SRD.md), [decisions](docs/DECISIONS.md) and [phase 1 review]
 
 D-035 covers brand-specific member preparation, static group capture, support drafts, retention preview and isolated self-host recovery under D-030. These workflows use explicit scopes and the same source of authority in UI, API and MCP. [Workspace workflows](docs/implementation/WORKSPACE_OPERATIONS.md)
 
+D-036 authorizes the staging Newsletter Studio. Preserve authored content on unsupported input, original brand assets, and review of each saved revision. Keep the editor’s distributed notice inventory synchronized with dependency changes. [Editor notices](docs/implementation/STUDIO_LICENSES.md)
+
 ## Product and public repository boundaries
 
 - The product is Flockletter; the repository slug is `flockletter`.

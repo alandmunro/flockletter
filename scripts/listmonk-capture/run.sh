@@ -34,6 +34,9 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Generate both parts using the same Flockletter renderer used by the reviewed capture.
+FLOCKLETTER_STUDIO_FIXTURE="$(node --import tsx "$fixture_dir/studio-fixture.ts")"
+export FLOCKLETTER_STUDIO_FIXTURE
 network_id="$(docker network create --internal --label "flockletter.fixture=$prefix" "$prefix")"
 [[ "$(docker network inspect --format '{{.Internal}}' "$network_id")" = true ]]
 common=(--network "$network_id" --label "flockletter.fixture=$prefix" --security-opt no-new-privileges)
@@ -79,4 +82,4 @@ SQL
 engine="$(docker run -d "${engine_args[@]}" --network-alias engine "$listmonk" --config '')"
 [[ -z "$(docker port "$database")" && -z "$(docker port "$engine")" ]]
 docker run --rm -i "${common[@]}" --network-alias capture --user node --cap-drop ALL --read-only \
-  -e LISTMONK_ADMIN_PASSWORD -e FIXTURE_CAPTURE_SECRET "$node_image" node --input-type=module - < "$fixture_dir/probe.mjs"
+  -e LISTMONK_ADMIN_PASSWORD -e FIXTURE_CAPTURE_SECRET -e FLOCKLETTER_STUDIO_FIXTURE "$node_image" node --input-type=module - < "$fixture_dir/probe.mjs"
