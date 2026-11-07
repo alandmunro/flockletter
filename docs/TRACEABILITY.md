@@ -44,6 +44,8 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
+FL-AUD-001/002/004, FL-CAM-002 and FL-API-001/002 have targeted coverage for contact lookup, consent history, permanent opt-out, brand-specific aggregate grants and current preview counts. Automated tests exercise isolated PostgreSQL, HTTP, MCP and desktop/mobile browsers. The release-wide acceptance cases for imports, reviewed snapshots and sending remain open. [Audience verification](implementation/AUDIENCE.md)
+
 FL-AUD-001/002/004, FL-API-002/005, FL-DEL-003/004/005 and FL-OPS-007 have targeted evidence for the FFA signup endpoint, double opt-in, consent history, suppression and private capture. The FI-001–015 test and deployment record distinguishes captured confirmation from live delivery. [Intake verification](implementation/SUBSCRIBER_INTAKE_OPERATIONS.md)
 
 The deployed foundation passed Clerk passwordless sign-in, workspace creation, partial image-batch validation, and saved campaign preview and reload. The second synthetic organization's campaign list was empty. The shared-host release verified seven forced row-level policies and the runtime role's restricted access. [Foundation verification](implementation/VERIFICATION.md)

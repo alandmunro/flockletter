@@ -25,7 +25,7 @@ function Hosted({ workspaceConfigured }: { workspaceConfigured: boolean }) {
     </section></main></>;
   }
   if (!orgId) return <><Header account={account} /><main className="main"><h1 className="page-heading">Choose your workspace.</h1><p>Select an existing workspace above or create one to begin.</p><CreateOrganization routing="hash" afterCreateOrganizationUrl="/" /></main></>;
-  return <Portal key={orgId} getToken={token} account={account} local={false} />;
+  return <Portal key={sessionId + ':' + orgId} getToken={token} account={account} local={false} />;
 }
 const localToken = async () => 'local-development-only';
 function Root() {

@@ -609,6 +609,44 @@ describe('FFA first-party subscriber intake', () => {
     expect(capture.messages.size).toBe(0);
     expect(await rows('SELECT state FROM subscriber_outbox')).toEqual([{ state: 'cancelled' }]);
   });
+  it('honors concurrent owner opt-outs at the operation cap and cancels an undispatched confirmation', async () => {
+    expect((await post()).status).toBe(202);
+    const person = (await rows('SELECT id FROM subscribers'))[0]!.id;
+    const input = { brandId: binding.brandId, id: person };
+    for (const name of ['audience.summary', 'audience.list', 'audience.contact', 'audience.unsubscribe']) {
+      expect((await post(input, id(), credential, '/api/v1/commands/' + name)).status).toBe(403);
+    }
+    await db.tenant(binding.workspaceId, sql => sql.query(
+      "INSERT INTO operations(workspace_id,actor_id,operation_key,request_hash,result) SELECT $1,'fixture',i::text,'fixture','{}'::jsonb FROM generate_series(1,2000) i",
+      [binding.workspaceId],
+    ));
+    await expect(mode(true)).rejects.toMatchObject({ code: 'preparation_limit' });
+    const receipts = await Promise.all([1, 2].map(() => service.execute('audience.unsubscribe', input, owner)));
+    expect(receipts).toEqual([{ id: person, suppressed: true }, { id: person, suppressed: true }]);
+    expect(await rows('SELECT state FROM subscriber_outbox')).toEqual([{ state: 'cancelled' }]);
+    expect(await rows("SELECT id FROM subscriber_confirmation_tokens WHERE action='confirm' AND consumed_at IS NULL")).toEqual([]);
+    expect(await (await post()).json()).toEqual(signupAccepted);
+    expect(await worker.tick()).toBe(false);
+    expect(capture.messages.size).toBe(0);
+    expect(await rows('SELECT event,source FROM subscriber_consent_events ORDER BY recorded_at')).toEqual([
+      { event: 'signup_requested', source: 'storefront-footer' }, { event: 'unsubscribed', source: 'workspace-owner' },
+    ]);
+    expect(await rows('SELECT resource_id FROM audit WHERE action=$1',['audience.unsubscribe'])).toEqual([{ resource_id: person }]);
+  });
+  it('keeps a confirmed owner opt-out effective with intake paused and across repeat signups', async () => {
+    await post();
+    const link = await delivered();
+    expect((await action('confirm', link.confirm)).status).toBe(200);
+    await mode(false);
+    const person = (await rows('SELECT id FROM subscribers'))[0]!.id;
+    await service.execute('audience.unsubscribe', { brandId: binding.brandId, id: person }, owner);
+    await mode(true);
+    await Promise.all([post(), action('unsubscribe', link.unsubscribe)]);
+    expect(await rows('SELECT state FROM subscribers')).toEqual([{ state: 'unsubscribed' }]);
+    expect(await rows('SELECT source FROM subscriber_consent_events WHERE event=$1', ['unsubscribed'])).toEqual([{ source: 'workspace-owner' }]);
+    expect(await worker.tick()).toBe(false);
+    expect(capture.messages.size).toBe(1);
+  });
   it('allows an owner to pause intake when the workspace preparation operation limit has been reached', async () => {
     await db.tenant(binding.workspaceId, (sql) =>
       sql.query(

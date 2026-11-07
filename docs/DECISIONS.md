@@ -41,6 +41,12 @@ Updated November 7, 2026. D-030 authorizes the foundation implementation and sta
 
 Open signup describes the intended launched product. The foundation provides campaign preparation; a paid service and email delivery are not active.
 
+## Implementation decisions under D-030
+
+| ID | Decision | Basis |
+| --- | --- | --- |
+| D-033 | Give current workspace owners a brand-specific contact directory, consent history and unsubscribe action. Make aggregate counts an optional, brand-specific connection scope. Show current counts in campaign preflight. | The owner requested continued development. The implementation team selected the audience workflow from FL-AUD-001/002/004 and FL-CAM-002. Import policy, tracking, recipient snapshots and live delivery remain separate work. [Audience workflow](implementation/AUDIENCE.md) |
+
 ## Proposed baseline
 
 These choices shape the full release SRD and remain subject to owner review. Selected providers are now accepted; their integration designs are still proposals.

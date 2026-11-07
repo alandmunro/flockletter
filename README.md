@@ -4,6 +4,8 @@ Flockletter is a planned open-source mailing SaaS for small retailers and genera
 
 ## Current status
 
+Owners can search a brand’s contacts, review consent history and honor unsubscribe requests in **Audience**. Assistants can read counts by status with an explicit brand grant. Campaign previews show the current confirmed and excluded totals. [Audience walkthrough](docs/implementation/AUDIENCE.md)
+
 The repository includes campaign preparation, isolated workspace storage, shared UI/API/MCP operations and a separately gated first-party subscriber intake endpoint. Workspace owners can inspect intake readiness and manage a dedicated brand credential. Hosted public collection requires a verified confirmation provider. [Foundation evidence](docs/implementation/VERIFICATION.md) · [Subscriber intake](docs/implementation/FFA_SUBSCRIBER_INTAKE.md)
 
 Settled choices include a public repository, AGPLv3 licensing, open self-service signup for the eventual hosted service, included email delivery and a 14-day trial with a card required. FFA will use a complimentary customer account that bypasses Stripe and card payments.

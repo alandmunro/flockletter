@@ -20,5 +20,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run audience:verify
       - run: node --import tsx scripts/generate-api.ts && git diff --exit-code -- docs/api/openapi.json
       - run: npm audit --audit-level=moderate
