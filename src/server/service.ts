@@ -1,3 +1,5 @@
+import { studioProblem } from '../shared/studio.js';
+import { withStudio } from '../shared/studio-legacy.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { commands, limits, plans, type AssetSummary, type Campaign, type CampaignContent, type Capability, type CommandName, type Connection } from '../shared/contracts.js';
 import { Database, type Sql } from './db.js';
@@ -7,7 +9,7 @@ import { SubscriberIntake } from './subscribers/intake.js';
 import { audienceSummary, contactDetail, listContacts, unsubscribeContact } from './subscribers/audience.js';
 import {createSegment,deleteSegment,listSegments,renameSegment,segmentSummary,updateSegmentMembers} from './subscribers/segments.js';
 import { templates, fromTemplateContent, fromProductContent } from '../shared/authoring.js';
-import { approveRehearsal, cancelRehearsal, capturedMessage, listRehearsals, processDue, rehearsalReport, reviewRehearsal, type CheckOwner } from './campaign/rehearsal.js';
+import { invalidateStudioReviews, approveRehearsal, cancelRehearsal, capturedMessage, listRehearsals, processDue, rehearsalReport, reviewRehearsal, type CheckOwner } from './campaign/rehearsal.js';
 import { practiceUsage, utcPeriod, workspaceAccess } from './campaign/access.js';
 import { previewImport } from './subscribers/import-preview.js';
 import { senderStatus, registerSender, verifySender,lookupTxt,type LookupTxt } from './campaign/sender.js';
@@ -99,6 +101,8 @@ export class CommandService {
         }
         if (name.startsWith('rehearsal.') && 'brandId' in input) {
           await audienceBrand(sql,actor,input.brandId);
+          if(name==='rehearsal.review' && 'audience' in input && input.audience==='confirmed' && actor.kind==='connection')
+            requireCondition(actor.scopes.includes('audience:summary'),403,'scope_required','Grant audience totals to review a brand audience.');
           if('id' in input) await checkPracticeScope(sql,actor,input.id);
         }
         if (name.startsWith('segment.') && 'brandId' in input) {
@@ -114,6 +118,11 @@ export class CommandService {
         const prior = await sql.query<{ request_hash: string; result: unknown }>('SELECT request_hash,result FROM operations WHERE actor_id=$1 AND operation_key=$2', [actor.actorId, operationKey]);
         if (prior.rows[0]) {
           requireCondition(prior.rows[0].request_hash === requestHash, 409, 'operation_conflict', 'This operation key was already used for different input. Retry the original request or use a new key.');
+          if(name==='rehearsal.review'||name==='rehearsal.approve'){
+            const receipt=prior.rows[0].result as {id:string};
+            const status=await sql.query<{reason:string|null}>('SELECT reason FROM campaign_rehearsals WHERE id=$1',[receipt.id]);
+            requireCondition(status.rows[0]?.reason!=='draft_changed',409,'version_conflict','The draft changed. Review its current version.');
+          }
           return prior.rows[0].result;
         }
         const disablingIntake = name === 'intake.configure' && 'enabled' in input && input.enabled === false;
@@ -242,16 +251,31 @@ export class CommandService {
         await checkImages(sql, actor, input.brandId, input.content.assetIds);
         const count = await sql.query<{ count: string }>('SELECT count(*) FROM campaigns');
         requireCondition(Number(count.rows[0]?.count) < limits.drafts, 422, 'draft_limit', 'This foundation supports up to 100 drafts per workspace.');
-        const rows = await sql.query<CampaignRow>('INSERT INTO campaigns(workspace_id,id,brand_id,content) VALUES($1,$2,$3,$4) RETURNING *', [w, randomUUID(), input.brandId, JSON.stringify(input.content)]);
+        const content=input.content.studio ? withStudio(input.content,input.content.studio) : input.content;
+        const rows = await sql.query<CampaignRow>('INSERT INTO campaigns(workspace_id,id,brand_id,content) VALUES($1,$2,$3,$4) RETURNING *', [w, randomUUID(), input.brandId, JSON.stringify(content)]);
         return campaignView(rows.rows[0]!);
       }
       case 'campaign.update': {
         const input = commands[name].schema.parse(raw);
         const current = await campaign(sql, actor, input.id);
         requireCondition(current.version === input.expectedVersion, 409, 'version_conflict', 'This draft changed since you opened it. Reload the saved version before saving again.');
-        await checkImages(sql, actor, current.brandId, input.content.assetIds);
-        const result = await sql.query<CampaignRow>('UPDATE campaigns SET content=$1,version=version+1,updated_at=now() WHERE id=$2 AND version=$3 RETURNING *', [JSON.stringify(input.content), input.id, input.expectedVersion]);
+        if(current.content.studio!==undefined){
+          const problem=studioProblem(current.content.studio);
+          requireCondition(!problem,409,'studio_unsupported',problem??'This saved Studio revision is unsupported.');
+          requireCondition(input.content.studio,409,'studio_required','This draft uses Newsletter Studio. Preserve its full block document when editing.');
+        }
+        const content=input.content.studio ? withStudio(input.content,input.content.studio) : input.content;
+        if(current.content.studio && input.content.studio){
+          for(const field of ['heading','body','ctaLabel','ctaUrl'] as const)
+            requireCondition(input.content[field]===current.content[field]||input.content[field]===content[field],422,'studio_projection','Edit headings, text and buttons in the Studio document.');
+        }
+        await checkImages(sql, actor, current.brandId, content.assetIds);
+        const result = await sql.query<CampaignRow>('UPDATE campaigns SET content=$1,version=version+1,updated_at=now() WHERE id=$2 AND version=$3 RETURNING *', [JSON.stringify(content), input.id, input.expectedVersion]);
         requireCondition(result.rows[0], 409, 'version_conflict', 'This draft changed. Reload before saving.');
+        if(content.studio){
+          await audienceBrand(sql,actor,current.brandId);
+          await invalidateStudioReviews(sql,current.id,result.rows[0].version);
+        }
         return campaignView(result.rows[0]);
       }
       case 'campaign.preflight': {

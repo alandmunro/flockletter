@@ -19,7 +19,7 @@ export function Help() {
           </section>
         );
       })}
-      <a href="/pricing">Plans and limits</a>
+      <a href="/pricing">Plans and limits</a> · <a href="/studio-notices.txt">Newsletter Studio software notices</a>
     </main>
   );
 }

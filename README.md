@@ -22,6 +22,8 @@ The planned hosted service is paid. Self-hosting must not require the owner's pr
 
 The application uses TypeScript, React/Vite, Express and PostgreSQL. You can create a workspace and first brand, save campaign drafts, batch-upload original images, review HTML/plain-text previews and manage scoped connections. First-party intake has an independent worker, double opt-in and suppression. Campaign sending and paid activation remain gated.
 
+[Newsletter Studio](docs/implementation/NEWSLETTER_STUDIO.md) covers visual editing, original brand images, versioned previews and captured rehearsals.
+
 ## Local setup
 
 See the [workspace workflows](docs/implementation/WORKSPACE_OPERATIONS.md) for group rehearsals, team permissions, billing recovery, retention and support.
@@ -54,4 +56,4 @@ See [AGENTS.md](AGENTS.md) for contribution and agent instructions, including th
 
 ## License
 
-Original Flockletter material is licensed under the GNU Affero General Public License version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE). Third-party components retain their own licenses and attribution. The owner-supplied [software logo](docs/design/prototype/assets/README.md) is separate brand artwork; its inclusion does not grant a general artwork reuse license or trademark rights.
+Original Flockletter material is licensed under the GNU Affero General Public License version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE). Third-party components retain their own licenses and attribution. Newsletter Studio distributes a [dependency inventory](public/studio-dependencies.json) and [third-party notices](public/studio-notices.txt). See [editor and asset provenance](docs/implementation/STUDIO_LICENSES.md). The owner-supplied [software logo](docs/design/prototype/assets/README.md) is separate brand artwork; its inclusion does not grant a general artwork reuse license or trademark rights.

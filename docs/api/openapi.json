@@ -2509,7 +2509,7 @@
     "/api/v1/commands/campaign.create": {
       "post": {
         "operationId": "campaign_create",
-        "summary": "Prepare a draft in an authorized brand. No sending or recipient changes.",
+        "summary": "Prepare a draft in an authorized brand. Optional Studio v1 blocks own the visual content, and assetIds lists their distinct IDs in order.",
         "security": [
           {
             "bearerAuth": []
@@ -2544,6 +2544,633 @@
                           "collection",
                           "appreciation"
                         ]
+                      },
+                      "studio": {
+                        "type": "object",
+                        "properties": {
+                          "version": {
+                            "type": "number",
+                            "const": 1
+                          },
+                          "blocks": {
+                            "maxItems": 60,
+                            "type": "array",
+                            "items": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "paragraph"
+                                    },
+                                    "runs": {
+                                      "maxItems": 200,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "text": {
+                                            "type": "string",
+                                            "maxLength": 12000
+                                          },
+                                          "bold": {
+                                            "type": "boolean"
+                                          },
+                                          "italic": {
+                                            "type": "boolean"
+                                          },
+                                          "href": {
+                                            "type": "string",
+                                            "maxLength": 2048
+                                          }
+                                        },
+                                        "required": [
+                                          "text"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "runs"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "heading"
+                                    },
+                                    "level": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number",
+                                          "const": 1
+                                        },
+                                        {
+                                          "type": "number",
+                                          "const": 2
+                                        },
+                                        {
+                                          "type": "number",
+                                          "const": 3
+                                        }
+                                      ]
+                                    },
+                                    "runs": {
+                                      "maxItems": 200,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "text": {
+                                            "type": "string",
+                                            "maxLength": 12000
+                                          },
+                                          "bold": {
+                                            "type": "boolean"
+                                          },
+                                          "italic": {
+                                            "type": "boolean"
+                                          },
+                                          "href": {
+                                            "type": "string",
+                                            "maxLength": 2048
+                                          }
+                                        },
+                                        "required": [
+                                          "text"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "level",
+                                    "runs"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "button"
+                                    },
+                                    "label": {
+                                      "type": "string",
+                                      "maxLength": 120
+                                    },
+                                    "href": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "const": ""
+                                        },
+                                        {
+                                          "type": "string",
+                                          "maxLength": 2048
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "label",
+                                    "href"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "image"
+                                    },
+                                    "assetId": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    },
+                                    "alt": {
+                                      "type": "string",
+                                      "maxLength": 300
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "assetId",
+                                    "alt"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "divider"
+                                    }
+                                  },
+                                  "required": [
+                                    "type"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "spacer"
+                                    },
+                                    "size": {
+                                      "type": "string",
+                                      "enum": [
+                                        "small",
+                                        "medium",
+                                        "large"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "size"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "columns"
+                                    },
+                                    "columns": {
+                                      "type": "array",
+                                      "prefixItems": [
+                                        {
+                                          "maxItems": 30,
+                                          "type": "array",
+                                          "items": {
+                                            "oneOf": [
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "paragraph"
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "heading"
+                                                  },
+                                                  "level": {
+                                                    "anyOf": [
+                                                      {
+                                                        "type": "number",
+                                                        "const": 1
+                                                      },
+                                                      {
+                                                        "type": "number",
+                                                        "const": 2
+                                                      },
+                                                      {
+                                                        "type": "number",
+                                                        "const": 3
+                                                      }
+                                                    ]
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "level",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "button"
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "maxLength": 120
+                                                  },
+                                                  "href": {
+                                                    "anyOf": [
+                                                      {
+                                                        "type": "string",
+                                                        "const": ""
+                                                      },
+                                                      {
+                                                        "type": "string",
+                                                        "maxLength": 2048
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "label",
+                                                  "href"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "image"
+                                                  },
+                                                  "assetId": {
+                                                    "type": "string",
+                                                    "format": "uuid",
+                                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                                  },
+                                                  "alt": {
+                                                    "type": "string",
+                                                    "maxLength": 300
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "assetId",
+                                                  "alt"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "divider"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "spacer"
+                                                  },
+                                                  "size": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "small",
+                                                      "medium",
+                                                      "large"
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "size"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        {
+                                          "maxItems": 30,
+                                          "type": "array",
+                                          "items": {
+                                            "oneOf": [
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "paragraph"
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "heading"
+                                                  },
+                                                  "level": {
+                                                    "anyOf": [
+                                                      {
+                                                        "type": "number",
+                                                        "const": 1
+                                                      },
+                                                      {
+                                                        "type": "number",
+                                                        "const": 2
+                                                      },
+                                                      {
+                                                        "type": "number",
+                                                        "const": 3
+                                                      }
+                                                    ]
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "level",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "button"
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "maxLength": 120
+                                                  },
+                                                  "href": {
+                                                    "anyOf": [
+                                                      {
+                                                        "type": "string",
+                                                        "const": ""
+                                                      },
+                                                      {
+                                                        "type": "string",
+                                                        "maxLength": 2048
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "label",
+                                                  "href"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "image"
+                                                  },
+                                                  "assetId": {
+                                                    "type": "string",
+                                                    "format": "uuid",
+                                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                                  },
+                                                  "alt": {
+                                                    "type": "string",
+                                                    "maxLength": 300
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "assetId",
+                                                  "alt"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "divider"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "spacer"
+                                                  },
+                                                  "size": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "small",
+                                                      "medium",
+                                                      "large"
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "size"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ],
+                                      "items": false,
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "columns"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "version",
+                          "blocks"
+                        ],
+                        "additionalProperties": false
                       },
                       "title": {
                         "type": "string",
@@ -2650,7 +3277,7 @@
     "/api/v1/commands/campaign.update": {
       "post": {
         "operationId": "campaign_update",
-        "summary": "Save a draft only if its expected version still matches. Reuse the operation key only for an identical retry.",
+        "summary": "Save the exact expected revision. Preserve the full document when editing a Studio draft. Reuse the operation key only for an identical retry.",
         "security": [
           {
             "bearerAuth": []
@@ -2690,6 +3317,633 @@
                           "collection",
                           "appreciation"
                         ]
+                      },
+                      "studio": {
+                        "type": "object",
+                        "properties": {
+                          "version": {
+                            "type": "number",
+                            "const": 1
+                          },
+                          "blocks": {
+                            "maxItems": 60,
+                            "type": "array",
+                            "items": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "paragraph"
+                                    },
+                                    "runs": {
+                                      "maxItems": 200,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "text": {
+                                            "type": "string",
+                                            "maxLength": 12000
+                                          },
+                                          "bold": {
+                                            "type": "boolean"
+                                          },
+                                          "italic": {
+                                            "type": "boolean"
+                                          },
+                                          "href": {
+                                            "type": "string",
+                                            "maxLength": 2048
+                                          }
+                                        },
+                                        "required": [
+                                          "text"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "runs"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "heading"
+                                    },
+                                    "level": {
+                                      "anyOf": [
+                                        {
+                                          "type": "number",
+                                          "const": 1
+                                        },
+                                        {
+                                          "type": "number",
+                                          "const": 2
+                                        },
+                                        {
+                                          "type": "number",
+                                          "const": 3
+                                        }
+                                      ]
+                                    },
+                                    "runs": {
+                                      "maxItems": 200,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "text": {
+                                            "type": "string",
+                                            "maxLength": 12000
+                                          },
+                                          "bold": {
+                                            "type": "boolean"
+                                          },
+                                          "italic": {
+                                            "type": "boolean"
+                                          },
+                                          "href": {
+                                            "type": "string",
+                                            "maxLength": 2048
+                                          }
+                                        },
+                                        "required": [
+                                          "text"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "level",
+                                    "runs"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "button"
+                                    },
+                                    "label": {
+                                      "type": "string",
+                                      "maxLength": 120
+                                    },
+                                    "href": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "const": ""
+                                        },
+                                        {
+                                          "type": "string",
+                                          "maxLength": 2048
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "label",
+                                    "href"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "image"
+                                    },
+                                    "assetId": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    },
+                                    "alt": {
+                                      "type": "string",
+                                      "maxLength": 300
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "assetId",
+                                    "alt"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "divider"
+                                    }
+                                  },
+                                  "required": [
+                                    "type"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "spacer"
+                                    },
+                                    "size": {
+                                      "type": "string",
+                                      "enum": [
+                                        "small",
+                                        "medium",
+                                        "large"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "size"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "columns"
+                                    },
+                                    "columns": {
+                                      "type": "array",
+                                      "prefixItems": [
+                                        {
+                                          "maxItems": 30,
+                                          "type": "array",
+                                          "items": {
+                                            "oneOf": [
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "paragraph"
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "heading"
+                                                  },
+                                                  "level": {
+                                                    "anyOf": [
+                                                      {
+                                                        "type": "number",
+                                                        "const": 1
+                                                      },
+                                                      {
+                                                        "type": "number",
+                                                        "const": 2
+                                                      },
+                                                      {
+                                                        "type": "number",
+                                                        "const": 3
+                                                      }
+                                                    ]
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "level",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "button"
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "maxLength": 120
+                                                  },
+                                                  "href": {
+                                                    "anyOf": [
+                                                      {
+                                                        "type": "string",
+                                                        "const": ""
+                                                      },
+                                                      {
+                                                        "type": "string",
+                                                        "maxLength": 2048
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "label",
+                                                  "href"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "image"
+                                                  },
+                                                  "assetId": {
+                                                    "type": "string",
+                                                    "format": "uuid",
+                                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                                  },
+                                                  "alt": {
+                                                    "type": "string",
+                                                    "maxLength": 300
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "assetId",
+                                                  "alt"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "divider"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "spacer"
+                                                  },
+                                                  "size": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "small",
+                                                      "medium",
+                                                      "large"
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "size"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        {
+                                          "maxItems": 30,
+                                          "type": "array",
+                                          "items": {
+                                            "oneOf": [
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "paragraph"
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "heading"
+                                                  },
+                                                  "level": {
+                                                    "anyOf": [
+                                                      {
+                                                        "type": "number",
+                                                        "const": 1
+                                                      },
+                                                      {
+                                                        "type": "number",
+                                                        "const": 2
+                                                      },
+                                                      {
+                                                        "type": "number",
+                                                        "const": 3
+                                                      }
+                                                    ]
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "level",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "button"
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "maxLength": 120
+                                                  },
+                                                  "href": {
+                                                    "anyOf": [
+                                                      {
+                                                        "type": "string",
+                                                        "const": ""
+                                                      },
+                                                      {
+                                                        "type": "string",
+                                                        "maxLength": 2048
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "label",
+                                                  "href"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "image"
+                                                  },
+                                                  "assetId": {
+                                                    "type": "string",
+                                                    "format": "uuid",
+                                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                                  },
+                                                  "alt": {
+                                                    "type": "string",
+                                                    "maxLength": 300
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "assetId",
+                                                  "alt"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "divider"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "spacer"
+                                                  },
+                                                  "size": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                      "small",
+                                                      "medium",
+                                                      "large"
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "size"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ],
+                                      "items": false,
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "columns"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "version",
+                          "blocks"
+                        ],
+                        "additionalProperties": false
                       },
                       "title": {
                         "type": "string",

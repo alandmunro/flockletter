@@ -228,7 +228,8 @@ async function proveMemberAccess(
   assert.equal(newDraft.brandId, trail);
   const title = 'Trail dispatch from the editor';
   await editorPage.getByLabel('Title', { exact: true }).fill(title);
-  await editorPage.getByLabel('Body', { exact: true }).fill('Meet at the trailhead this Sunday.');
+  await editorPage.getByRole('button',{name:'Edit paragraph block',exact:true}).first().click();
+  await editorPage.getByRole('textbox',{name:'Paragraph text',exact:true}).fill('Meet at the trailhead this Sunday.');
   await editorPage.getByRole('button', { name: 'Save draft' }).click();
   await editorPage.getByRole('status').filter({ hasText: 'Saved version 2.' }).waitFor();
   const savedDraft = () => service.execute('campaign.get', { id: newDraft.id }, actor) as Promise<Campaign>;
@@ -245,7 +246,8 @@ async function proveMemberAccess(
   assert.equal(await editorPage.getByText('Current brand audience', { exact: true }).count(), 0);
   await screenshot(editorPage, 'member-editor');
 
-  await editorPage.getByLabel('Body', { exact: true }).fill('A stale edit must never be stored.');
+  await editorPage.getByRole('button',{name:'Edit paragraph block',exact:true}).first().click();
+  await editorPage.getByRole('textbox',{name:'Paragraph text',exact:true}).fill('A stale edit must never be stored.');
   await service.execute('team.revoke', { userId: editor.userId, operationKey: randomUUID() }, actor);
   await editorPage.getByRole('button', { name: 'Save draft' }).click();
   await editorPage

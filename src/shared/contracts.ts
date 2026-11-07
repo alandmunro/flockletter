@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { studioSchema, studioAssetIds } from './studio.js';
 import { normalizedEmail } from './subscriber.js';
 import { stateFilter } from './audience.js';
 import { productFields, templateIds } from './authoring.js';
@@ -20,12 +21,20 @@ export const plans = [
   { id: 'pro', name: 'Pro', currency: 'USD', priceMinor: 3900, contacts: 10000, recipients: 10000, campaigns: 20, emails: 100000, companies: 5, brands: 5, users: null },
 ] as const;
 export const contentSchema = z.object({
-  layout: z.enum(templateIds).optional(),
+  layout: z.enum(templateIds).optional(), studio: studioSchema.optional(),
   title: z.string().trim().max(120), subject: z.string().trim().max(150), preheader: z.string().trim().max(200),
   fromName: z.string().trim().max(100), replyTo: z.string().trim().max(254), heading: z.string().trim().max(150),
   body: z.string().max(12000), ctaLabel: z.string().trim().max(60), ctaUrl: z.string().trim().max(2048),
   assetIds: z.array(z.uuid()).max(limits.campaignImages).refine(ids => new Set(ids).size === ids.length, 'Choose each image once.'),
-}).strict();
+}).strict().superRefine((content,ctx)=>{
+  if(!content.studio)return;
+  for(const field of ['subject','fromName','replyTo'] as const){
+    if(/[\p{Cc}\p{Cs}]/u.test(content[field]))ctx.addIssue({code:'custom',path:[field],message:'Use a single line of printable text.'});
+  }
+  const referenced=studioAssetIds(content.studio);
+  if(referenced.length!==content.assetIds.length||referenced.some((id,index)=>id!==content.assetIds[index]))
+    ctx.addIssue({code:'custom',path:['assetIds'],message:'Match the ordered, distinct image IDs used in the Studio blocks.'});
+});
 export type CampaignContent = z.infer<typeof contentSchema>;
 export const emptyContent = (): CampaignContent => ({ title: '', subject: '', preheader: '', fromName: '', replyTo: '', heading: '', body: '', ctaLabel: '', ctaUrl: '', assetIds: [] });
 export type AssetSummary = { id: string; name: string; mime: string; size: number; width: number; height: number; sha256: string; createdAt: string };
@@ -77,8 +86,8 @@ export const commands = {
   'audience.exportPage': descriptor('Read one bounded page for an explicitly requested owner export.', 'owner',false, exportPageInput.shape),
   'campaign.list': descriptor('List accessible draft campaigns, newest first.', 'read', false, {}),
   'campaign.get': descriptor('Read one authorized draft version.', 'read', false, { id }),
-  'campaign.create': descriptor('Prepare a draft in an authorized brand. No sending or recipient changes.', 'draft:write', true, { operationKey: key, brandId: id, content: contentSchema }),
-  'campaign.update': descriptor('Save a draft only if its expected version still matches. Reuse the operation key only for an identical retry.', 'draft:write', true, { operationKey: key, id, expectedVersion: z.number().int().positive(), content: contentSchema }),
+  'campaign.create': descriptor('Prepare a draft in an authorized brand. Optional Studio v1 blocks own the visual content, and assetIds lists their distinct IDs in order.', 'draft:write', true, { operationKey: key, brandId: id, content: contentSchema }),
+  'campaign.update': descriptor('Save the exact expected revision. Preserve the full document when editing a Studio draft. Reuse the operation key only for an identical retry.', 'draft:write', true, { operationKey: key, id, expectedVersion: z.number().int().positive(), content: contentSchema }),
   'campaign.preflight': descriptor('Report all preparation and delivery gaps together. Preview success does not establish send eligibility.', 'read', false, { id }),
   'campaign.preview': descriptor('Render escaped HTML and plain text for the exact saved draft version. Does not send.', 'read', false, { id, expectedVersion: z.number().int().positive() }),
   'asset.list': descriptor('List private images for the authorized brand.', 'read', false, { brandId: id }),

@@ -137,8 +137,62 @@ async function prove() {
     subject: 'Field notes for Casey Field',
     body: 'Hello Casey Field,\nThe trail opens Friday.',
   });
+  await verifyStudio(api, list, layout, contact);
   console.log(
     'Listmonk 6.2.0 finished. One confirmed recipient reached the private HTTP messenger; the unconfirmed recipient was excluded. Campaign UUID, subscriber UUID, rendered subject and body matched.',
+  );
+}
+
+// Only immutable application-rendered strings reach this fixture. Encode the Go string literal so
+// neither Listmonk shorthand rewriting nor template evaluation can interpret customer-authored text.
+function literal(value, asHtml = false) {
+  const quoted = JSON.stringify(value).replace(
+    /[{}<>]/g,
+    (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'),
+  );
+  return '{{ ' + (asHtml ? 'Safe ' : '') + quoted + ' }}';
+}
+async function verifyStudio(api, list, layout, contact) {
+  const snapshot = JSON.parse(process.env.FLOCKLETTER_STUDIO_FIXTURE);
+  assert.ok(snapshot.html.includes('<!--[if mso]'));
+  assert.ok(snapshot.html.includes('cid:' + snapshot.digest));
+  assert.ok(snapshot.text.includes('{{ .Subscriber.Email }}'));
+  for (const [type, body] of [
+    ['html', snapshot.html],
+    ['plain', snapshot.text],
+  ]) {
+    const before = captured.length;
+    const campaign = await api('POST', '/campaigns', {
+      name: 'Studio ' + type,
+      type: 'regular',
+      lists: [list.id],
+      messenger: 'fixture',
+      template_id: layout.id,
+      content_type: type,
+      subject: literal(snapshot.subject),
+      from_email: 'Studio <sender@example.test>',
+      body: literal(body, true),
+      ...(type === 'html' ? { altbody: literal(snapshot.text, true) } : {}),
+    });
+    const saved = await api('GET', '/campaigns/' + campaign.id);
+    if (type === 'html') assert.equal(saved.altbody, literal(snapshot.text, true));
+    await api('PUT', '/campaigns/' + campaign.id + '/status', { status: 'running' });
+    await waitUntil(
+      async () => (await api('GET', '/campaigns/' + campaign.id)).status === 'finished',
+      'the Studio ' + type + ' capture',
+    );
+    assert.equal(captured.length, before + 1, 'Only the confirmed synthetic recipient reaches the messenger');
+    assertCapture(captured[before], {
+      campaignUUID: campaign.uuid,
+      subscriberUUID: contact.uuid,
+      email: contact.email,
+      subject: snapshot.subject,
+      body,
+      contentType: type,
+    });
+  }
+  console.log(
+    'Studio HTML and text each survived the isolated Listmonk messenger byte-for-byte, including original image CID, Outlook conditional markup and literal template-like text.',
   );
 }
 
@@ -154,7 +208,7 @@ function assertCapture(payload, expected) {
   const { campaignUUID, subscriberUUID, email, subject, body } = expected;
   assert.equal(payload?.subject, subject);
   assert.equal(payload?.body, body);
-  assert.equal(payload?.content_type, 'plain');
+  assert.equal(payload?.content_type, expected.contentType ?? 'plain');
   assert.equal(payload?.campaign?.uuid, campaignUUID);
   assert.ok(Array.isArray(payload?.recipients));
   assert.equal(payload.recipients.length, 1);

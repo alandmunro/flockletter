@@ -90,7 +90,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
       const release = () => { if (!released) { activeUploads--; released = true; } };
       res.once('finish', release); res.once('close', release);
     }
-    const limit = name==='asset.uploadBatch' ? '29mb' : name==='audience.previewImport' ? '350kb' : name.startsWith('audience.') ? '4kb' : '64kb';
+    const limit = name==='asset.uploadBatch' ? '29mb' : name==='audience.previewImport' ? '350kb' : (name==='campaign.create'||name==='campaign.update') ? '160kb' : name.startsWith('audience.') ? '4kb' : '64kb';
     express.json({ limit, strict: true })(req, res, error => {
       if (error) return next(error);
       void service!.execute(name, req.body, actor).then(result => res.json({ result })).catch(next);

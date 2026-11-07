@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
 import { limits, type Campaign, type Gap } from '../shared/contracts.js';
 import { AppError } from './errors.js';
+import {renderStudio,studioContentGaps} from './studio-render.js';
 import { renderAuthoringLayout } from './authoring-layout.js';
 
 export const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -20,6 +21,7 @@ export function contentGaps(campaign: Campaign): Gap[] {
   if (!c.subject) add('subject_missing', 'Add an email subject', 'Give readers a clear reason to open the email.');
   if (!c.fromName) add('from_name_missing', 'Add a sender name', 'Use the business or brand name readers recognize.');
   if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(c.replyTo)) add('reply_to_invalid', 'Add a valid reply address', 'Replies need a monitored email address.');
+  if(c.studio!==undefined)return [...gaps,...studioContentGaps(c.studio)];
   if (!c.heading || !c.body.trim()) add('message_incomplete', 'Add a heading and message', 'The email needs a readable heading and message.');
   if (Boolean(c.ctaLabel) !== Boolean(c.ctaUrl)) add('link_incomplete', 'Complete the button', 'Supply both a button label and an HTTPS link, or leave both empty.');
   if (c.ctaUrl && !safeLink(c.ctaUrl)) add('link_invalid', 'Use a public HTTPS link', 'Private addresses, credentials, custom ports and unsafe link types are not supported.');
@@ -46,6 +48,10 @@ function previewSource(image:PreviewImage) {
 }
 export function renderPreview(campaign: Campaign, images: PreviewImage[]) {
   const c = campaign.content;
+  if(c.studio!==undefined){
+    const pictures=new Map(c.assetIds.flatMap((id,i)=>images[i] ? [[id,{src:previewSource(images[i]!),name:images[i]!.name}] as const] : []));
+    return renderStudio(campaign,c.studio,pictures);
+  }
   const text = [c.heading, c.body, c.ctaLabel && safeLink(c.ctaUrl) ? `${c.ctaLabel}: ${c.ctaUrl}` : ''].filter(Boolean).join('\n\n');
   const heading = `<h1 style="font:36px Georgia;color:#4a0a1e">${escapeHtml(c.heading)}</h1>`;
   const photos = images.map(i => `<img alt="${escapeHtml(i.name)}" style="width:100%;height:auto;margin:12px 0" src="${previewSource(i)}">`).join('');

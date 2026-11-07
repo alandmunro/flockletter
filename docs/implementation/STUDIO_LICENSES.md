@@ -1,0 +1,32 @@
+# Newsletter Studio editor and redistribution
+
+Flockletter uses Resend’s `@react-email/editor` 1.8.1 and the reviewed Tiptap 3.33.0 packages behind its own authoring and rendering contracts (D-036, FL-PROD-005). The app and newsletter design retain Flockletter and customer branding. The editor is self-hosted and does not need a Resend account. Existing mailing and sender policies continue to govern every test or dispatch.
+
+## Published archive
+
+The npm registry’s published tarball matched this SHA-512 integrity from `package-lock.json`. The digest covers all 94 archive entries. [Published package](https://registry.npmjs.org/@react-email%2Feditor/1.8.1) · [Pinned repository source](https://github.com/resend/react-email/tree/674d8ec2804b86be5d99156383fb1810179847bf/packages/editor)
+
+```text
+sha512-s9RbIVeWBp75jdRrls4o9GGuQ37U+zog46tC1i9ENqhDLRboJwrqE7hXqH5xAz0kTJinwHH1FP7dRj4OJN7KRw==
+```
+
+The tarball contains `package/license.md`, SHA-256 `7261884c1836dd4552e4835e1fb765326b6cb669116eff9828e2a54bb5115635`, with the MIT permission text and **Copyright 2026 Plus Five Five, Inc**. The pinned monorepo root has a separate 2024 notice. The distribution includes the package’s 2026 notice. The MIT condition requires preserving copyright and permission notices in distributed copies or substantial portions. It imposes no customer-interface logo or newsletter footer requirement. Flockletter’s original code retains its AGPL-3.0-only license. [Published archive](https://registry.npmjs.org/@react-email/editor/-/editor-1.8.1.tgz) · [Repository root license](https://github.com/resend/react-email/blob/674d8ec2804b86be5d99156383fb1810179847bf/LICENSE.md) · [Flockletter license](../../LICENSE)
+
+## What ships
+
+The [dependency inventory](../../public/studio-dependencies.json) lists each locked package’s installation path, version, declared license, archive integrity and the sources of its notices. The [combined notice text](../../public/studio-notices.txt) contains the copyright and permission texts and distributed code banners, deduplicated by SHA-256. Vite copies both public files into the web distribution, which also goes into the self-hosted image. A running installation serves `/studio-dependencies.json` and `/studio-notices.txt`. These files are fetched on request. Customer messages contain only the newsletter’s own content, identity and applicable mailing disclosures.
+
+The inventory covers the editor and its direct Tiptap imports, following locked runtime dependencies, resolved peers and platform alternatives. This includes shared packages that Flockletter already uses, build tools packaged with React Email, and optional esbuild binaries for other platforms. The current closure has 263 lockfile entries and 186 distinct notice texts and banners. The declared licenses are MIT, ISC, 0BSD, BSD-2-Clause, BSD-3-Clause, BlueOak-1.0.0, CC0-1.0 and the MIT-or-CC0 choice. Prettier’s published third-party file includes Apache-2.0 texts. Citty’s additional bundled-dependency notices, tslib’s copyright file and distributed source banners are retained. The source records distinguish these bundled works from their parent package’s declared license.
+
+- **Editor assets.** The 1.8.1 archive has no standalone image or font file. Its default stylesheet uses system fonts. Its inline editor SVGs include geometry matching Lucide, such as the four paths in the heading icon. The inventory includes Lucide’s ISC notice and the Feather-derived MIT notice. [Editor icon](https://github.com/resend/react-email/blob/674d8ec2804b86be5d99156383fb1810179847bf/packages/editor/src/ui/icons/heading-2.tsx) · [Matching Lucide icon](https://github.com/lucide-icons/lucide/blob/53fab88ff9d1b48f4704b5b5b560d6b4d560bf4c/icons/heading-2.svg) · [Lucide license](studio-notice-sources/lucide-feather.txt)
+- **Missing package notice.** `react-remove-scroll-bar` 2.3.8 declares MIT in its published manifest and omits a standalone license file. Its npm-reported source commit is unavailable in the upstream GitHub repository. The supplemental copy comes from the maintainer’s subsequent commit adding the MIT license. Both the published package and the supplemental text are identified in the inventory. [Registry metadata](https://registry.npmjs.org/react-remove-scroll-bar/2.3.8) · [Pinned upstream notice](https://github.com/theKashey/react-remove-scroll-bar/blob/7301c160fda44cb8cf2b9fdfde61efad35736196/LICENSE)
+- **Bundled binaries and helpers.** The esbuild 0.28.2 platform packages share the parent package’s MIT license. The inspected native binary identifies Go 1.26.5 and `golang.org/x/sys` at revision `c0bba94af5f8`. The inventory supplies their BSD notices. Jiti 2.6.1’s Babel bundle includes an attributed regenerator helper. Its supplemental MIT notice includes the Facebook and Babel attributions. [esbuild module](https://github.com/evanw/esbuild/blob/609683d892977362a0f99026cb74b96263d728a9/go.mod) · [Supplemental source notices](studio-notice-sources/)
+- **Customer content.** The owner-supplied Flockletter logo has recorded provenance. A customer supplies or selects original images belonging to its brand. The editor dependency does not grant rights to arbitrary third-party photography, logos, fonts or imported templates. [Brand asset record](../../public/brand/README.md)
+
+## Updating the inventory
+
+From a clean checkout with the complete npm installation, run `node scripts/studio-notices.mjs --check`. After `npm run build`, run `node scripts/studio-notices.mjs --check-build` to verify both distributed copies.
+
+For a dependency update, verify the exact registry archive and actual license, inspect new embedded or standalone assets, follow changed dependencies and preserve any extra notices with their immutable sources. Update the reviewed package pins or supplemental records where needed. Run `node scripts/studio-notices.mjs --write`, inspect the two generated file changes and run both checks. Generation uses local packages and the checked-in supplemental notices. Line endings and trailing Markdown spaces are normalized in the combined plain-text file. A missing notice, unreviewed license, standalone asset or different reviewed editor archive fails the check until evaluated.
+
+Actual Gmail, Outlook and mobile mailbox rendering is a separate FL-AT-036 acceptance case. Local browser previews, an isolated Listmonk exercise and the redistribution checks provide independent evidence.

@@ -1,0 +1,60 @@
+.campaign-preview {
+  min-width: 0;
+}
+.preview-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 0 0 12px;
+}
+.preview-switch button {
+  appearance: none;
+  background: white;
+  border: 0;
+  border-radius: 0;
+  color: var(--wine);
+  padding: 7px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.preview-switch button[aria-pressed='true'] {
+  background: var(--wine);
+  color: white;
+}
+.preview-switch button:focus-visible {
+  outline: 2px solid #d57492;
+  outline-offset: -3px;
+}
+.preview-viewport {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.campaign-preview .preview-frame {
+  display: block;
+  max-width: none;
+  margin-inline: auto;
+  background: #fff;
+}
+.campaign-preview .preview-mobile {
+  width: 375px;
+}
+.campaign-preview .preview-desktop {
+  width: 620px;
+}
+.studio-editor-heading {
+  margin-bottom: 6px;
+}
+.editor-brand-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.editor-brand-select select {
+  width: auto;
+  max-width: 100%;
+}
+.studio-editor-alert {
+  overflow-wrap: anywhere;
+}

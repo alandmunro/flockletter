@@ -9,9 +9,33 @@ The campaign foundation exposes preparation commands through the administration 
 3. Create a draft with `campaign_create`. Keep the returned ID and version. Use one stable operation key for identical retries.
 4. Upload originals together with `asset_upload_files` or `asset_uploadBatch`. Keep each file's stable item key. Inspect **every** item result; a successful HTTP response can contain rejected files. Correct failed files and retry with a new batch key; keep successful file keys to avoid duplicates.
 5. Save selected images and content with `campaign_update`, using the current expected version. A version conflict requires reading the current draft and reconciling edits; do not blindly overwrite it.
-6. Run `campaign_preview` for that saved version and `campaign_preflight`. Present the exact preview and all remaining gaps. There is no approval or send operation in this build.
+6. Run `campaign_preview` for that saved version and `campaign_preflight`. Present the exact preview and all remaining gaps. Staging capture has its own review and approval commands and scopes. Campaign delivery remains gated.
 
 Normal preparation uses a few batch calls, not one call per image. Authentication, file preparation and intentional editing add calls. Do not claim an upload, save or preview is publication.
+
+## Newsletter Studio commands
+
+Use `campaign_get` to read the current `version`, brand and content. Use `campaign_create` or `campaign_update` with `content.studio` for the visual document. Existing title, subject, preheader, sender and reply-to metadata stay in the normal campaign fields. The following example is the Studio field of a campaign request.
+
+```json
+{
+  "version": 1,
+  "blocks": [
+    {"type": "heading", "level": 1, "runs": [{"text": "Trail report"}]},
+    {"type": "paragraph", "runs": [
+      {"text": "Read the "},
+      {"text": "November collection", "bold": true, "href": "https://example.org/collection"}
+    ]},
+    {"type": "button", "label": "Visit the shop", "href": "https://example.org/shop"}
+  ]
+}
+```
+
+Submit the complete campaign content and its ordered, distinct `assetIds` on each save. For this example, `assetIds` is empty. For an image, use `{"type":"image","assetId":"<same-brand asset UUID>","alt":"Description"}`. Resolve brand assets with `asset_list`. The block refers to the Flockletter asset ID, not an external image URL. The version inside `studio` identifies the document format. A command’s `expectedVersion` is the current campaign revision and advances on a successful update.
+
+Treat `studio` as authoritative once present. Older readers can display the server’s projection into `heading`, `body`, `ctaLabel` and `ctaUrl`. To edit the visual content, preserve the existing metadata and change the relevant block. Omitting a saved Studio document is rejected; an unknown version or block prevents a destructive rewrite. Use the same operation key and identical input after a lost acknowledgement. If another edit committed, reload the current revision before resolving the conflict.
+
+Use `campaign_preview` for the exact saved revision and `campaign_preflight` for remaining gaps. Further editing invalidates an outstanding review for the previous revision. Readers, editors, owners and connection tokens retain their existing brand permissions. [Studio workflow, migration and limits](NEWSLETTER_STUDIO.md) · [OpenAPI request schemas](../api/openapi.json)
 
 ## Owner-managed access
 
