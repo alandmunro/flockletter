@@ -18,7 +18,9 @@ export function clerkIdentity(config: Config): IdentityProvider {
       const headers = new Headers();
       // The browser supplies an explicit Clerk bearer token. Never accept ambient cookies as API authority.
       headers.set('authorization', request.get('authorization') ?? '');
-      const state = await clerk.authenticateRequest(new Request(config.origin + request.originalUrl, { headers }), { authorizedParties: [config.origin], acceptsToken: 'session_token' });
+      const origin = request.get('origin') ?? config.origin;
+      requireCondition(config.browserOrigins.includes(origin), 403, 'origin_rejected', 'This browser origin is not authorized.');
+      const state = await clerk.authenticateRequest(new Request(origin + request.originalUrl, { headers }), { authorizedParties: config.browserOrigins, acceptsToken: 'session_token' });
       const auth = state.toAuth();
       requireCondition(auth?.userId, 401, 'sign_in_required', 'Sign in to continue.');
       requireCondition(auth.orgId, 403, 'workspace_required', 'Select or create a workspace in the account menu.');

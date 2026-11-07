@@ -43,7 +43,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   app.use('/api/v1', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     const origin = req.get('origin');
-    if (origin && origin !== config.origin) return next(new AppError(403, 'origin_rejected', 'This browser origin is not authorized.'));
+    if (origin && !config.browserOrigins.includes(origin)) return next(new AppError(403, 'origin_rejected', 'This browser origin is not authorized.'));
     if (req.get('sec-fetch-site') === 'cross-site') return next(new AppError(403, 'origin_rejected', 'Cross-site browser requests are not authorized.'));
     if (!service || !auth) return next(new AppError(503, 'setup_required', 'The service needs its isolated database and Clerk configuration before sign-in is available.'));
     next();
