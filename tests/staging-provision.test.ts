@@ -32,6 +32,12 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
   const inspection = run('inspect');
   expect(inspection.status, inspection.stderr).toBe(0);
   expect(JSON.parse(inspection.stdout).databaseExists).toBe(false);
+  const prepared = run('prepare');
+  expect(prepared.status, prepared.stderr).toBe(0);
+  expect(prepared.stdout).toContain('"prepared":true');
+  const preparedInspection = JSON.parse(run('inspect').stdout);
+  expect(preparedInspection.databaseExists).toBe(true);
+  expect(preparedInspection.rolesPresent).toEqual([]);
   for (let attempt = 0; attempt < 2; attempt++) {
     const result = run('apply');
     expect(result.status, result.stderr).toBe(0);

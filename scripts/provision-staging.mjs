@@ -12,7 +12,7 @@ const runtime = 'flockletter_staging_runtime';
 const migrator = 'flockletter_staging_migrator';
 const marker = 'Flockletter staging foundation';
 const mode = process.argv[2];
-if (!['inspect', 'apply'].includes(mode)) throw new Error('Choose inspect or apply.');
+if (!['inspect', 'prepare', 'apply'].includes(mode)) throw new Error('Choose inspect, prepare or apply.');
 
 // PostgreSQL's SCRAM-SHA-256 stored-password format (RFC 5802). Only verifiers appear in DDL.
 function verifier(password) {
@@ -70,6 +70,15 @@ async function provision(admin) {
   console.log(JSON.stringify({ mode, target, databaseExists: Boolean(database), rolesPresent: roles.map(r => r.rolname), maxConnections: info.max_connections, currentBackends: info.active_backends }));
   if (mode === 'inspect') return;
   if (info.max_connections - info.reserved_connections - info.active_backends < 12) throw new Error('Insufficient connection headroom for deployment overlap.');
+  if (!database) {
+    await admin.query(`CREATE DATABASE ${target} ALLOW_CONNECTIONS false`);
+    await admin.query(`COMMENT ON DATABASE ${target} IS '${marker}'`);
+  }
+  await admin.query(`REVOKE ALL ON DATABASE ${target} FROM PUBLIC`);
+  if (mode === 'prepare') {
+    console.log(JSON.stringify({ prepared: true, database: target }));
+    return;
+  }
   if (settings.runtimePassword === settings.migratorPassword) throw new Error('Use distinct role secrets.');
   const passwords = { [runtime]: settings.runtimePassword, [migrator]: settings.migratorPassword };
   await admin.query('BEGIN');
@@ -100,11 +109,6 @@ async function provision(admin) {
       if (result.rows[0].unsafe) throw new Error('A foreign database grants the runtime access to application objects or a privileged function. Review its grants before activation.');
     });
   }
-  if (!database) {
-    await admin.query(`CREATE DATABASE ${target} ALLOW_CONNECTIONS false`);
-    await admin.query(`COMMENT ON DATABASE ${target} IS '${marker}'`);
-  }
-  await admin.query(`REVOKE ALL ON DATABASE ${target} FROM PUBLIC`);
   await admin.query(`GRANT CONNECT ON DATABASE ${target} TO ${migrator},${runtime}`);
   await admin.query(`ALTER DATABASE ${target} ALLOW_CONNECTIONS true`);
   await using(connect(target), async owner => {
