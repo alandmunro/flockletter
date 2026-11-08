@@ -104,7 +104,7 @@ export async function verifyRuntimeBoundary(client, expected = {}) {
     (has_table_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR
      has_any_column_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,REFERENCES'))) AS unsafe`);
   if(privateTables.rows[0]?.unsafe)throw Error('Private worker capacity and routing tables must not be accessible to runtime credentials.');
-  const signatures=['wake(text,timestamp with time zone)','snooze(text,timestamp with time zone)','due_scopes()','record_pass(text,text)','scope_status(text)','claim_provisioning_budget(text,uuid,uuid,integer)'];
+  const signatures=['wake(text,timestamp with time zone)','snooze(text,timestamp with time zone)','due_scopes()','record_pass(text,text)','scope_status(text)','claim_provisioning_budget(text,uuid,uuid,integer)','trial_claim(text,text,text,text,integer,integer,text,uuid,text,text,text)','register_support_reply_route(text,uuid,text,text,timestamp with time zone)','resolve_support_reply_route(text)'];
   const routines=await client.query(`SELECT p.oid::regprocedure::text signature,p.prosecdef,
     p.proconfig=ARRAY['search_path=pg_catalog']::text[] AS fixed_path,
     p.proowner<>current_user::regrole::oid AS different_owner,
@@ -114,6 +114,23 @@ export async function verifyRuntimeBoundary(client, expected = {}) {
     FROM pg_proc p WHERE p.oid=ANY(ARRAY(SELECT to_regprocedure('flockletter_customer_jobs.'||s) FROM unnest($1::text[]) s))`,[signatures]);
   if(routines.rowCount!==signatures.length||routines.rows.some(row=>!row.prosecdef||!row.fixed_path||!row.different_owner||!row.allowed||row.public_execute))
     throw Error('Customer worker routines need fixed paths, explicit execution grants and migration ownership.');
+  const extraRoutines=await client.query(`SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+ WHERE n.nspname='flockletter_customer_jobs' AND has_function_privilege(current_user,p.oid,'EXECUTE')
+ AND NOT(p.oid=ANY(ARRAY(SELECT to_regprocedure('flockletter_customer_jobs.'||s) FROM unnest($1::text[]) s))) LIMIT 1`,[signatures]);
+  if(extraRoutines.rowCount)throw Error('Runtime credentials must not execute private operator inventory or erasure routines.');
+  const gates=await client.query(`SELECT p.prosecdef,p.proconfig=ARRAY['search_path=pg_catalog']::text[] fixed_path,
+ p.proowner<>current_user::regrole::oid different_owner,has_function_privilege(current_user,p.oid,'EXECUTE') allowed,
+ EXISTS(SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') public_execute
+ FROM pg_proc p WHERE p.oid=ANY(ARRAY[to_regprocedure('public.flockletter_restore_blocked()'),to_regprocedure('public.flockletter_retention_blocked(text)'),to_regprocedure('public.flockletter_platform_hold(text)')])`);
+  if(gates.rowCount!==3||gates.rows.some(r=>!r.prosecdef||!r.fixed_path||!r.different_owner||!r.allowed||r.public_execute))throw Error('Retention and platform gates need exact fixed-path private authority.');
+  const guarded=tables.filter(t=>t.permissions.includes('INSERT')).map(t=>t.name);
+  const guards=await client.query(`SELECT c.relname FROM pg_class c JOIN pg_trigger t ON t.tgrelid=c.oid JOIN pg_proc p ON p.oid=t.tgfoid
+ WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY($1) AND t.tgname='flockletter_retention_insert_guard' AND t.tgenabled='A' AND t.tgtype=7
+ AND p.oid=to_regprocedure('public.flockletter_retention_insert_guard()') AND p.provolatile='v' AND p.prosecdef AND p.proconfig=ARRAY['search_path=pg_catalog']::text[] AND p.proowner<>current_user::regrole::oid
+ AND NOT has_function_privilege(current_user,p.oid,'EXECUTE') AND NOT EXISTS(SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')`,[guarded]);
+  if(guards.rowCount!==guarded.length)throw Error('Every runtime insert needs the immutable private erasure guard.');
+  const privateGuards=await client.query(`SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_trigger t ON t.tgrelid=c.oid WHERE n.nspname||'.'||c.relname=ANY(ARRAY['flockletter_customer_jobs.scopes','flockletter_customer_jobs.support_reply_routes','flockletter_retention_control.platform_records']) AND t.tgname='flockletter_retention_insert_guard' AND t.tgenabled='A' AND t.tgtype=7 AND t.tgfoid=to_regprocedure('public.flockletter_retention_insert_guard()')`);
+  if(privateGuards.rowCount!==3)throw Error('Private customer routing and operator metadata need erasure guards.');
   return {
     database: identity.database,
     role: identity.role,

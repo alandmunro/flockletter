@@ -1,3 +1,4 @@
+import {lockWorkspace} from '../workspace-lock.js';
 import { deliveryBlock, finalRecipientMessage, finishIfDone, reviewedEnvelope } from './reviewed-delivery.js';
 import type { MarketingLinks } from '../subscribers/marketing-links.js';
 import { PrivateListmonk } from './private-listmonk.js';
@@ -33,7 +34,7 @@ export class DeliveryWorker {
 
   private scoped<T>(workspace: string, brand: string, run: (sql: Sql) => Promise<T>) {
     return this.db.brand(workspace, brand, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+      await lockWorkspace(sql,workspace);
       return run(sql);
     });
   }

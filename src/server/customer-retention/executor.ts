@@ -23,6 +23,7 @@ export type RetentionExecutorOptions = {
   verifyCheckpoint: (workspace: string, digest: string) => Promise<boolean>;
   verifyExternalStores: (workspace: string) => Promise<boolean>;
   now?: () => Date;
+  verifyLockedPlan?: (sql: pg.Client, workspace:string, job:string) => Promise<void>;
 };
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const identifier = (value: string) => pg.escapeIdentifier(value);
@@ -223,16 +224,19 @@ export async function executeAuthorizedRetention(
         names.map((name) => 'public.' + identifier(name)).join(',') +
         ' IN SHARE ROW EXCLUSIVE MODE',
     );
-    const routing = (await db.query("SELECT to_regclass('flockletter_customer_jobs.scopes') present")).rows[0]
-      ?.present;
-    if (routing) {
-      const allowed = (
-        await db.query(
-          "SELECT has_table_privilege(current_user,'flockletter_customer_jobs.scopes','DELETE') AND has_table_privilege(current_user,'flockletter_customer_jobs.scopes','SELECT') allowed",
-        )
-      ).rows[0]?.allowed;
-      if (!allowed) throw Error('Separate executor authority must cover the exact scheduler route.');
-      await db.query('DELETE FROM flockletter_customer_jobs.scopes WHERE workspace_id=$1', [workspace]);
+    await options.verifyLockedPlan?.(db,workspace,job);
+    for(const route of ['scopes','support_reply_routes']) {
+      const qualified='flockletter_customer_jobs.'+identifier(route);
+      if((await db.query('SELECT to_regclass($1) present',['flockletter_customer_jobs.'+route])).rows[0]?.present){
+        const allowed=(await db.query("SELECT has_table_privilege(current_user,$1,'DELETE') AND has_table_privilege(current_user,$1,'SELECT') allowed",['flockletter_customer_jobs.'+route])).rows[0]?.allowed;
+        if(!allowed)throw Error('Separate executor authority must cover every private workspace route.');
+        await db.query('DELETE FROM '+qualified+' WHERE workspace_id=$1',[workspace]);
+      }
+    }
+    if((await db.query("SELECT to_regclass('flockletter_retention_control.platform_records') present")).rows[0]?.present){
+      const allowed=(await db.query("SELECT has_table_privilege(current_user,'flockletter_retention_control.platform_records','DELETE') AND has_table_privilege(current_user,'flockletter_retention_control.platform_records','SELECT') allowed")).rows[0]?.allowed;
+      if(!allowed)throw Error('Separate executor authority must cover private operator case records.');
+      await db.query('DELETE FROM flockletter_retention_control.platform_records WHERE workspace_id=$1',[workspace]);
     }
     const order = await deletionOrder(db);
     const brands = (

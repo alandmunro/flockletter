@@ -1,3 +1,4 @@
+import {lockWorkspace} from '../workspace-lock.js';
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { AppError, requireCondition } from '../errors.js';
@@ -47,7 +48,7 @@ export class SandboxBilling {
   }
   private async locked<T>(workspace: string, action: (sql: Sql) => Promise<T>) {
     return this.db.tenant(workspace, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+      await lockWorkspace(sql,workspace);
       return action(sql);
     });
   }

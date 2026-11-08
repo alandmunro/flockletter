@@ -15,6 +15,8 @@ import { deliveryBindings, runDeliveryQueue } from './campaign/delivery-runner.j
 import { CaptureWorker, captureBinding } from './campaign/worker.js';
 import { SandboxBilling } from './billing/service.js';
 import { sandboxGateway } from './billing/gateway.js';
+import { platformRuntime } from './platform/runtime.js';
+import type { PlatformService } from './platform/service.js';
 import { CustomerWorkflows } from './customer-runtime.js';
 
 if (existsSync('.env')) loadEnvFile('.env');
@@ -24,11 +26,13 @@ const ses=loadSesRuntime(process.env);
 let service: CommandService | undefined;
 let messenger:Awaited<ReturnType<typeof startPrivateMessenger>>;
 let auth: Authenticator | undefined;
+let platform:PlatformService|undefined;
 const stop = new AbortController();
 const tasks: Promise<void>[] = [];
 if (configurationGaps(config).length === 0) {
   const db = new Database(config.databaseUrl!);
   await db.verifyBoundary();
+  if((await db.pool.query('SELECT public.flockletter_restore_blocked() blocked')).rows[0]?.blocked)throw Error('Restored data remains quarantined. Complete protected checkpoint reconciliation and operator release before startup.');
   const identity = config.localIdentity ? localIdentity() : clerkIdentity(config);
   const customer=new CustomerWorkflows(db,config,identity);
   const bindings = deliveryBindings(process.env);
@@ -46,6 +50,7 @@ if (configurationGaps(config).length === 0) {
     config.environment, marketing,customer,
   );
   auth = new Authenticator(db, identity,customer.billing.options);
+  platform=await platformRuntime(config,db,auth,customer);
   if(!customer.settings.dedicated)tasks.push(customer.run(stop.signal));
   const binding = captureBinding(process.env);
   if (binding) {
@@ -64,7 +69,7 @@ if (configurationGaps(config).length === 0) {
     tasks.push(runDeliveryQueue(bindings, (workspace, brand) => worker.tick(workspace, brand), stop.signal));
   }
 }
-const server = createApp(config, service, auth).listen(config.port, config.host, () => {
+const server = createApp(config, service, auth, platform).listen(config.port, config.host, () => {
   console.info(`Flockletter ${config.environment} listening on port ${config.port}. Customer delivery ${service?.customer?.settings.delivery==='ses'?'requires verified per-brand provider eligibility':'disabled'}.`);
 });
 for (const signal of ['SIGTERM', 'SIGINT'])
@@ -75,6 +80,7 @@ for (const signal of ['SIGTERM', 'SIGINT'])
     server.close(() => {
       void customerShutdown.then(()=>Promise.allSettled(tasks))
         .then(() => messenger?.close())
+        .then(() => platform?.close())
         .then(() => service?.db.close())
         .finally(() => process.exit(0));
     });

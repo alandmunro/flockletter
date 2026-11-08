@@ -41,6 +41,7 @@ jobs:
       - run: npx playwright-core install --with-deps chromium webkit
       - run: npm run audience:verify
       - run: node --import tsx scripts/prove-customer-workflows.ts
+      - run: node --import tsx scripts/prove-platform.ts
       - run: node --import tsx scripts/prove-team-ui.ts
       - run: node --import tsx scripts/prove-studio.ts
       - run: node --import tsx scripts/prove-studio-email.ts

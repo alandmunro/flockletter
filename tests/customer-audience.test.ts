@@ -447,9 +447,8 @@ it('checks connection revocation and expiry after waiting for the workspace lock
       await new Promise<void>((resolve) => setTimeout(resolve, 5));
     }
     expect(blocked).toBe(true);
-    await db.tenant(a.workspace, (sql) =>
-      sql.query('UPDATE connections SET revoked_at=clock_timestamp() WHERE id=$1', [writer.id]),
-    );
+    // Independent administrative revocation may occur while application operations wait.
+    await admin.pool.query('UPDATE connections SET revoked_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2',[a.workspace,writer.id]);
   } finally {
     unlock();
     await blocker;
@@ -512,13 +511,8 @@ it('uses the current clock when a grant expires during a workspace-lock wait', a
       await new Promise<void>((resolve) => setTimeout(resolve, 5));
     }
     expect(blocked).toBe(true);
-    await db.tenant(a.workspace, async (sql) => {
-      await sql.query(
-        "UPDATE connections SET expires_at=clock_timestamp()+interval '20 milliseconds' WHERE id=$1",
-        [writer.id],
-      );
-      await sql.query('SELECT pg_sleep(0.03)');
-    });
+    await admin.pool.query("UPDATE connections SET expires_at=clock_timestamp()+interval '20 milliseconds' WHERE workspace_id=$1 AND id=$2",[a.workspace,writer.id]);
+    await admin.pool.query('SELECT pg_sleep(0.03)');
   } finally {
     unlock();
     await blocker;

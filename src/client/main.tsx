@@ -1,6 +1,7 @@
 import { StrictMode, lazy, Suspense, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Portal, Header } from './App.js';
+import { OperatorPortal } from './OperatorPortal.js';
 import { SetupStatus } from './SetupStatus.js';
 import { PublicPlans } from './PublicPlans.js';
 import {Help} from './Help.js';
@@ -14,7 +15,7 @@ function Root() {
   useEffect(() => { void fetch('/api/config').then(async response => { if (!response.ok) throw new Error('Service configuration is unavailable.'); setConfig(await response.json() as PublicConfig); }).catch(() => setError('We could not reach Flockletter. Refresh to retry.')); }, []);
   if (!config) return <><Header /><main className="main"><p role="status">{error || 'Opening Flockletter…'}</p></main></>;
   const workspaceConfigured = config.setupGaps.length === 0;
-  if (config.localIdentity && workspaceConfigured) return <Portal getToken={localToken} local />;
+  if (config.localIdentity && workspaceConfigured) return window.location.pathname==='/operator'?<OperatorPortal getToken={localToken}/>:<Portal getToken={localToken} local />;
   if (!config.localIdentity && config.clerkPublishableKey) {
     return <Suspense fallback={<><Header/><main className="main"><p role="status">Loading sign-in…</p></main></>}><HostedPortal publishableKey={config.clerkPublishableKey} environment={config.environment} setupGaps={config.setupGaps}/></Suspense>;
   }

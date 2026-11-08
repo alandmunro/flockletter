@@ -1,3 +1,4 @@
+import {lockWorkspace} from './workspace-lock.js';
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from './db.js';
 import { digest } from './content.js';
@@ -132,7 +133,7 @@ function verifyCapacity(
 }
 async function recordReceipt(db: Database, actor: Actor, intent: Intent, evidence: IssuedInvitation) {
   return db.tenant(actor.workspaceId, async (sql) => {
-    await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [actor.workspaceId]);
+    await lockWorkspace(sql,actor.workspaceId);
     const stored = existing(await records(sql), intent.emailHash, intent.operationKey);
     if (
       !stored ||
@@ -203,7 +204,7 @@ export async function inviteMember(
     throw unavailable();
   }
   const reservation = await db.tenant(w, async (sql) => {
-    await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [w]);
+    await lockWorkspace(sql,w);
     const rows = await records(sql),
       prior = existing(rows, emailHash, key);
     if (prior) return { row: prior, fresh: false };
@@ -235,7 +236,7 @@ export async function inviteMember(
   try {
     const latest = await pilot.inspect(w);
     await db.tenant(w, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [w]);
+      await lockWorkspace(sql,w);
       verifyCapacity(latest, await records(sql), w, email, await seatLimit(sql), key);
     });
   } catch {

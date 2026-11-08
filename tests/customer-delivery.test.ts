@@ -564,9 +564,8 @@ it('rejects a revoked send grant after waiting for the workspace lock, including
       await new Promise<void>((resolve) => setTimeout(resolve, 5));
     }
     expect(blocked).toBe(true);
-    await db.tenant(f.workspaceId, (sql) =>
-      sql.query('UPDATE connections SET revoked_at=clock_timestamp() WHERE id=$1', [sender.id]),
-    );
+    // Simulate an independent administrative revocation while application requests wait.
+    await admin.pool.query('UPDATE connections SET revoked_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2',[f.workspaceId,sender.id]);
   } finally {
     unlock();
     await blocker;

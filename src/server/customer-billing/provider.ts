@@ -13,6 +13,19 @@ export type ProviderIntent = {
   previousSubscription?: string;
   previousRevision?: number;
 };
+export type ProviderSetupProof = {
+  checkout: string;
+  setupIntent: string;
+  customer: string;
+  paymentMethod: string;
+  fingerprint: string;
+};
+export type ProviderTrialActivation = ProviderIntent & {
+  customer: string;
+  paymentMethod: string;
+  activationKey: string;
+  trialEnd: Date;
+};
 export type ProviderNotice = {
   id: string;
   kind: string;
@@ -43,6 +56,12 @@ export type CustomerBillingProvider = {
   live: boolean;
   checkout(intent: ProviderIntent): Promise<ProviderCheckout>;
   lookupCheckout(intent: ProviderIntent): Promise<ProviderCheckout | null>;
+  setupCheckout?(intent: ProviderIntent): Promise<ProviderCheckout>;
+  /** Null means an exhaustive authenticated account lookup found no setup; incomplete search must throw. */
+  lookupSetupCheckout?(intent: ProviderIntent): Promise<ProviderCheckout | null>;
+  inspectSetup?(intent: ProviderIntent): Promise<ProviderSetupProof | null>;
+  createTrial?(intent: ProviderTrialActivation): Promise<ProviderSubscription>;
+  lookupTrial?(intent: ProviderTrialActivation): Promise<ProviderSubscription | null>;
   inspectSubscription?(id: string): Promise<ProviderSubscription>;
   portal(customer: string, key: string): Promise<string>;
   verify(raw: Buffer, signature: string): ProviderNotice | null;
@@ -149,7 +168,7 @@ export function stripeCustomerProvider(
   async function accountCheck() {
     if ((await stripe.accounts.retrieveCurrent()).id !== account) throw invalid();
   }
-  function planFor(item: Stripe.SubscriptionItem) {
+  function planFor(item: Pick<Stripe.SubscriptionItem, 'price' | 'quantity'>) {
     const p = item.price,
       plan = plans.find((plan) => prices[plan.id] === p.id);
     if (
@@ -251,9 +270,172 @@ export function stripeCustomerProvider(
       subscription: reference(s.subscription),
     };
   }
+  async function setupProjection(
+    s: Stripe.Checkout.Session,
+    intent: ProviderIntent,
+  ): Promise<ProviderCheckout> {
+    if (
+      s.livemode !== live ||
+      s.mode !== 'setup' ||
+      s.client_reference_id !== intent.workspace ||
+      s.metadata?.fl_intent !== intent.id ||
+      s.metadata?.fl_workspace !== intent.workspace ||
+      !['open', 'complete', 'expired'].includes(s.status ?? '')
+    )
+      throw invalid();
+    return {
+      id: s.id,
+      state: s.status as 'open' | 'complete' | 'expired',
+      url: s.status === 'open' ? s.url : null,
+      customer: reference(s.customer),
+    };
+  }
+  async function lookupSetup(intent: ProviderIntent) {
+    if (intent.reference)
+      return setupProjection(await stripe.checkout.sessions.retrieve(intent.reference), intent);
+    let starting_after: string | undefined;
+    for (let page = 0; page < 5; page++) {
+      const list = await stripe.checkout.sessions.list({
+        limit: 100,
+        created: { gte: Math.floor(intent.createdAt.getTime() / 1000) - 60 },
+        starting_after,
+      });
+      const matches = list.data.filter((s) => s.metadata?.fl_intent === intent.id);
+      if (matches.length > 1) throw invalid();
+      if (matches[0]) return setupProjection(matches[0], intent);
+      if (!list.has_more) return null;
+      starting_after = list.data.at(-1)?.id;
+      if (!starting_after) return null;
+    }
+    throw invalid();
+  }
+  async function verifyTrial(s: ProviderSubscription, intent: ProviderTrialActivation) {
+    if (
+      s.workspaceHint !== intent.workspace ||
+      s.intentHint !== intent.id ||
+      s.customer !== intent.customer ||
+      s.plan !== intent.plan ||
+      !s.cardVerified ||
+      s.trialEnd?.getTime() !== intent.trialEnd.getTime()
+    )
+      throw invalid();
+    return s;
+  }
   return {
     account,
     live,
+    async setupCheckout(intent) {
+      await accountCheck();
+      const metadata = { fl_workspace: intent.workspace, fl_intent: intent.id };
+      const requestTime = Date.now(),
+        age = requestTime - intent.createdAt.getTime();
+      // Stripe requires >=30 minutes from actual creation, not from our earlier durable intent.
+      // A fresh 31-minute session plus at most two minutes of preparation stays inside the 35-minute lease.
+      if (!Number.isFinite(age) || age < -30000 || age > 120000) throw invalid();
+      const result = await stripe.checkout.sessions.create(
+        {
+          mode: 'setup',
+          currency: 'usd',
+          client_reference_id: intent.workspace,
+          metadata,
+          customer_creation: 'always',
+          payment_method_configuration: card,
+          setup_intent_data: { metadata },
+          expires_at: Math.floor(requestTime / 1000) + 31 * 60,
+          success_url: origin + '/?billing=card-returned',
+          cancel_url: origin + '/?billing=card-cancelled',
+        },
+        { idempotencyKey: 'flockletter-trial-setup-' + intent.id },
+      );
+      return setupProjection(result, intent);
+    },
+    async lookupSetupCheckout(intent) {
+      await accountCheck();
+      return lookupSetup(intent);
+    },
+    async inspectSetup(intent) {
+      await accountCheck();
+      const session = intent.reference
+        ? await stripe.checkout.sessions.retrieve(intent.reference)
+        : null;
+      if (!session) return null;
+      await setupProjection(session, intent);
+      if (session.status !== 'complete') return null;
+      const setupId = reference(session.setup_intent),
+        customer = reference(session.customer);
+      if (!setupId || !customer) throw invalid();
+      const setup = await stripe.setupIntents.retrieve(setupId, { expand: ['payment_method'] });
+      const method = setup.payment_method;
+      if (
+        setup.livemode !== live ||
+        setup.status !== 'succeeded' ||
+        setup.usage !== 'off_session' ||
+        reference(setup.customer) !== customer ||
+        setup.metadata?.fl_workspace !== intent.workspace ||
+        setup.metadata?.fl_intent !== intent.id ||
+        typeof method !== 'object' ||
+        !method ||
+        method.type !== 'card' ||
+        method.livemode !== live ||
+        reference(method.customer) !== customer ||
+        !method.card?.fingerprint
+      )
+        throw invalid();
+      return {
+        checkout: session.id,
+        setupIntent: setup.id,
+        customer,
+        paymentMethod: method.id,
+        fingerprint: method.card.fingerprint,
+      };
+    },
+    async createTrial(intent) {
+      await accountCheck();
+      const price = await stripe.prices.retrieve(prices[intent.plan]);
+      // Reuse the same exact monthly-price checks used on authoritative subscription snapshots.
+      if (!price.active) throw invalid();
+      planFor({ price, quantity: 1 });
+      const result = await stripe.subscriptions.create(
+        {
+          customer: intent.customer,
+          default_payment_method: intent.paymentMethod,
+          items: [{ price: price.id, quantity: 1 }],
+          trial_end: Math.floor(intent.trialEnd.getTime() / 1000),
+          trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
+          payment_behavior: 'default_incomplete',
+          metadata: {
+            fl_workspace: intent.workspace,
+            fl_intent: intent.id,
+            fl_trial_activation: intent.activationKey,
+          },
+        },
+        { idempotencyKey: 'flockletter-trial-activate-' + intent.activationKey },
+      );
+      return verifyTrial(await snapshot(result.id), intent);
+    },
+    async lookupTrial(intent) {
+      await accountCheck();
+      let starting_after: string | undefined;
+      for (let page = 0; page < 5; page++) {
+        const list = await stripe.subscriptions.list({
+          customer: intent.customer,
+          status: 'all',
+          limit: 100,
+          starting_after,
+        });
+        const matches = list.data.filter(
+          (s) =>
+            s.metadata.fl_intent === intent.id &&
+            s.metadata.fl_trial_activation === intent.activationKey,
+        );
+        if (matches.length > 1) throw invalid();
+        if (matches[0]) return verifyTrial(await snapshot(matches[0].id), intent);
+        if (!list.has_more) return null;
+        starting_after = list.data.at(-1)?.id;
+        if (!starting_after) return null;
+      }
+      throw invalid();
+    },
     async inspectSubscription(id) {
       await accountCheck();
       return snapshot(id);
@@ -351,16 +533,26 @@ export function stripeCustomerProvider(
         kind: event.type,
         checkout: event.type.startsWith('checkout.session.') ? id : null,
         subscription: event.type.startsWith('customer.subscription.') ? id : null,
-        risk: ['charge.dispute.created', 'charge.refunded', 'radar.early_fraud_warning.created'].includes(
-          event.type,
-        ),
+        risk: [
+          'charge.dispute.created',
+          'charge.refunded',
+          'radar.early_fraud_warning.created',
+        ].includes(event.type),
       };
     },
     async resolve(notice) {
       await accountCheck();
       if (notice.checkout) {
         const s = await stripe.checkout.sessions.retrieve(notice.checkout);
-        if (s.livemode !== live || s.mode !== 'subscription') throw invalid();
+        if (s.livemode !== live) throw invalid();
+        if (s.mode === 'setup')
+          return {
+            subscription: null,
+            checkoutId: s.id,
+            intentId: s.metadata?.fl_intent ?? null,
+            workspace: s.client_reference_id,
+          };
+        if (s.mode !== 'subscription') throw invalid();
         const subscription = reference(s.subscription),
           observed = subscription ? await snapshot(subscription) : null;
         if (

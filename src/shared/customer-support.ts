@@ -6,6 +6,9 @@ const operationKey = z.uuid();
 const ticket = z.uuid();
 const version = z.number().int().positive();
 export const customerSupportCommands = {
+  'support.automationStatus': commandDefinition('Read support automation policy and captured outcomes.', 'owner', false, {}),
+  'support.exerciseAutomation': commandDefinition('Capture the bounded support automation decision without sending email.', 'owner', true, { operationKey, id: ticket, expectedVersion: version }),
+  'support.prepareReplyAddress': commandDefinition('Prepare an expiring signed email reply address for this conversation.', 'owner', true, { operationKey, id: ticket, expectedVersion: version }),
   'support.list': commandDefinition('Read this workspace’s support conversations.', 'owner', false, {
     offset: z.number().int().min(0).max(10000).default(0),
   }),
@@ -81,12 +84,35 @@ export type SupportTicket = {
   reviewCode: string | null;
   draftProvenance: 'approved_guidance' | 'ai_assisted' | 'human' | null;
   messages: SupportMessage[];
+  replyAddress?: string | null;
   delivery: { state: string; attempts: number; mode: 'capture' | 'live'; reason: string | null } | null;
 };
 export type SupportDirectory = {
+  replyRoutingConfigured?: boolean;
   mode: 'off' | 'capture' | 'live';
   tickets: Omit<SupportTicket, 'messages'>[];
   total: number;
   offset: number;
   limit: number;
+};
+
+export const supportOperatorCommands = {
+  'support.reauthorize': commandDefinition('Refresh exact unattempted reply authority after a new verified operator review; never resend an uncertain reply.', 'owner', true, {operationKey,id:ticket,expectedVersion:version,reviewCode:z.string().regex(/^[a-f0-9]{64}$/)}),
+  'support.policyPreview': commandDefinition('Prepare exact public-guidance responses for operator policy review.', 'owner', true, {
+    operationKey, expectedVersion: z.number().int().min(0), enabled: z.boolean(), mode: z.enum(['capture','live']),
+    topics: z.array(z.enum(['plans','trial','audience','campaigns'])).min(1).max(4).refine((topics) => new Set(topics).size === topics.length),
+    validForDays: z.number().int().min(1).max(30), useWriter: z.boolean().default(false),
+  }),
+  'support.publishPolicy': commandDefinition('Publish an exact reviewed, version-checked public-guidance policy.', 'owner', true, {
+    operationKey, previewId: z.uuid(), reviewCode: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+  'support.policyHistory': commandDefinition('Read the approved automation policy history.', 'owner', false, {}),
+} as const;
+export type SupportAutomationStatus = {
+  mode: 'off' | 'capture' | 'live'; policyVersion: number | null; enabledTopics: string[];
+  pending: number; captured: number; uncertain: number; lastReason: string | null; writerConfigured: boolean;
+};
+export type SupportPolicyReview = {
+  id: string; parentVersion: number; enabled: boolean; mode: 'capture'|'live';
+  responses: Record<string,string>; reviewCode: string; validUntil: string; expiresAt: string;
 };

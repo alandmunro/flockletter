@@ -93,3 +93,15 @@ Local Qwen drafted the dashboard outcome display, recording-provider scaffold an
 [PR 19](https://github.com/alandmunro/flockletter/pull/19) passed the Linux checks, private Listmonk exercise and isolated database restore. Commit `2342a06` deployed to the existing free staging web service. Both staging origins reported healthy, with external campaign sending disabled.
 
 In the signed-in verification workspace, a three-row CSV produced one new pending contact, one duplicate and one skipped address outside the reserved test domain. Opening the new contact showed its CSV row and no recorded subscriber consent. The Team screen read one member and zero invitations from staging Clerk. The Workspace panel calculated the Starter comparison and identified the missing SES binding and credentials while reporting the staging worker ready. This check did not send mail, start a Stripe trial or enroll a real subscriber.
+
+## D-043: remaining integrations, November8
+
+Built the separate operator surface, native/automated support, protected cross-workspace trial enrollment and hosted retention/recovery integrations. Multiple restricted-role PostgreSQL tests and exact HTTP/MCP authorization tests cover case expiry/revocation, same-case policy previews, immutable request keys, private namespace permission drift, unknown external outcomes and the erasure/write race. Source and acceptance details are in [platform completion](PLATFORM_COMPLETION.md), [trial protection](TRIAL_ABUSE.md), and [hosted retention](HOSTED_RETENTION.md).
+
+The new normal browser journey opens a workspace-only operator case, drafts/reviews the exact support answer, records captured delivery and fits a390px screen. Existing seven customer workflows also pass normal desktop/mobile journeys with disposable data. [Desktop capture](evidence/platform-operator-desktop.png) · [Phone capture](evidence/platform-operator-mobile.png). Captures contain synthetic data.
+
+Local Qwen drafts were used for fixture/test scaffolding, support UI presentation, retention types and playbook notes; chat corrected invalid imports/types, overly broad assertions and misleading capture/authority wording. Architecture, money/security decisions, implementation integration and all final review remain in chat. Percentages are not inferred from unmeasured token usage.
+
+Live Stripe, Resend, AWS Object Lock/engine-disposal and hosted customer erasure checks remain activation work. No real customer email, charge, deletion or production release is represented by these captured/disposable tests. Staging release result is recorded after the reviewed merge/deployment.
+
+Final local release checks: **88 test files,561 passing tests and2 explicitly gated engine tests**; lint, TypeScript and production build passed. Enabling the real private engine separately passed all5 engine tests, including both gated checks. Dependency audit found zero vulnerabilities; the locked Studio notice/build check passed. Both desktop/mobile operator and seven customer-workflow browser journeys passed.

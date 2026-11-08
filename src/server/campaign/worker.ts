@@ -1,3 +1,4 @@
+import {lockWorkspace} from '../workspace-lock.js';
 import type { Database } from '../db.js';
 import { processDue, type CheckOwner, workspaceIdentifier } from './rehearsal.js';
 import { z } from 'zod';
@@ -15,7 +16,7 @@ export class CaptureWorker {
   ) {}
   async tick(workspace: string, brand: string) {
     return this.db.brand(workspace, brand, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+      await lockWorkspace(sql,workspace);
       return processDue(sql, workspace, brand, this.isOwner);
     });
   }

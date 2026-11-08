@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { platformCommands } from '../src/shared/platform.js';
 import { commands } from '../src/shared/contracts.js';
 import { intakeKey, signupInput, signupAccepted } from '../src/shared/subscriber.js';
 
@@ -48,5 +49,5 @@ const marketingUnsubscribePath = {
 };
 await writeFile('docs/api/openapi.json', JSON.stringify({ openapi:'3.1.0',info:{title:'Flockletter API',version:'0.3.0',
   description:'Campaign authoring, rehearsals, audience workflows, and separately gated subscriber intake and sandbox billing. Generated from canonical schemas.'},
-  paths:{...paths,'/api/v1/brands/{brandId}/subscriber-signups':signupPath,'/api/v1/connection/identity':identityPath,'/api/v1/billing/stripe-events':billingEventsPath,'/mail/unsubscribe':marketingUnsubscribePath},components:{securitySchemes:{bearerAuth:{type:'http',scheme:'bearer',
+  paths:{...Object.fromEntries(Object.entries(platformCommands).map(([name,c])=>['/api/operator/v1/commands/'+name,{post:{operationId:name.replace('.','_'),summary:c.description,security:[{operatorSession:[]}],'x-operator-mfa-required':true,'x-mutates':c.mutation,requestBody:{required:true,content:{'application/json':{schema:c.schema.toJSONSchema({io:'input'})}}},responses:{'200':{description:'Exact case-scoped operator result.'},'403':{description:'Separate operator organization, named membership, recent two-factor verification and exact case required.'},'409':{description:'Changed action, version, review or protected evidence.'},'503':{description:'Required protected operator configuration is missing.'}}}}])),...paths,'/api/v1/brands/{brandId}/subscriber-signups':signupPath,'/api/v1/connection/identity':identityPath,'/api/v1/billing/stripe-events':billingEventsPath,'/mail/unsubscribe':marketingUnsubscribePath},components:{securitySchemes:{operatorSession:{type:'http',scheme:'bearer',description:'Short-lived Clerk session in the separate named operator organization, both factors verified within five minutes. Customer connections never grant operator authority.'},bearerAuth:{type:'http',scheme:'bearer',
     description:'Use only a single-brand signup connection for subscriber intake. Owner-only commands require a Clerk owner session.'}}}},null,2)+'\n');

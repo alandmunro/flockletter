@@ -1,3 +1,4 @@
+import {lockWorkspace} from '../workspace-lock.js';
 import { randomUUID, randomInt } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { fingerprint, type IntakeBinding } from '../subscribers/config.js';
@@ -43,7 +44,7 @@ export class ConfirmationWorker {
     if (binding.mode !== provider.mode) throw new Error('Confirmation transport and brand mode must match.');
   }
   private tx<T>(fn: (sql: Sql) => Promise<T>) {
-    return this.db.brand(this.binding.workspaceId, this.binding.brandId, fn);
+    return this.db.brand(this.binding.workspaceId,this.binding.brandId,async sql=>{await lockWorkspace(sql,this.binding.workspaceId);return fn(sql);});
   }
   private async issuerActive(issuer: string) {
     let timer: ReturnType<typeof setTimeout> | undefined;

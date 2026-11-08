@@ -76,3 +76,15 @@ D-038 extends FL-AT-015 and FL-AT-021 with [campaign feedback scenarios](../test
 D-039 applies FL-AT-015, FL-AT-019, FL-AT-020 and FL-AT-024 to the private Listmonk handoff. Acceptance covers a late opt-out, repeated callbacks, a worker restart before submission, and recovery after an uncertain provider result. Verify simulator behavior and customer delivery separately. [Private Listmonk checklist](implementation/PRIVATE_LISTMONK.md)
 
 D-042 adds the seven customer workflows with canonical UI/API/MCP operations and disposable provider exercises. Requirement mapping, observed evidence, local-model contributions and external release gates are recorded in [customer release evidence](implementation/CUSTOMER_RELEASE_EVIDENCE.md). [Owner testing guide](implementation/OWNER_TESTING_GUIDE.md).
+
+
+## D-043 remaining integrations
+
+| Requirements | Implementation and evidence |
+| --- | --- |
+| FL-BIL-003/004/007, FL-USG-001 | TrialRegistry, two-stage TrialEnrollment and SubscriptionLifecycle; customer-abuse, customer-trial-enrollment and provider tests; lifetime retention/history baseline remain explicit activation gates. |
+| FL-ID-001–005, FL-SUP-001/002 | Separate platform auth/cases/HTTP/MCP and support operator actions; signed native inbox, fixed public AI guidance, versioned policies; platform/support negative tests and owner-only staging exercise. |
+| FL-OPS-001–007 | Private metadata-only operator role, worker health/alerts and durable notification reconciliation; operator-role drift, unknown-outcome and browser tests. Continuous hosted monitoring needs an awake dedicated service. |
+| FL-AUD-005, FL-OPS-004/006 | Signed protected checkpoint/inventory/approval, separate planner/executor roles, exact external disposal and restore quarantine; actual disposable SQL purge, current-version/signature/role/restore tests. No live S3 or hosted customer purge claimed. |
+
+See [remaining integrations](implementation/PLATFORM_COMPLETION.md), [hosted retention](implementation/HOSTED_RETENTION.md) and [trial abuse](implementation/TRIAL_ABUSE.md) for configuration and limitations.

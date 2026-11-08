@@ -1,0 +1,8 @@
+import {mkdtemp,writeFile,symlink,rm,chmod,realpath} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {expect,it} from 'vitest';
+import {readProtectedRetentionFile} from '../src/server/customer-retention/configuration.js';
+it('reads only bounded owner-only files and refuses symlinks or public-readable configuration',async()=>{const directory=await realpath(await mkdtemp(path.join(tmpdir(),'flockletter-operator-file-')));try{const file=path.join(directory,'config'),link=path.join(directory,'linked');await writeFile(file,'synthetic-not-a-credential',{mode:0o600});expect(await readProtectedRetentionFile(file)).toBe('synthetic-not-a-credential');await symlink(file,link);await expect(readProtectedRetentionFile(link)).rejects.toMatchObject({code:'protected_file_symlink'});await chmod(file,0o644);await expect(readProtectedRetentionFile(file)).rejects.toMatchObject({code:'protected_file_permissions'});}finally{await rm(directory,{recursive:true,force:true});}});
+it('separate CLI defaults off, refuses arguments, and emits static categories only',()=>{const run=(args:string[])=>spawnSync(process.execPath,['--import','tsx','scripts/retention-operator.ts',...args],{encoding:'utf8',env:{...process.env,FLOCKLETTER_RETENTION_LIVE:''}});const off=run([]);expect(off.status).toBe(1);expect(off.stdout).toBe('');expect(JSON.parse(off.stderr)).toEqual({ok:false,code:'hosted_erasure_disabled'});const args=run(['synthetic-argument']);expect(JSON.parse(args.stderr)).toEqual({ok:false,code:'arguments_forbidden'});expect(args.stderr).not.toContain('synthetic-argument');});

@@ -1,0 +1,42 @@
+# Remaining platform integrations
+
+D-043 implements the three remaining engineering areas: cross-workspace trial protection, support automation and independent platform controls, and protected hosted retention/recovery. Applicable requirements: FL-BIL-003/004/007, FL-USG-001, FL-ID-001–005, FL-SUP-001/002, FL-OPS-001–007 and FL-AUD-005. Existing photographs, published apparel data and commerce settings are outside this repository and unchanged.
+
+## Authority and publication boundaries
+
+`/operator` uses the separate canonical `/api/operator/v1/commands/*` surface. Live mode requires the exact server-configured operator Clerk organization, an explicit user allowlist, current admin membership, an active session, enrolled second factor and both factor ages under five minutes. Customer connection tokens never grant operator access. No implicit first-factor downgrade is accepted. The UI uses Clerk reverification; disabling MFA, revoking membership or expiring a case blocks further submission.
+
+Capture mode grants a current customer owner a clearly labelled exercise limited to that owner's selected workspace. It cannot inspect another customer or the global email quarantine. Capture authority never signs destructive artifacts. The separate stdio operator MCP bridge exposes the same canonical commands, accepts short-lived Clerk sessions and has no persistent elevated customer token.
+
+Each case fixes the actor, session, workspace, reason, target and five-minute expiry. Each support mutation also saves its exact command/request hash and stable operation key. A policy can publish only the exact preview reviewed in the same case. A queued zero-attempt reply can obtain fresh exact authority; uncertain submissions can only reconcile. Acknowledging an alert does not remove the underlying condition. Abuse holds stop eligibility without clearing owner/card trial history.
+
+## Components and activation
+
+* Trial enrollment first obtains a provider-held card through setup-only Checkout. Verified owner/card HMAC claims precede a separately accepted, exact-price/date trial activation. Provider source/account and synthetic namespaces are separate. The live registry requires a stable key, reviewed history baseline and an explicitly approved minimal-record retention exception. That exception remains **unapproved**; the accepted 90-day canceled-account policy is not silently amended. See [trial protection](TRIAL_ABUSE.md).
+* Native Resend receipt intake verifies the raw signature before fixed-endpoint retrieval, deduplicates receipts, bounds body/attempts and ignores attachments. Exact configured addresses select intake; From is never account authority. Expiring opaque reply tokens bind ticket, participant and workspace. Unassigned email enters a bounded private quarantine; no automatic customer assignment or reply occurs. A fixed function expires unassigned mail after 90 days, called by the platform monitor. If capacity is full, intake refuses rather than growing indefinitely.
+* Support automation publishes immutable, expiring policies with exact human-approved public answers. AI receives only public guidance and cannot approve its own output. Sensitive, uncertain, repeated or injection-like requests escalate. At most one automatic answer is permitted. Live automation and transport each need explicit activation. See [support contracts](CUSTOMER_SUPPORT_RETENTION.md).
+* Per-workspace worker snapshots feed a private global health view in live mode and tenant-only snapshots in capture. Alerts cover uncertain provider outcomes, failed passes, queues without continuous workers, and stale workers. Notifications save an intent before transport; unknown outcomes receive lookup-only reconciliation. Queued submissions and old uncertain lookups receive separate fair batches. Live notifications require a dedicated fixed sender/recipient and explicit transport approval. Free sleeping staging cannot provide continuous monitoring.
+* Retention planning loads current signed inventory and the latest versioned, COMPLIANCE-locked checkpoint using a separate read-only planner role. Exact MFA approvals expire within five minutes in the UI and can never execute through HTTP/MCP. The offline restricted executor verifies fresh scope, case, inventory, exceptions, checkpoint and complete engine-instance disposal evidence. It journals external operations, reconciles unknowns and erases SQL only after disposal proof. Restore remains quarantined until protected reconciliation and independent release. Runtime cannot inspect private records or resurrect an erased workspace. Insert guards recheck private erasure facts under the shared workspace coordination lock; a busy guard aborts the transaction for an idempotent retry instead of waiting behind an erasure table lock. See [hosted retention](HOSTED_RETENTION.md).
+
+## Staging setup
+
+Enable only `FLOCKLETTER_PLATFORM_MODE=capture` on the existing free staging service. A dedicated stable `FLOCKLETTER_EXERCISE_TRIAL_HMAC_KEY` enables cross-workspace synthetic trial checks; it cannot establish live eligibility. Keep live billing, sending, support transports, operator globals, AWS provisioning and hosted erasure disabled.
+
+Live platform setup additionally requires `FLOCKLETTER_OPERATOR_ORGANIZATION_ID`, `FLOCKLETTER_OPERATOR_USER_IDS` and `FLOCKLETTER_OPERATOR_DATABASE_URL`. The database must match the exact application host, port and logical database; the role has only private metadata SELECT/INSERT/UPDATE and the fixed inbox-expiry function. `operatorRoleGrants` prints the exact noncredential SQL. Unexpected role membership, object ownership, CREATE, column, sequence or function permissions fail verification. No new role or paid resource is provisioned by this release.
+
+The planner reads protected files configured by `FLOCKLETTER_RETENTION_PLANNER_CONFIG_FILE`, `FLOCKLETTER_RETENTION_PLANNER_DATABASE_FILE` and `FLOCKLETTER_RETENTION_INVENTORY_DIRECTORY`. Signing is separately gated by `FLOCKLETTER_RETENTION_SIGNING_ENABLED=approved`, a key ID and owner-only private-key file. Paths, key files and real provider configuration are operational prerequisites, not fabricated test evidence.
+
+## Owner exercise
+
+1. Sign in, choose a test workspace, and initialize it if needed. In Support, create a question about plans. Copy its conversation ID. Run one queue pass in Operations to produce health metadata.
+2. Open `/operator`. Confirm **Workspace-only staging exercise**. Select that workspace, Support, the exact conversation ID and a specific reason; open the case.
+3. Draft public guidance, review/save edits and approve the exact reply. Capture mode records the reply without email. Inspect delivery state and history. Refresh/reconcile after a lost response. Open a new case and use exact reauthorization only for a queued reply with zero attempts.
+4. For automation, open a Support case with no conversation ID. Review an enabled policy, read its exact answers, then approve. Use the customer Support capture exercise to check a public question and a sensitive question. Review disabling the policy as well.
+5. Review health and acknowledge an alert. Confirm its risk remains active until the underlying condition resolves. Open an Abuse case to apply and release a reversible review hold; trial claims remain unchanged.
+6. Retention captures remain available in the customer Data page. An operator retention case must name an actual job. Without configured protected evidence, **Load current exact plan** must refuse. No screen performs hosted deletion.
+
+## Verification and model contributions
+
+Acceptance uses disposable PostgreSQL, separate restricted roles, multiple workspaces, concurrency/revocation/unknown-outcome tests, signed synthetic evidence and desktop/mobile browser journeys. Record final results and the staging revision in VERIFICATION.md. A synthetic AWS client or captured email is not live provider verification.
+
+Local Qwen supplied first drafts for test fixtures, MFA/schema tests, support presentation components, retention types and operator documentation. Chat corrected invalid fixture imports, an overbroad schema test, code fences and misleading capture/authority wording. Chat owns architecture, security and billing decisions, implementation integration, review and verification. No token or cost percentage is inferred.
