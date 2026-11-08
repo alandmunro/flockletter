@@ -57,4 +57,3 @@ describe('platform auth and commands', () => {
     expect(platformCommands['platform.openCase'].schema.safeParse(badOperationKey).success).toBe(false);
   });
 });
-
