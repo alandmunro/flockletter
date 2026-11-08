@@ -7,6 +7,8 @@ import { emptyContent, type Campaign, type CommandName, type Workspace } from '.
 import { type Rehearsal, type RecipientOutcome } from '../../src/shared/rehearsal.js';
 import { Database } from '../../src/server/db.js';
 import { CommandService, type Actor } from '../../src/server/service.js';
+import { reviewedListmonkMessage } from '../../src/server/campaign/listmonk-callback.js';
+import { isolatedSimulator } from './simulator-proof.js';
 import { DeliveryWorker } from '../../src/server/campaign/delivery-worker.js';
 import type { DeliveryOutcome, DeliveryProvider } from '../../src/server/campaign/delivery-provider.js';
 import { startDatabase } from '../database-fixture.js';
@@ -64,9 +66,10 @@ async function prove() {
   };
   const draft = await command<Campaign>('campaign.create', keyed({ brandId, content }));
   const withdrawn = randomUUID();
+  const simulator = isolatedSimulator(workspace, brandId);
   await runtime.brand(workspace, brandId, (sql) =>
     sql.query(
-      "INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES($1,$2,$3,'casey@example.test','confirmed'),($1,$2,$4,'pending@example.test','confirmed')",
+      "INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES($1,$2,$3,'reader@campaign.test','confirmed'),($1,$2,$4,'pending@example.test','confirmed')",
       [workspace, brandId, randomUUID(), withdrawn],
     ),
   );
@@ -122,21 +125,44 @@ async function prove() {
     assert.deepEqual(await read(), { ready: true });
     const provider: DeliveryProvider = {
       async submit(message) {
-        assert.equal(message.to, 'casey@example.test');
+        assert.equal(message.to, 'reader@campaign.test');
         assert.equal(message.subject, content.subject);
         assert(message.html.includes('cid:' + digest) && message.text.includes(content.body));
         assert.deepEqual(
           message.images.map((image) => image.bytes),
           [photo],
         );
-        return call<DeliveryOutcome>({
-          action: 'submit',
-          loseAcknowledgment: true,
-          message: {
-            ...message,
-            images: message.images.map((image) => ({ ...image, bytes: image.bytes.toString('base64') })),
-          },
-        });
+        // A Listmonk HTTP response alone is never the provider receipt.
+        assert.equal(
+          await call<DeliveryOutcome>({
+            action: 'submit',
+            message: {
+              ...message,
+              images: message.images.map((image) => ({ ...image, bytes: image.bytes.toString('base64') })),
+            },
+          }),
+          'unknown',
+        );
+        let callback: unknown = null;
+        const deadline = Date.now() + 5000;
+        while (!callback && Date.now() < deadline) {
+          callback = await call({ action: 'callback', operationKey: message.operationKey });
+          if (!callback) await pause(50);
+        }
+        assert(callback, 'Listmonk did not produce an authenticated messenger callback');
+        // Still inside the guarded worker submission. Lookup does not create a downstream send.
+        const reviewed = reviewedListmonkMessage(callback, message);
+        assert.equal(await simulator.provider.submit(reviewed), 'accepted');
+        simulator.verify(message);
+        assert.equal(
+          await call({
+            action: 'acknowledge',
+            operationKey: message.operationKey,
+            providerId: simulator.receipt(message.operationKey),
+          }),
+          true,
+        );
+        return 'unknown'; // Drop the worker-facing acknowledgement after provider acceptance.
       },
       lookup: (operationKey) => call<DeliveryOutcome>({ action: 'lookup', operationKey }),
     };
@@ -172,12 +198,14 @@ async function prove() {
     await tick();
     assert.deepEqual(await call({ action: 'stats' }), {
       submissions: 1,
-      acceptedCalls: ['casey@example.test'],
+      acceptedCalls: ['reader@campaign.test'],
     });
+    assert.equal(simulator.count(), 1);
     console.log(
-      'Flockletter scheduled two recipients, excluded the later opt-out and reconciled the one original Listmonk test submission from its authenticated callback.',
+      'Flockletter scheduled two recipients, excluded the later opt-out and reconciled exactly one Listmonk → SES SDK submission with both reviewed bodies and original inline photos.',
     );
   } finally {
+    simulator.close();
     peer.stdin.end();
     assert.equal(await exited, 0, 'Isolated Listmonk peer failed');
   }

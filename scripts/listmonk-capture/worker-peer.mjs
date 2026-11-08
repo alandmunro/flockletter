@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
+
 import { once } from 'node:events';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 import { stdin, stdout, env } from 'node:process';
 import { URLSearchParams } from 'node:url';
+import { reviewedListmonkMessage } from './listmonk-callback.ts';
 import { ListmonkTestProvider } from './listmonk-test-provider.ts';
 
 const { fetch, AbortSignal } = globalThis;
@@ -22,30 +23,15 @@ const decode = (message) => ({
   images: message.images.map((image) => ({ ...image, bytes: Buffer.from(image.bytes, 'base64') })),
 });
 
-// Only the private messenger knows this credential. Its receipt is authoritative only for the
-// registered operation that matches this caller's exact reviewed recipient, message and photos.
-function assertWorkerCapture(payload, message, reference) {
-  assert.equal(payload.from_email, reference);
-  assert.ok(Array.isArray(payload.recipients));
-  assert.equal(payload.recipients.length, 1);
-  assert.equal(payload.recipients[0]?.email, message.to);
-  assert.equal(payload.subject, message.subject);
-  assert.equal(payload.content_type, 'html');
-  assert.equal(payload.body, message.html);
-  const files = payload.attachments ?? [];
-  assert.ok(Array.isArray(files));
-  assert.equal(files.length, message.images.length);
-  for (const [index, image] of message.images.entries()) {
-    const attachment = files[index];
-    assert.equal(attachment?.name, image.name);
-    assert.equal(attachment.header?.['Content-Type']?.[0]?.split(';')[0], image.mime);
-    assert.equal(typeof attachment.content, 'string');
-    const observed = Buffer.from(attachment.content, 'base64');
-    assert.deepEqual(observed, image.bytes);
-    assert.equal(createHash('sha256').update(observed).digest('hex'), image.sha256);
+// A successful callback only queues the observed message. It is not an SES receipt.
+const references = new Map();
+async function storeOnce(filename, bytes) {
+  try {
+    await writeFile(filename, bytes, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (error.code !== 'EEXIST' || (await readFile(filename, 'utf8')) !== bytes) throw error;
   }
 }
-
 const capture = createServer(async (request, response) => {
   if (request.method !== 'POST' || request.url !== '/message') return response.writeHead(404).end();
   if (request.headers.authorization !== authorization) return response.writeHead(401).end();
@@ -61,9 +47,10 @@ const capture = createServer(async (request, response) => {
     const reference = payload.from_email;
     assert.match(reference, /^fl-[a-f0-9]{56}@receipt\.test$/);
     const message = decode(JSON.parse(await readFile('/fixture/' + reference + '.json', 'utf8')));
-    assertWorkerCapture(payload, message, reference);
-    await writeFile('/fixture/' + reference + '.accepted', 'accepted');
-    acceptedCalls.push(message.to);
+    reviewedListmonkMessage(payload, message);
+    await storeOnce('/fixture/' + reference + '.callback', JSON.stringify(payload));
+    // Listmonk 6.2.0 requires a 200 acknowledgment for storing the callback.
+    // Provider acceptance is recorded separately after the SDK receipt.
     response.writeHead(200).end();
   } catch {
     response.writeHead(422).end();
@@ -104,6 +91,7 @@ try {
     session,
     templateId,
     async reserve(reference, envelope) {
+      references.set(envelope.operationKey, reference);
       const expected = {
         ...envelope,
         images: envelope.images.map((image) => ({ ...image, bytes: image.bytes.toString('base64') })),
@@ -140,6 +128,30 @@ try {
         const state = await provider.submit(decode(request.message));
         // Drop only the worker-facing acknowledgment, after Listmonk has been contacted.
         reply(request.loseAcknowledgment ? 'unknown' : state);
+        break;
+      }
+      case 'callback': {
+        const reference = references.get(request.operationKey);
+        assert(reference, 'Unknown operation');
+        try {
+          reply(JSON.parse(await readFile('/fixture/' + reference + '.callback', 'utf8')));
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+          reply(null);
+        }
+        break;
+      }
+      case 'acknowledge': {
+        const reference = references.get(request.operationKey);
+        assert(reference && request.providerId === 'offline-ses-' + request.operationKey);
+        const message = decode(JSON.parse(await readFile('/fixture/' + reference + '.json', 'utf8')));
+        reviewedListmonkMessage(
+          JSON.parse(await readFile('/fixture/' + reference + '.callback', 'utf8')),
+          message,
+        );
+        if ((await provider.lookup(request.operationKey)) !== 'accepted') acceptedCalls.push(message.to);
+        await storeOnce('/fixture/' + reference + '.accepted', 'accepted');
+        reply(true);
         break;
       }
       case 'lookup':
