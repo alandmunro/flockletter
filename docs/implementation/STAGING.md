@@ -1,10 +1,10 @@
 # Staging setup and acceptance
 
-The Flockletter staging web service runs in the existing Render workspace, Oregon region. It uses an always-on single instance for scheduled staging work and the implementation branch with automatic deployment off. Its Clerk development application, staging database and release secrets belong to Flockletter.
+The Flockletter staging web service runs in the existing Render workspace, Oregon region. It uses Render’s Free web compute plan and deploys manually from the implementation branch. Its Clerk development application, staging database and release secrets belong to Flockletter.
 
 The authenticated workspace is deployed at the [staging hostname](https://flockletter.frostyflamingosoftware.com). The service uses its dedicated Clerk development application and restricted runtime connection. Render monitors `/readyz` for database readiness. [Render service](https://dashboard.render.com/web/srv-dbn5lb6gekts738v63ag) · [Verification record](VERIFICATION.md)
 
-The [staging campaign pilot](CAMPAIGN_PILOT.md) and [workspace workflows](WORKSPACE_OPERATIONS.md) extend the original foundation checks below. The web process polls the explicitly bound synthetic brand for both capture and provider rehearsals. The same provider queue can run in a separate process with `npm run delivery:worker`. Keep one always-on process for scheduled work. External delivery and live checkout remain disabled.
+The [staging campaign pilot](CAMPAIGN_PILOT.md) and [workspace workflows](WORKSPACE_OPERATIONS.md) extend the original foundation checks below. The web process polls the explicitly bound synthetic brand for both capture and provider rehearsals. Approved schedules persist in PostgreSQL while the web service sleeps. If a rehearsal comes due during that time, opening staging wakes the service and its worker processes the overdue run. External delivery and live checkout remain disabled. [Render Free instance behavior](https://render.com/docs/free#spinning-down-on-idle)
 
 ## Service configuration
 
