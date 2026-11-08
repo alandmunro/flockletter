@@ -8,6 +8,8 @@ The owner has selected open self-service signup, included delivery, three tiers,
 
 ## Product outcomes
 
+The later D-044 authorizes Flockletter production and staging code parity. It supersedes the earlier staging-only deployment scope above; provider activation, policy decisions and live verification remain separate requirements. See the [release checklist](implementation/RELEASE_PARITY.md).
+
 The first release should let a legitimate business create an account, understand its plan and limits, verify its sender, import an authorized audience, prepare and preview a campaign, and send or schedule it without routine operator assistance. Customers should be able to understand delivery results and manage billing themselves.
 
 FFA should use these same customer capabilities through its administration UI and MCP. A successful product announcement must not change its commerce settings, product photography or fulfillment behavior. Other customers must receive equivalent isolation and control.
