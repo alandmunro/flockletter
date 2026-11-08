@@ -12,7 +12,8 @@ import { templates, fromTemplateContent, fromProductContent } from '../shared/au
 import { invalidateStudioReviews, approveRehearsal, cancelRehearsal, capturedMessage, listRehearsals, processDue, recipientOutcomes, rehearsalReport, reviewRehearsal, type CheckOwner } from './campaign/rehearsal.js';
 import { localFeedbackBinding } from './campaign/feedback.js';
 import { sesScope,type SesRuntime } from './campaign/ses-runtime.js';
-import type { RehearsalTransport } from '../shared/rehearsal.js';
+import type {PrivateListmonk} from './campaign/private-listmonk.js';
+import {isListmonkMethod,requiresSimulationGrant,type RehearsalTransport} from '../shared/rehearsal.js';
 import { DeliveryWorker } from './campaign/delivery-worker.js';
 import { practiceUsage, utcPeriod, workspaceAccess } from './campaign/access.js';
 import { previewImport } from './subscribers/import-preview.js';
@@ -75,16 +76,19 @@ export class CommandService {
   constructor(readonly db: Database, readonly intake = new SubscriberIntake(db),
     readonly checkOwner:CheckOwner = async()=>{throw new AppError(503,'membership_unavailable','Current workspace membership could not be verified.');},
     readonly resolveTxt:LookupTxt=lookupTxt,readonly billing=new SandboxBilling(db),readonly team:ClerkTeam=unavailableTeam,
-    private readonly providerScope?:(workspace:string,brand:string)=>boolean, readonly ses?:SesRuntime) {}
+    private readonly providerScope?:(workspace:string,brand:string)=>boolean, readonly ses?:SesRuntime,readonly listmonk?:PrivateListmonk) {}
   private async methods(sql:Sql,w:string,b:string,actor:Actor):Promise<RehearsalTransport[]> {
     const methods:RehearsalTransport[]=['capture'];
     if(this.providerScope && !this.providerScope(w,b)) return methods;
     methods.push('provider_test');
     if(actor.kind==='connection' && !actor.scopes.includes('campaign:simulate')) return methods;
     methods.push('feedback_test');
+    if(this.listmonk?.binding(w,b,'listmonk_test')) methods.push('listmonk_test');
     const candidate=sesScope(this.ses,w,b);
-    if(candidate?.port && (await sql.query("SELECT 1 FROM sender_domains WHERE domain=$1 AND verified_at > now()-interval '24 hours'",[candidate.route.from.split('@')[1]])).rowCount)
+    if(candidate?.port && (await sql.query("SELECT 1 FROM sender_domains WHERE domain=$1 AND verified_at > now()-interval '24 hours'",[candidate.route.from.split('@')[1]])).rowCount){
       methods.push('ses_simulator');
+      if(this.listmonk?.binding(w,b,'listmonk_ses')) methods.push('listmonk_ses');
+    }
     return methods;
   }
   async execute(name: CommandName, raw: unknown, actor: Actor): Promise<unknown> {
@@ -123,7 +127,7 @@ export class CommandService {
           if('id' in input) await checkPracticeScope(sql,actor,input.id);
           if(actor.kind==='connection' && !actor.scopes.includes('campaign:simulate') && name!=='rehearsal.cancel'){
             const method='transport' in input?input.transport:'id' in input?(await sql.query('SELECT transport FROM campaign_rehearsals WHERE id=$1',[input.id])).rows[0]?.transport:undefined;
-            requireCondition(method!=='feedback_test' && method!=='ses_simulator',403,'scope_required','This method requires a separate campaign simulator grant.');
+            requireCondition(!requiresSimulationGrant(method),403,'scope_required','This method requires a separate campaign simulator grant.');
           }
         }
         if (name.startsWith('segment.') && 'brandId' in input) {
@@ -165,7 +169,7 @@ export class CommandService {
     });
     // The saved command receipt requests processing. Claims must commit independently
     // of that receipt and before any provider contact. Replaying the command only reads its receipt.
-    if (wake) await new DeliveryWorker(this.db,this.checkOwner,undefined,this.ses).tick(actor.workspaceId,wake.brandId,wake.id);
+    if (wake) await new DeliveryWorker(this.db,this.checkOwner,undefined,this.ses,this.listmonk).tick(actor.workspaceId,wake.brandId,wake.id);
     return response;
   }
   private async perform(name: CommandName, raw: unknown, actor: Actor, sql: Sql): Promise<unknown> {
@@ -254,7 +258,8 @@ export class CommandService {
         await audienceBrand(sql,actor,input.brandId);
         requireCondition((await this.methods(sql,w,input.brandId,actor)).includes(input.transport??'capture'),422,'worker_not_configured','This rehearsal method is not configured for this brand.');
         const route=input.transport==='ses_simulator'?sesScope(this.ses,w,input.brandId)?.route:undefined;
-        const binding=input.transport==='feedback_test'?localFeedbackBinding:route?.fingerprint??null;
+        const binding=isListmonkMethod(input.transport)?this.listmonk?.binding(w,input.brandId,input.transport)??null:
+          input.transport==='feedback_test'?localFeedbackBinding:route?.fingerprint??null;
         return reviewRehearsal(sql,actor,draft,input.expectedVersion,input.audience,input.dueAt,input.segmentId,input.transport,binding);
       }
       case 'rehearsal.approve': {

@@ -2,7 +2,7 @@
 
 ## Current authorization
 
-The owner requested all independently buildable work after the staging assessment. D-034 covers the staging campaign pilot, sender ownership checks, protected complimentary grants, customer administration, Stripe sandbox integration and independent engine tests. D-037 adds a separate, explicitly approved synthetic provider rehearsal and a real Listmonk integration in isolation. Hosted staging uses a receipt store with no external sending. Preserve old capture approvals; unresolved provider outcomes require lookup, never a speculative resend. [Pilot operation](docs/implementation/CAMPAIGN_PILOT.md)
+The owner requested all independently buildable work after the staging assessment. D-034 covers the staging campaign pilot, sender ownership checks, protected complimentary grants, customer administration, Stripe sandbox integration and independent engine tests. D-037 adds a separate, explicitly approved synthetic provider rehearsal and a real Listmonk integration in isolation. The original staging provider stores its receipts locally. Preserve old capture approvals; unresolved provider outcomes require lookup, never a speculative resend. [Pilot operation](docs/implementation/CAMPAIGN_PILOT.md)
 
 Under the owner's direction to continue building, D-033 adds an owner audience directory and consent history, durable brand-specific opt-out and an optional aggregate-only assistant capability. Use the existing Flockletter subscriber records and verify populated flows with disposable addresses. [Audience workflow and verification](docs/implementation/AUDIENCE.md)
 
@@ -16,7 +16,9 @@ D-035 covers brand-specific member preparation, static group capture, support dr
 
 D-036 authorizes the staging Newsletter Studio. Preserve authored content on unsupported input, original brand assets, and review of each saved revision. Keep the editor’s distributed notice inventory synchronized with dependency changes. [Editor notices](docs/implementation/STUDIO_LICENSES.md)
 
-D-038 adds a staging-only choice between local feedback and an optional operator-bound SES mailbox simulator. Keep older rehearsal approvals on their selected method. Only the separately reviewed AWS method can target AWS-owned simulator addresses. Protect its credentials and frozen sender configuration. Report AWS contract checks independently of live AWS evidence and the isolated Listmonk exercise. [Campaign feedback](docs/implementation/CAMPAIGN_FEEDBACK.md)
+D-038 adds a staging-only choice between local feedback and an optional operator-bound SES mailbox simulator. Keep older rehearsal approvals on their selected method. AWS simulator access requires an explicitly reviewed AWS method. Protect its credentials and frozen sender configuration. Report AWS contract checks independently of live AWS evidence and the isolated Listmonk exercise. [Campaign feedback](docs/implementation/CAMPAIGN_FEEDBACK.md)
+
+D-039 adds two explicitly reviewed private Listmonk methods for the bound staging brand. Use Flockletter’s protected database for operation state and receipts. The engine and its disposable database use loopback. The local method stays inside Flockletter. The optional SES method can submit only to AWS-owned simulator mailboxes. [Private Listmonk operation](docs/implementation/PRIVATE_LISTMONK.md)
 
 ## Product and public repository boundaries
 

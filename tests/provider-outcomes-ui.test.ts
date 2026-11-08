@@ -39,4 +39,18 @@ describe('provider submission and later delivery feedback', () => {
       expect(html).toMatch(/brand/i);
     }
   });
+
+  it('keeps Listmonk preparation and a queued handoff distinct from a provider attempt', () => {
+    const waiting: RecipientOutcome = { ...accepted, state: 'submitting', attempts: 0 };
+    const rendering = render({ ...waiting, reason: 'awaiting_engine_callback' });
+    expect(rendering).toContain('Preparing in Listmonk');
+    expect(rendering).toContain('0 provider attempts');
+    const ready = render({ ...waiting, reason: 'awaiting_provider' });
+    expect(ready).toContain('Queued for the test provider');
+    expect(ready).toContain('0 provider attempts');
+    const submitted = render({ ...waiting, attempts: 1, reason: 'awaiting_provider' });
+    expect(submitted).toContain('Submitting');
+    expect(submitted).toContain('1 attempt');
+    expect(submitted).not.toContain('Queued for the test provider');
+  });
 });

@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
+COPY scripts/prepare-listmonk.mjs ./scripts/prepare-listmonk.mjs
 COPY src ./src
 COPY public ./public
 COPY index.html vite.config.ts tsconfig.json tsconfig.server.json ./

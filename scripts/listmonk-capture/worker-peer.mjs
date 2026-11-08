@@ -7,8 +7,8 @@ import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 import { stdin, stdout, env } from 'node:process';
 import { URLSearchParams } from 'node:url';
-import { reviewedListmonkMessage } from './listmonk-callback.ts';
-import { ListmonkTestProvider } from './listmonk-test-provider.ts';
+import { reviewedListmonkMessage } from './listmonk-callback.js';
+import { ListmonkTestProvider } from './listmonk-test-provider.js';
 
 const { fetch, AbortSignal } = globalThis;
 const engine = 'http://engine:9000';

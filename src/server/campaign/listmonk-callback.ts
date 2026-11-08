@@ -1,6 +1,45 @@
 import { createHash } from 'node:crypto';
 import type { DeliveryEnvelope } from './delivery-provider.js';
 
+export function listmonkReference(workspace: string, brand: string, operation: string) {
+  return (
+    'fl-' +
+    createHash('sha224')
+      .update(JSON.stringify([workspace, brand, operation]))
+      .digest('hex') +
+    '@receipt.test'
+  );
+}
+
+// Listmonk renders the reviewed strings as data so braces in an author's content remain literal.
+export function listmonkTxForm(
+  message: DeliveryEnvelope,
+  reference: string,
+  templateId: number,
+  messenger: string,
+  external = false,
+) {
+  const form = new FormData();
+  form.set(
+    'data',
+    JSON.stringify({
+      subscriber_email: message.to,
+      ...(external ? { subscriber_mode: 'external' } : {}),
+      template_id: templateId,
+      messenger,
+      content_type: 'html',
+      from_email: reference,
+      subject: '{{ .Tx.Data.subject }}',
+      altbody: '{{ .Tx.Data.text }}',
+      data: { subject: message.subject, text: message.text, html: message.html },
+    }),
+  );
+  for (const image of message.images) {
+    form.append('file', new Blob([new Uint8Array(image.bytes)], { type: image.mime }), image.name);
+  }
+  return form;
+}
+
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw Error('Invalid private messenger callback.');
@@ -10,12 +49,7 @@ function object(value: unknown): Record<string, unknown> {
 // supplies those fields and the provider routing; a callback cannot introduce mail headers or recipients.
 export function reviewedListmonkMessage(raw: unknown, reviewed: DeliveryEnvelope): DeliveryEnvelope {
   const p = object(raw);
-  const reference =
-    'fl-' +
-    createHash('sha224')
-      .update(JSON.stringify([reviewed.workspaceId, reviewed.brandId, reviewed.operationKey]))
-      .digest('hex') +
-    '@receipt.test';
+  const reference = listmonkReference(reviewed.workspaceId, reviewed.brandId, reviewed.operationKey);
   if (
     p.from_email !== reference ||
     p.subject !== reviewed.subject ||

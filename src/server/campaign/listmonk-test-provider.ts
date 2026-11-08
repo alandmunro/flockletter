@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import {listmonkReference,listmonkTxForm} from './listmonk-callback.js';
 import type { DeliveryEnvelope, DeliveryOutcome, DeliveryProvider } from './delivery-provider.js';
 
 // The disposable engine runs on an internal Docker network. No application input selects an endpoint,
@@ -30,8 +31,7 @@ export class ListmonkTestProvider implements DeliveryProvider {
   // Listmonk's transactional postback omits custom headers. The synthetic sender carries the
   // operation reference across this one isolated hop without altering the reviewed subject or HTML.
   private reference(key: string) {
-    const scope = JSON.stringify([this.fixture.workspaceId, this.fixture.brandId, key]);
-    return 'fl-' + createHash('sha224').update(scope).digest('hex') + '@receipt.test';
+    return listmonkReference(this.fixture.workspaceId,this.fixture.brandId,key);
   }
 
   async lookup(operationKey: string): Promise<DeliveryOutcome> {
@@ -59,23 +59,7 @@ export class ListmonkTestProvider implements DeliveryProvider {
     try {
       // A lost response must never initiate another Listmonk POST for the same recipient.
       if (!(await this.fixture.reserve(reference, message))) return this.lookup(message.operationKey);
-      const body = new FormData();
-      body.set(
-        'data',
-        JSON.stringify({
-          subscriber_email: message.to,
-          template_id: this.fixture.templateId,
-          messenger: 'fixture',
-          content_type: 'html',
-          from_email: reference,
-          subject: '{{ .Tx.Data.subject }}',
-          altbody: '{{ .Tx.Data.text }}',
-          data: { subject: message.subject, text: message.text, html: message.html },
-        }),
-      );
-      for (const image of message.images) {
-        body.append('file', new Blob([new Uint8Array(image.bytes)], { type: image.mime }), image.name);
-      }
+      const body=listmonkTxForm(message,reference,this.fixture.templateId,'fixture');
       const response = await fetch(engineTx, {
         method: 'POST',
         body,

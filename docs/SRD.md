@@ -174,6 +174,8 @@ D-038 implements the staging portion of FL-CAM-007 and FL-DEL-004. A newly revie
 
 **FL-DEL-005 — Transport-independent enforcement.** All actual sends SHALL pass through the approved usage, suppression and provider controls, including engine retries and direct API paths. Before implementation, validate where Listmonk can enforce these checks; treat missing adapter/hooks as a design gap requiring review. Do not expose an unguarded engine send endpoint behind a billing-aware dashboard.
 
+D-039 covers the staging portion of FL-DEL-005 and FL-OPS-003. The private Listmonk method renders the reviewed message locally. The separately approved SES method can deliver it to AWS-owned simulator mailboxes. Flockletter records which operation was approved, rechecks eligibility at submission, and uses its saved provider receipt to recover after a restart. [Private Listmonk rehearsals](implementation/PRIVATE_LISTMONK.md)
+
 ## API MCP and FFA integration
 
 **FL-API-001 — Shared commands.** UI, HTTP API and MCP SHALL call canonical domain operations with the same validation, permissions, state transitions, operation keys and audit records. No transport SHALL grant broader access or permit side effects through a nominally read-only command.

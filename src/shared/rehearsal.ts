@@ -1,7 +1,10 @@
 export const rehearsalAudiences = ['test', 'confirmed'] as const;
 export type RehearsalAudience = (typeof rehearsalAudiences)[number];
-export const rehearsalTransports = ['capture', 'provider_test', 'feedback_test', 'ses_simulator'] as const;
+export const rehearsalTransports = ['capture', 'provider_test', 'feedback_test', 'ses_simulator', 'listmonk_test', 'listmonk_ses'] as const;
 export type RehearsalTransport = (typeof rehearsalTransports)[number];
+export type ListmonkMethod = 'listmonk_test' | 'listmonk_ses';
+export const isListmonkMethod = (value:unknown):value is ListmonkMethod => value === 'listmonk_test' || value === 'listmonk_ses';
+export const requiresSimulationGrant = (value:unknown) => value === 'feedback_test' || value === 'ses_simulator' || isListmonkMethod(value);
 export type CampaignFeedbackKind = 'delivered' | 'temporary_bounce' | 'permanent_bounce' | 'complaint';
 export type RecipientOutcome = {
   id: string;

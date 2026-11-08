@@ -1819,7 +1819,9 @@
                       "capture",
                       "provider_test",
                       "feedback_test",
-                      "ses_simulator"
+                      "ses_simulator",
+                      "listmonk_test",
+                      "listmonk_ses"
                     ]
                   },
                   "segmentId": {
@@ -1879,7 +1881,7 @@
     "/api/v1/commands/rehearsal.approve": {
       "post": {
         "operationId": "rehearsal_approve",
-        "summary": "Queue only the reviewed method. Local rehearsals stay inside Flockletter; an explicitly reviewed SES test can reach only AWS simulator addresses.",
+        "summary": "Queue only the reviewed method. Local and private Listmonk rehearsals stay inside Flockletter. An explicitly reviewed SES method can reach only AWS simulator addresses.",
         "security": [
           {
             "bearerAuth": []
@@ -2244,7 +2246,7 @@
     "/api/v1/commands/rehearsal.outcomes": {
       "post": {
         "operationId": "rehearsal_outcomes",
-        "summary": "Read submission attempts and reported delivery, bounce or complaint for each synthetic recipient. An uncertain result requires provider reconciliation before any new submission.",
+        "summary": "Read submission attempts, private-renderer progress and reported delivery, bounce or complaint for each synthetic recipient. An uncertain result requires provider reconciliation before any new submission.",
         "security": [
           {
             "bearerAuth": []
