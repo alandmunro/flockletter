@@ -88,3 +88,8 @@ The worker integration suite uses disposable PostgreSQL, HTTP and the MCP SDK. I
 The same 10 worker integration cases and 2 scheduler cases passed on the Flockletter Render staging host in an isolated database with the web service’s environment credentials removed. GitHub also ran the [pinned Listmonk container](https://github.com/alandmunro/flockletter/actions/runs/42432727774/job/128584934927) and the [restore drill](https://github.com/alandmunro/flockletter/actions/runs/42432727783/job/128584935114).
 
 Local Qwen drafted the dashboard outcome display, recording-provider scaffold and messenger assertions. Chat corrected the attempt count for skipped recipients, accessibility labels, fixture assumptions and MIME checksum validation; it designed the durable claim/reconciliation, reviewed the implementation and ran the staging checks. No token or cost attribution is estimated.
+# November 8 staging verification
+
+[PR 19](https://github.com/alandmunro/flockletter/pull/19) passed the Linux checks, private Listmonk exercise and isolated database restore. Commit `2342a06` deployed to the existing free staging web service. Both staging origins reported healthy, with external campaign sending disabled.
+
+In the signed-in verification workspace, a three-row CSV produced one new pending contact, one duplicate and one skipped address outside the reserved test domain. Opening the new contact showed its CSV row and no recorded subscriber consent. The Team screen read one member and zero invitations from staging Clerk. The Workspace panel calculated the Starter comparison and identified the missing SES binding and credentials while reporting the staging worker ready. This check did not send mail, start a Stripe trial or enroll a real subscriber.
