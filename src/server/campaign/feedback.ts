@@ -15,7 +15,7 @@ type FeedbackInput = {
   operation: string;
   eventId: string;
   messageId: string;
-  transport: 'feedback_test' | 'ses_simulator';
+  transport: 'feedback_test' | 'ses_simulator' | 'listmonk_test' | 'listmonk_ses';
   binding: string;
   kind: CampaignFeedbackKind;
   destination: string;
@@ -54,7 +54,8 @@ export async function recordCampaignFeedback(sql: Sql, input: FeedbackInput) {
     input.messageId.length > 256
   )
     throw unmapped();
-  if (input.transport === 'feedback_test' && input.messageId !== 'local-' + input.operation) throw unmapped();
+  const local = input.transport === 'feedback_test' || input.transport === 'listmonk_test';
+  if (local && input.messageId !== 'local-' + input.operation) throw unmapped();
   await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [input.workspace]);
   await sql.query('SELECT enabled FROM subscriber_intake_settings FOR UPDATE');
   const p = (
@@ -74,7 +75,7 @@ export async function recordCampaignFeedback(sql: Sql, input: FeedbackInput) {
   if (!p) throw unmapped();
   // Compare to the reviewed address digest. Never use an event-supplied address to find a contact.
   const alias =
-    input.transport === 'feedback_test'
+    local
       ? input.destination
       : [practiceMailbox, 'bounce@delivery.test', 'complaint@delivery.test'].find(
           (v) => simulatorDestination(v) === input.destination,

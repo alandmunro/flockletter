@@ -17,6 +17,7 @@
   {"name":"workspace_access_events","scope":"workspace","permissions":["SELECT"]},
   {"name":"campaign_rehearsals","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"rehearsal_recipients","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
+  {"name":"listmonk_handoffs","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"campaign_provider_receipts","scope":"brand","permissions":["SELECT","INSERT"]},
   {"name":"campaign_provider_events","scope":"brand","permissions":["SELECT","INSERT"]},
   {"name":"delivery_test_receipts","scope":"brand","permissions":["SELECT","INSERT"]},

@@ -15,6 +15,10 @@ const reasonText: Record<string, string> = {
   image_unavailable: 'An approved image could not be verified.',
   simulator_unavailable:
     'The approved Amazon SES simulator configuration is no longer available for this brand.',
+  engine_unavailable: 'The private Listmonk test is unavailable for this brand.',
+  engine_render_failed: 'Listmonk could not prepare the reviewed message.',
+  awaiting_engine_callback: 'Waiting for Listmonk to finish preparing the message.',
+  awaiting_provider: 'Waiting for the test provider to confirm the submission.',
   access_changed: 'The workspace’s access changed.',
   draft_changed: 'The saved draft changed after review.',
   cancelled_by_owner: 'The rehearsal was cancelled.',
@@ -29,6 +33,10 @@ const statusText: Record<RecipientOutcome['state'], string> = {
   excluded: 'Skipped',
   cancelled: 'Cancelled',
   captured: 'Captured',
+};
+const preparingText: Record<string, string> = {
+  awaiting_engine_callback: 'Preparing in Listmonk',
+  awaiting_provider: 'Queued for the test provider',
 };
 
 const feedbackText: Record<NonNullable<RecipientOutcome['feedback']>, string> = {
@@ -45,16 +53,24 @@ export function RecipientList({ recipients }: { recipients: readonly RecipientOu
   return (
     <ul aria-label="Recipient outcomes" style={{ overflowWrap: 'anywhere' }}>
       {recipients.map((recipient) => {
-        const reason = recipient.state === 'uncertain' ? 'provider_unknown' : recipient.reason;
+        const reason =
+          recipient.state === 'uncertain' && !Object.hasOwn(reasonText, recipient.reason ?? '')
+            ? 'provider_unknown'
+            : recipient.reason;
+        const preparing =
+          recipient.state === 'submitting' && recipient.attempts === 0
+            ? preparingText[reason ?? '']
+            : undefined;
         return (
           <li key={recipient.id}>
-            <strong>{statusText[recipient.state]}</strong> · {recipient.attempts}{' '}
+            <strong>{preparing ?? statusText[recipient.state]}</strong> · {recipient.attempts}{' '}
+            {preparing && 'provider '}
             {recipient.attempts === 1 ? 'attempt' : 'attempts'}
             {recipient.feedback && <p className="help">{feedbackText[recipient.feedback]}</p>}
             <p className="help">
               Recipient ID <code>{recipient.id}</code>
             </p>
-            {reason && reasonText[reason] && <p className="help">{reasonText[reason]}</p>}
+            {!preparing && reason && reasonText[reason] && <p className="help">{reasonText[reason]}</p>}
           </li>
         );
       })}
@@ -71,7 +87,7 @@ export function ProviderOutcomes({
   api: Api;
   brandId: string;
   rehearsalId: string;
-  revision: number;
+  revision: number | string;
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);

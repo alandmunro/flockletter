@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Campaign, CommandName } from '../shared/contracts.js';
 import {
+  isListmonkMethod,
   practiceMailbox,
   type Rehearsal,
   type RehearsalAudience,
@@ -20,10 +21,15 @@ const reasonText: Record<string, string> = {
   draft_changed: 'The saved draft changed.',
   simulator_unavailable:
     'The approved Amazon SES simulator configuration is no longer available for this brand.',
+  engine_unavailable: 'The private Listmonk test is unavailable for this brand.',
+  engine_render_failed: 'Listmonk could not prepare the reviewed message.',
   cancelled_by_owner: 'Cancelled by a workspace owner or authorized connection.',
 };
 type Message = { subject: string; text: string; html: string; mailbox: string };
-const methodText: Record<RehearsalTransport, { label: string; action: string; help: string }> = {
+const methodText: Record<
+  RehearsalTransport,
+  { label: string; action: string; help: string; audienceGuide?: 'feedback' | 'ses' }
+> = {
   capture: {
     label: 'Flockletter capture',
     action: 'capture',
@@ -38,11 +44,25 @@ const methodText: Record<RehearsalTransport, { label: string; action: string; he
     label: 'Local feedback test',
     action: 'local feedback test',
     help: 'Flockletter simulates delivery and feedback locally.',
+    audienceGuide: 'feedback',
   },
   ses_simulator: {
     label: 'Amazon SES mailbox simulator',
     action: 'SES simulator test',
     help: 'Approving this test submits mail to Amazon SES using only AWS simulator addresses. Customer inboxes receive no mail.',
+    audienceGuide: 'ses',
+  },
+  listmonk_test: {
+    label: 'Private Listmonk test',
+    action: 'private Listmonk test',
+    help: 'The message stays inside Flockletter. Listmonk prepares it for a simulated delivery.',
+    audienceGuide: 'feedback',
+  },
+  listmonk_ses: {
+    label: 'Listmonk with Amazon SES simulator',
+    action: 'Listmonk SES simulator test',
+    help: 'Listmonk prepares the reviewed message. Approving this test lets Flockletter send it only to AWS-owned simulator mailboxes.',
+    audienceGuide: 'ses',
   },
 };
 type AvailableMethods = { methods: RehearsalTransport[] };
@@ -53,6 +73,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
     method: 'capture',
   });
   const transport = choice.brandId === draft.brandId ? choice.method : 'capture';
+  const audienceGuide = methodText[transport].audienceGuide;
   const [directory, setDirectory] = useState<(AvailableMethods & { brandId: string; error?: string }) | null>(
     null,
   );
@@ -69,11 +90,15 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
   );
   const [scheduled, setScheduled] = useState(false);
   const scheduleTime = useRef<HTMLInputElement>(null);
-  const [items, setItems] = useState<Rehearsal[]>([]);
+  const [listed, setListed] = useState<{ brandId: string; campaignId: string; rows: Rehearsal[] } | null>(
+    null,
+  );
+  const items = listed?.brandId === draft.brandId && listed.campaignId === draft.id ? listed.rows : [];
   const [message, setMessage] = useState<Message | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [revision, refresh] = useState(0);
+  const [reportRevision, updateReports] = useState(0);
   const keys = useRef(new Map<string, string>());
   useEffect(() => {
     setChoice({ brandId: draft.brandId, method: 'capture' });
@@ -113,16 +138,45 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
   }, [api, audience, draft.brandId, revision]);
   useEffect(() => {
     let current = true;
-    api
-      .call<Rehearsal[]>('rehearsal.list', { brandId: draft.brandId, campaignId: draft.id })
-      .then((value) => {
-        if (current) setItems(value);
-      })
-      .catch((e) => {
-        if (current) setError(showError(e));
-      });
+    let timer: number | undefined;
+    let delay = 3000;
+    const deadline = Date.now() + 120_000;
+    function scheduleReport() {
+      if (Date.now() + delay > deadline) return;
+      timer = window.setTimeout(() => void loadReports(true), delay);
+      delay = Math.min(delay * 2, 12_000);
+    }
+    async function loadReports(follow: boolean) {
+      if (!current || (follow && Date.now() >= deadline)) return;
+      if (follow && document.visibilityState !== 'visible') {
+        scheduleReport();
+        return;
+      }
+      try {
+        const rows = await api.call<Rehearsal[]>('rehearsal.list', {
+          brandId: draft.brandId,
+          campaignId: draft.id,
+        });
+        if (!current) return;
+        setListed({ brandId: draft.brandId, campaignId: draft.id, rows });
+        if (follow) updateReports((value) => value + 1);
+        if (
+          rows.some(
+            (row) =>
+              isListmonkMethod(row.transport) &&
+              row.state === 'queued' &&
+              Date.parse(row.dueAt) <= Date.now(),
+          )
+        )
+          scheduleReport();
+      } catch (e) {
+        if (current && !follow) setError(showError(e));
+      }
+    }
+    void loadReports(false);
     return () => {
       current = false;
+      window.clearTimeout(timer);
     };
   }, [api, draft.brandId, draft.id, revision]);
   async function mutate<T>(name: CommandName, input: Record<string, unknown>) {
@@ -163,6 +217,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
             <label htmlFor="rehearsal-method">Rehearsal method</label>
             <select
               id="rehearsal-method"
+              aria-describedby="rehearsal-method-help"
               value={transport}
               onChange={(e) =>
                 setChoice({ brandId: draft.brandId, method: e.target.value as RehearsalTransport })
@@ -246,12 +301,12 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
             )}
           </div>
         </div>
-        <p className="help">
+        <p className="help" id="rehearsal-method-help">
           {audience === 'confirmed' &&
             'Requires a complimentary plan and up to 25 confirmed addresses on reserved test domains. '}
-          {audience === 'test' && transport !== 'ses_simulator' && `This rehearsal uses ${practiceMailbox}. `}
+          {audience === 'test' && audienceGuide !== 'ses' && `This rehearsal uses ${practiceMailbox}. `}
           {methodText[transport].help}
-          {transport === 'feedback_test' && audience === 'confirmed' && (
+          {audienceGuide === 'feedback' && audience === 'confirmed' && (
             <>
               {' '}
               Use <code>bounce@delivery.test</code> for a permanent bounce,{' '}
@@ -259,10 +314,10 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
               temporary bounce.
             </>
           )}
-          {transport === 'feedback_test' &&
+          {audienceGuide === 'feedback' &&
             audience === 'test' &&
             ' The fixed test mailbox simulates successful delivery.'}
-          {transport === 'ses_simulator' && audience === 'confirmed' && (
+          {audienceGuide === 'ses' && audience === 'confirmed' && (
             <>
               {' '}
               Select a group containing only <code>{practiceMailbox}</code>, <code>bounce@delivery.test</code>{' '}
@@ -301,6 +356,10 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
       {items.map((item) => {
         const method = item.transport ?? 'capture';
         const providerTest = method !== 'capture';
+        const uncertainAction = isListmonkMethod(method) ? 'Check rehearsal status' : 'Check provider status';
+        const recipientRevision = isListmonkMethod(method)
+          ? `${revision}/${item.state}/${item.state === 'queued' && Date.parse(item.dueAt) <= Date.now() ? reportRevision : 0}`
+          : revision;
         return (
           <article className="card" key={item.id}>
             <h3>
@@ -325,7 +384,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
               </p>
             )}
             {item.reason && <p>{reasonText[item.reason] ?? item.reason}</p>}
-            {method === 'ses_simulator' && item.state === 'reviewed' && (
+            {methodText[method].audienceGuide === 'ses' && item.state === 'reviewed' && (
               <p className="help">{methodText[method].help}</p>
             )}
             {providerTest && item.state === 'reviewed' && currentDirectory && !options.includes(method) && (
@@ -353,7 +412,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
                     })
                   }
                 >
-                  {providerTest && item.uncertain > 0 ? 'Check provider status' : 'Process if due'}
+                  {providerTest && item.uncertain > 0 ? uncertainAction : 'Process if due'}
                 </button>
               )}
               {['reviewed', 'queued'].includes(item.state) && (
@@ -386,7 +445,12 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
               )}
             </div>
             {providerTest && (
-              <ProviderOutcomes api={api} brandId={draft.brandId} rehearsalId={item.id} revision={revision} />
+              <ProviderOutcomes
+                api={api}
+                brandId={draft.brandId}
+                rehearsalId={item.id}
+                revision={recipientRevision}
+              />
             )}
           </article>
         );

@@ -4,6 +4,7 @@ import type { Database } from '../db.js';
 import { AppError } from '../errors.js';
 import type { CampaignFeedbackKind } from '../../shared/rehearsal.js';
 import type { SesRoute } from './ses-runtime.js';
+import { listmonkBinding } from './private-listmonk.js';
 import { recordCampaignFeedback } from './feedback.js';
 
 const failed = () =>
@@ -154,16 +155,33 @@ export class SesNotifications {
     }
     const event = decodeSesEvent(this.route, raw);
     if (!event) return;
-    await db.brand(this.route.workspaceId, this.route.brandId, (sql) =>
-      recordCampaignFeedback(sql, {
+    await db.brand(this.route.workspaceId, this.route.brandId, async (sql) => {
+      const owner = (
+        await sql.query<{ transport: string }>(
+          `SELECT r.transport FROM campaign_rehearsals r
+        JOIN rehearsal_recipients p ON (p.workspace_id,p.brand_id,p.rehearsal_id)=(r.workspace_id,r.brand_id,r.id)
+        WHERE p.id=$1 AND r.transport IN ('ses_simulator','listmonk_ses')`,
+          [event.operation],
+        )
+      ).rows[0];
+      if (!owner) throw unmapped();
+      const viaEngine = owner.transport === 'listmonk_ses';
+      await recordCampaignFeedback(sql, {
         workspace: this.route.workspaceId,
         brand: this.route.brandId,
-        binding: this.route.fingerprint,
-        transport: 'ses_simulator',
+        binding: viaEngine
+          ? listmonkBinding(
+              this.route.workspaceId,
+              this.route.brandId,
+              'listmonk_ses',
+              this.route.fingerprint,
+            )
+          : this.route.fingerprint,
+        transport: viaEngine ? 'listmonk_ses' : 'ses_simulator',
         eventId: msg.MessageId,
         ...event,
-      }),
-    );
+      });
+    });
   }
 }
 const emails = z.array(z.object({ emailAddress: z.email() })).length(1);

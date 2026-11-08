@@ -96,7 +96,7 @@ export async function suppress(
   if (evidenceId) {
     await recordTransition(sql, evidenceId, state === 'unsubscribed' ? 'unsubscribed' : 'suppressed', source);
   } else {
-    if ((source === 'campaign-feedback_test' || source === 'campaign-ses_simulator') &&
+    if ((source === 'campaign-feedback_test' || source === 'campaign-ses_simulator' || source === 'campaign-listmonk_test' || source === 'campaign-listmonk_ses') &&
         (state === 'hard_bounced' || state === 'complained')) {
       // A verified negative event is evidence of suppression, never evidence of original consent.
       await sql.query(`INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain)

@@ -1,14 +1,17 @@
 BEGIN;
+ALTER TABLE campaign_rehearsals ADD COLUMN IF NOT EXISTS provider_binding text;
+-- Migrations are replayable. A later migration can extend the review transports.
+DO $$ BEGIN IF to_regclass('public.listmonk_handoffs') IS NULL THEN
 ALTER TABLE campaign_rehearsals DROP CONSTRAINT IF EXISTS campaign_rehearsals_transport_check;
 ALTER TABLE campaign_rehearsals ADD CONSTRAINT campaign_rehearsals_transport_check
   CHECK(transport IN ('capture','provider_test','feedback_test','ses_simulator'));
-ALTER TABLE campaign_rehearsals ADD COLUMN IF NOT EXISTS provider_binding text;
 -- Old reviews cannot acquire new privileges when an operator changes configuration.
 ALTER TABLE campaign_rehearsals DROP CONSTRAINT IF EXISTS campaign_provider_binding_check;
 ALTER TABLE campaign_rehearsals ADD CONSTRAINT campaign_provider_binding_check CHECK(
   (transport IN ('capture','provider_test') AND provider_binding IS NULL) OR
   (transport='feedback_test' AND provider_binding IS NOT NULL AND provider_binding='local-feedback-v1') OR
   (transport='ses_simulator' AND provider_binding IS NOT NULL AND provider_binding ~ '^[a-f0-9]{64}$'));
+END IF; END $$;
 CREATE TABLE IF NOT EXISTS campaign_provider_receipts (
   workspace_id text NOT NULL, brand_id uuid NOT NULL, rehearsal_id uuid NOT NULL, operation_key uuid NOT NULL,
   provider_binding text NOT NULL, message_id text NOT NULL CHECK(length(message_id) BETWEEN 1 AND 256),

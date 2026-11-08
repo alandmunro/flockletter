@@ -5,7 +5,11 @@ describe('operator support drafts', () => {
     const rewrite = vi.fn(async (_facts: string) => 'Prepare your draft in Campaigns.');
     expect(await supportDraft('campaigns', rewrite)).toMatchObject({ kind: 'draft', automaticSend: false, draft: expect.stringContaining('This reply was drafted with AI assistance.') });
     expect(rewrite).toHaveBeenCalledTimes(1);
-    expect(rewrite.mock.calls[0]?.[0]).toContain('Open captured email');
+    const facts = rewrite.mock.calls[0]?.[0];
+    expect(facts).toContain('Open captured email');
+    expect(facts).toContain('Private Listmonk test stays inside Flockletter');
+    expect(facts).toContain('only to AWS-owned simulator mailboxes');
+    expect(facts).toContain('Approving Amazon SES mailbox simulator or Listmonk with Amazon SES simulator');
   });
   it('routes security, recovery, privacy, billing and unknown topics to a human without a model call', async () => {
     const rewrite = vi.fn(async (_facts: string) => 'unused');

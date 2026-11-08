@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decodeSesEvent, SesNotifications } from '../src/server/campaign/ses-notifications.js';
 import { parseSesRoute, type SesRoute } from '../src/server/campaign/ses-runtime.js';
+import { PrivateListmonk } from '../src/server/campaign/private-listmonk.js';
 import { CommandService } from '../src/server/service.js';
 import { emptyContent, type Campaign } from '../src/shared/contracts.js';
 import type { RecipientOutcome, Rehearsal } from '../src/shared/rehearsal.js';
@@ -284,95 +285,123 @@ describe('signed SES simulator notifications', () => {
     ).toThrow();
   });
 
-  it('resolves a lost SES acknowledgment by verified notification without another submission', async () => {
-    const workspace = await site.workspace();
-    try {
-      const route = makeRoute(workspace.workspaceId, workspace.brandId);
-      const send = vi.fn(async () => {
-        throw Error('Connection timed out after provider acceptance.');
-      });
-      const service = new CommandService(
-        site.db,
-        undefined,
-        site.identity.isOwner,
-        undefined,
-        undefined,
-        undefined,
-        (workspaceId, brandId) => workspaceId === route.workspaceId && brandId === route.brandId,
-        { route, port: { send } },
-      );
-      await site.db.brand(route.workspaceId, route.brandId, (sql) =>
-        sql.query(
-          'INSERT INTO sender_domains(workspace_id,brand_id,domain,challenge,checked_at,verified_at) VALUES($1,$2,$3,$4,now(),now())',
-          [route.workspaceId, route.brandId, domain, randomUUID()],
-        ),
-      );
-      const draft = await workspace.command<Campaign>('campaign.create', {
-        brandId: route.brandId,
-        operationKey: randomUUID(),
-        content: {
-          ...emptyContent(),
-          title: 'Signed SES test',
-          subject: 'A clear weekend',
-          fromName: 'Trail shop',
-          replyTo: 'info@example.test',
-          heading: 'Weekend forecast',
-          body: 'The trail is ready.',
-        },
-      });
-      const item = (await service.execute(
-        'rehearsal.review',
-        {
+  it.each(['ses_simulator', 'listmonk_ses'] as const)(
+    'reconciles a lost %s acknowledgment by signed notification without another submission',
+    async (method) => {
+      const workspace = await site.workspace();
+      try {
+        const route = makeRoute(workspace.workspaceId, workspace.brandId);
+        const send = vi.fn(async () => {
+          throw Error('Connection timed out after provider acceptance.');
+        });
+        const ses = { route, port: { send } };
+        const engine = new PrivateListmonk(
+          site.db,
+          site.identity.isOwner,
+          { workspace: route.workspaceId, brand: route.brandId },
+          {
+            async render(message, reference) {
+              await engine.receive({
+                from_email: reference,
+                subject: message.subject,
+                body: message.html,
+                content_type: 'html',
+                recipients: [{ email: message.to }],
+                attachments: [],
+              });
+            },
+          },
+          ses,
+        );
+        const service = new CommandService(
+          site.db,
+          undefined,
+          site.identity.isOwner,
+          undefined,
+          undefined,
+          undefined,
+          (workspaceId, brandId) => workspaceId === route.workspaceId && brandId === route.brandId,
+          ses,
+          engine,
+        );
+        await site.db.brand(route.workspaceId, route.brandId, (sql) =>
+          sql.query(
+            'INSERT INTO sender_domains(workspace_id,brand_id,domain,challenge,checked_at,verified_at) VALUES($1,$2,$3,$4,now(),now())',
+            [route.workspaceId, route.brandId, domain, randomUUID()],
+          ),
+        );
+        const draft = await workspace.command<Campaign>('campaign.create', {
           brandId: route.brandId,
-          campaignId: draft.id,
-          expectedVersion: draft.version,
-          audience: 'test',
-          transport: 'ses_simulator',
           operationKey: randomUUID(),
-        },
-        workspace.owner,
-      )) as Rehearsal;
-      const args = { brandId: route.brandId, id: item.id };
-      await service.execute('rehearsal.approve', { ...args, operationKey: randomUUID() }, workspace.owner);
-      const step = () =>
-        service.execute('rehearsal.process', { ...args, operationKey: randomUUID() }, workspace.owner);
-      await step();
-      await step();
-      const held = await workspace.command<{ recipients: RecipientOutcome[] }>('rehearsal.outcomes', args);
-      expect(held.recipients).toMatchObject([{ state: 'uncertain', attempts: 1 }]);
-      const operation = held.recipients[0]!.id;
-      expect(send).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({
-          Destination: { ToAddresses: [simulator] },
-          EmailTags: expect.arrayContaining([{ Name: 'fl_operation', Value: operation }]),
-        }),
-      );
-      const handler = new SesNotifications(route, async () => signer.certificate);
-      const event = delivery(route, operation);
-      const wrong = { ...event, mail: { ...event.mail, sendingAccountId: '000000000000' } };
-      await expect(handler.handle(site.db, body(signed(notification(route, wrong))))).rejects.toMatchObject({
-        code: 'feedback_unmapped',
-      });
-      expect(await workspace.command('rehearsal.report', args)).toMatchObject({ accepted: 0, uncertain: 1 });
-      const notificationBytes = body(signed(notification(route, event)));
-      await handler.handle(site.db, notificationBytes);
-      await handler.handle(site.db, notificationBytes);
-      await step();
-      expect(send).toHaveBeenCalledTimes(1);
-      expect(await workspace.command('rehearsal.report', args)).toMatchObject({
-        state: 'completed',
-        accepted: 1,
-        uncertain: 0,
-      });
-      expect(await workspace.tool('rehearsal_outcomes', args)).toMatchObject({
-        recipients: [{ id: operation, state: 'accepted', feedback: 'delivered', attempts: 1 }],
-      });
-      const events = await site.db.brand(route.workspaceId, route.brandId, (sql) =>
-        sql.query('SELECT event_id FROM campaign_provider_events WHERE operation_key=$1', [operation]),
-      );
-      expect(events.rowCount).toBe(1);
-    } finally {
-      await workspace.close();
-    }
-  });
+          content: {
+            ...emptyContent(),
+            title: 'Signed SES test',
+            subject: 'A clear weekend',
+            fromName: 'Trail shop',
+            replyTo: 'info@example.test',
+            heading: 'Weekend forecast',
+            body: 'The trail is ready.',
+          },
+        });
+        const item = (await service.execute(
+          'rehearsal.review',
+          {
+            brandId: route.brandId,
+            campaignId: draft.id,
+            expectedVersion: draft.version,
+            audience: 'test',
+            transport: method,
+            operationKey: randomUUID(),
+          },
+          workspace.owner,
+        )) as Rehearsal;
+        const args = { brandId: route.brandId, id: item.id };
+        await service.execute('rehearsal.approve', { ...args, operationKey: randomUUID() }, workspace.owner);
+        const step = () =>
+          service.execute('rehearsal.process', { ...args, operationKey: randomUUID() }, workspace.owner);
+        await step();
+        await step();
+        const held = await workspace.command<{ recipients: RecipientOutcome[] }>('rehearsal.outcomes', args);
+        expect(held.recipients).toMatchObject([{ state: 'uncertain', attempts: 1 }]);
+        const operation = held.recipients[0]!.id;
+        expect(send).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            Destination: { ToAddresses: [simulator] },
+            EmailTags: expect.arrayContaining([{ Name: 'fl_operation', Value: operation }]),
+          }),
+        );
+        const handler = new SesNotifications(route, async () => signer.certificate);
+        const event = delivery(route, operation);
+        const wrong = { ...event, mail: { ...event.mail, sendingAccountId: '000000000000' } };
+        await expect(handler.handle(site.db, body(signed(notification(route, wrong))))).rejects.toMatchObject(
+          {
+            code: 'feedback_unmapped',
+          },
+        );
+        expect(await workspace.command('rehearsal.report', args)).toMatchObject({
+          accepted: 0,
+          uncertain: 1,
+        });
+        const notificationBytes = body(signed(notification(route, event)));
+        await handler.handle(site.db, notificationBytes);
+        await handler.handle(site.db, notificationBytes);
+        await step();
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(await workspace.command('rehearsal.report', args)).toMatchObject({
+          state: 'completed',
+          accepted: 1,
+          uncertain: 0,
+        });
+        expect(await workspace.tool('rehearsal_outcomes', args)).toMatchObject({
+          recipients: [{ id: operation, state: 'accepted', feedback: 'delivered', attempts: 1 }],
+        });
+        const events = await site.db.brand(route.workspaceId, route.brandId, (sql) =>
+          sql.query('SELECT event_id FROM campaign_provider_events WHERE operation_key=$1', [operation]),
+        );
+        expect(events.rowCount).toBe(1);
+      } finally {
+        await workspace.close();
+      }
+    },
+  );
 });

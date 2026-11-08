@@ -212,7 +212,7 @@ export async function reviewRehearsal(
       'practice_audience',
       'A rehearsal needs between 1 and 25 confirmed contacts with reserved test addresses.',
     );
-    if(transport==='ses_simulator') requireCondition(hits.every(p=>simulatorDestination(p.email_normalized)),422,'simulator_audience','Choose a group containing only the fixed SES simulator test aliases.');
+    if(transport==='ses_simulator' || transport==='listmonk_ses') requireCondition(hits.every(p=>simulatorDestination(p.email_normalized)),422,'simulator_audience','Choose a group containing only the fixed SES simulator test aliases.');
     recipients = hits;
     selected = hits.length;
     excluded = hits[0]!.total - selected;
@@ -334,7 +334,10 @@ export async function finish(
   reason: string | null,
 ) {
   await sql.query(
-    "UPDATE rehearsal_recipients SET state='cancelled',reason=$2 WHERE rehearsal_id=$1 AND state='pending'",
+    `UPDATE rehearsal_recipients p SET state='cancelled',reason=$2,next_check_at=NULL WHERE rehearsal_id=$1
+      AND (state='pending' OR (state='submitting' AND EXISTS (
+        SELECT FROM listmonk_handoffs h WHERE (h.workspace_id,h.brand_id,h.rehearsal_id,h.operation_key)=(p.workspace_id,p.brand_id,p.rehearsal_id,p.id)
+        AND h.provider_claim IS NULL)))`,
     [id, reason],
   );
   await settleReservation(sql, id);
@@ -404,7 +407,7 @@ export async function submissionBlock(
           `SELECT id FROM connections WHERE id=$1 AND issuer_id=$2
     AND revoked_at IS NULL AND expires_at>now() AND $3::uuid=ANY(brand_ids) AND 'campaign:rehearse'=ANY(scopes) AND 'read'=ANY(scopes)
     AND ($4::text='test' OR 'audience:summary'=ANY(scopes))
-    AND ($5::text NOT IN ('feedback_test','ses_simulator') OR 'campaign:simulate'=ANY(scopes))`,
+    AND ($5::text NOT IN ('feedback_test','ses_simulator','listmonk_test','listmonk_ses') OR 'campaign:simulate'=ANY(scopes))`,
           [row.actor_id.slice(11), row.creator_id, brand, row.audience, row.transport],
         )
       ).rowCount

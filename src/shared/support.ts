@@ -53,7 +53,7 @@ export function supportAnswer(topic: SupportTopic) {
     case 'campaigns':
       return {
         title: 'Where did my rehearsal email go?',
-        text: 'Open Campaigns, choose the saved draft, and look under Campaign rehearsal. A completed rehearsal with a captured message has an Open captured email button. Rehearsals do not deliver external mail.',
+        text: 'In Campaigns, open the saved draft and find its rehearsal. Use Open captured email for a completed capture or Show recipient outcomes for a provider test. The Private Listmonk test stays inside Flockletter. Approving Amazon SES mailbox simulator or Listmonk with Amazon SES simulator can send the message only to AWS-owned simulator mailboxes.',
       };
     default:
       return null;

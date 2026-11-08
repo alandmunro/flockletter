@@ -1,20 +1,9 @@
-import { createHash } from 'node:crypto';
+import { deliveryBlock, finishIfDone, reviewedEnvelope } from './reviewed-delivery.js';
+import { PrivateListmonk } from './private-listmonk.js';
 import type { Database, Sql } from '../db.js';
 import type { RecipientOutcome } from '../../shared/rehearsal.js';
-import {
-  StagingReceiptProvider,
-  type DeliveryEnvelope,
-  type DeliveryOutcome,
-  type DeliveryProvider,
-} from './delivery-provider.js';
-import {
-  eligibleAddress,
-  finish,
-  rehearsalRow,
-  settleReservation,
-  submissionBlock,
-  type CheckOwner,
-} from './rehearsal.js';
+import { StagingReceiptProvider, type DeliveryOutcome, type DeliveryProvider } from './delivery-provider.js';
+import { eligibleAddress, finish, rehearsalRow, settleReservation, type CheckOwner } from './rehearsal.js';
 
 import {
   localFeedbackBinding,
@@ -37,6 +26,7 @@ export class DeliveryWorker {
     private isOwner: CheckOwner,
     private provider?: DeliveryProvider,
     private readonly ses?: SesRuntime,
+    private readonly listmonk?: PrivateListmonk,
   ) {}
 
   private scoped<T>(workspace: string, brand: string, run: (sql: Sql) => Promise<T>) {
@@ -69,7 +59,13 @@ export class DeliveryWorker {
       );
       return { id: row.id, rehearsal: row.rehearsal_id, attempts: row.attempts + Number(submit), submit };
     });
-    if (!work) return { processed: false };
+    if (!work) {
+      // Previously reviewed jobs retain a reconciliation path when the renderer is switched off.
+      const handler = this.listmonk?.owns(workspace, brand)
+        ? this.listmonk
+        : new PrivateListmonk(this.db, this.isOwner, { workspace, brand }, undefined, this.ses);
+      return handler.tick(workspace, brand, rehearsalId);
+    }
     await this.scoped(workspace, brand, async (sql) => {
       const row = await rehearsalRow(sql, work.rehearsal);
       const person = (
@@ -149,16 +145,7 @@ export class DeliveryWorker {
       }
       let outcome: DeliveryOutcome;
       if (work.submit) {
-        await sql.query('SELECT enabled FROM subscriber_intake_settings FOR UPDATE');
-        const authority =
-          row.state === 'queued'
-            ? await submissionBlock(sql, row, workspace, brand, this.isOwner)
-            : (row.reason ?? 'cancelled_by_owner');
-        const reserved = await sql.query(
-          "SELECT 1 FROM rehearsal_reservations WHERE rehearsal_id=$1 AND brand_id=$3 AND NOT settled AND (slots=1 OR $2::text='test') AND messages>=1 FOR UPDATE",
-          [row.id, row.audience, brand],
-        );
-        const blocked = authority ?? (reserved.rowCount ? null : 'reservation_unavailable');
+        const blocked = await deliveryBlock(sql, row, workspace, brand, this.isOwner);
         if (blocked) {
           await setRecipient(sql, work, 'cancelled', blocked, true);
           if (row.state === 'queued') await finish(sql, row.id, 'blocked', blocked);
@@ -171,22 +158,12 @@ export class DeliveryWorker {
           await finishIfDone(sql, row.id);
           return;
         }
-        const images = await originalImages(sql, brand, row.content.assetIds);
-        if (!images) {
+        const message = await reviewedEnvelope(sql, row, workspace, brand, work.id, address);
+        if (!message) {
           await setRecipient(sql, work, 'cancelled', 'image_unavailable', true);
           await finish(sql, row.id, 'blocked', 'image_unavailable');
           return;
         }
-        const message: DeliveryEnvelope = {
-          operationKey: work.id,
-          workspaceId: workspace,
-          brandId: brand,
-          to: address,
-          subject: row.content.subject,
-          html: row.render_html,
-          text: row.render_text,
-          images,
-        };
         try {
           outcome = await provider.submit(message);
         } catch {
@@ -231,32 +208,4 @@ async function setRecipient(
     'UPDATE rehearsal_recipients SET state=$3,reason=$4,next_check_at=NULL,attempts=attempts-$5::int WHERE id=$1 AND rehearsal_id=$2',
     [work.id, work.rehearsal, state, reason, Number(unusedClaim)],
   );
-}
-
-async function finishIfDone(sql: Sql, id: string) {
-  await settleReservation(sql, id);
-  await sql.query(
-    `UPDATE campaign_rehearsals SET state='completed',finished_at=now()
-    WHERE id=$1 AND state='queued' AND NOT EXISTS (SELECT FROM rehearsal_recipients
-      WHERE rehearsal_id=$1 AND state IN ('pending','submitting','uncertain'))`,
-    [id],
-  );
-}
-
-async function originalImages(
-  sql: Sql,
-  brand: string,
-  ids: string[],
-): Promise<DeliveryEnvelope['images'] | null> {
-  const { rows } = await sql.query<DeliveryEnvelope['images'][number] & { id: string }>(
-    'SELECT id,name,mime,sha256,bytes FROM assets WHERE brand_id=$1 AND id=ANY($2::uuid[])',
-    [brand, ids],
-  );
-  const ordered: DeliveryEnvelope['images'] = [];
-  for (const id of ids) {
-    const image = rows.find((row) => row.id === id);
-    if (!image || createHash('sha256').update(image.bytes).digest('hex') !== image.sha256) return null;
-    ordered.push(image);
-  }
-  return ordered;
 }

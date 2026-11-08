@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { reviewedListmonkMessage } from '../src/server/campaign/listmonk-callback.js';
+import { reviewedListmonkMessage, listmonkTxForm } from '../src/server/campaign/listmonk-callback.js';
 import type { DeliveryEnvelope } from '../src/server/campaign/delivery-provider.js';
 
 const bytes = Buffer.from([5, 54, 254, 0]),
@@ -56,4 +56,25 @@ describe('private Listmonk messenger review', () => {
       expect(() => reviewedListmonkMessage({ ...callback, ...delta }, reviewed)).toThrow();
     expect(() => reviewedListmonkMessage(callback, { ...reviewed, brandId: randomUUID() })).toThrow();
   });
+});
+
+it('keeps the exact filename, MIME, binary bytes and both template bodies when using external subscriber mode', async () => {
+  const message = { ...reviewed, subject: 'Snow {{ .Subscriber.Name }}', text: 'Text with {{braces}}' };
+  const form = listmonkTxForm(message, reference, 7, 'flockletter', true);
+  expect(JSON.parse(String(form.get('data')))).toMatchObject({
+    subscriber_email: message.to,
+    subscriber_mode: 'external',
+    subject: '{{ .Tx.Data.subject }}',
+    altbody: '{{ .Tx.Data.text }}',
+    data: { subject: message.subject, text: message.text, html: message.html },
+  });
+  const files = form.getAll('file');
+  expect(files).toHaveLength(1);
+  const file = files[0];
+  if (typeof file === 'string' || !file) throw Error('Expected the original file');
+  expect([file.name, file.type]).toEqual(['report.png', 'image/png']);
+  expect(Buffer.from(await file.arrayBuffer())).toEqual(bytes);
+  expect(JSON.parse(String(listmonkTxForm(message, reference, 7, 'fixture').get('data')))).not.toHaveProperty(
+    'subscriber_mode',
+  );
 });

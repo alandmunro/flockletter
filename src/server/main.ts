@@ -1,3 +1,4 @@
+import {startPrivateMessenger} from './campaign/private-messenger.js';
 import {loadSesRuntime} from './campaign/ses-runtime.js';
 import { loadEnvFile } from 'node:process';
 import { existsSync } from 'node:fs';
@@ -18,6 +19,7 @@ if (existsSync('.env')) loadEnvFile('.env');
 const config = loadConfig();
 const ses=loadSesRuntime(process.env);
 let service: CommandService | undefined;
+let messenger:Awaited<ReturnType<typeof startPrivateMessenger>>;
 let auth: Authenticator | undefined;
 const stop = new AbortController();
 const tasks: Promise<void>[] = [];
@@ -26,6 +28,7 @@ if (configurationGaps(config).length === 0) {
   await db.verifyBoundary();
   const identity = config.localIdentity ? localIdentity() : clerkIdentity(config);
   const bindings = deliveryBindings(process.env);
+  messenger=await startPrivateMessenger(db,identity.isOwner,ses);
   service = new CommandService(
     db,
     new SubscriberIntake(db, loadIntakeBinding(config), loadLinkBinding(config)),
@@ -35,6 +38,7 @@ if (configurationGaps(config).length === 0) {
     identity.team,
     (workspace, brand) => bindings.some((b) => b.workspace === workspace && b.brand === brand),
     ses,
+    messenger?.dispatcher,
   );
   auth = new Authenticator(db, identity);
   const binding = captureBinding(process.env);
@@ -50,7 +54,7 @@ if (configurationGaps(config).length === 0) {
     );
   }
   if (bindings.length) {
-    const worker = new DeliveryWorker(db, identity.isOwner, undefined, ses);
+    const worker = new DeliveryWorker(db, identity.isOwner, undefined, ses, messenger?.dispatcher);
     tasks.push(runDeliveryQueue(bindings, (workspace, brand) => worker.tick(workspace, brand), stop.signal));
   }
 }
@@ -63,6 +67,7 @@ for (const signal of ['SIGTERM', 'SIGINT'])
     ses?.close?.();
     server.close(() => {
       void Promise.allSettled(tasks)
+        .then(() => messenger?.close())
         .then(() => service?.db.close())
         .finally(() => process.exit(0));
     });
