@@ -4,6 +4,7 @@ import {
   practiceMailbox,
   type Rehearsal,
   type RehearsalAudience,
+  type RehearsalTransport,
   type WorkspaceAccess,
   type Usage,
 } from '../shared/rehearsal.js';
@@ -17,12 +18,47 @@ const reasonText: Record<string, string> = {
   authority_revoked: 'The reviewer no longer has access.',
   access_changed: 'Workspace access changed.',
   draft_changed: 'The saved draft changed.',
+  simulator_unavailable:
+    'The approved Amazon SES simulator configuration is no longer available for this brand.',
   cancelled_by_owner: 'Cancelled by a workspace owner or authorized connection.',
 };
 type Message = { subject: string; text: string; html: string; mailbox: string };
+const methodText: Record<RehearsalTransport, { label: string; action: string; help: string }> = {
+  capture: {
+    label: 'Flockletter capture',
+    action: 'capture',
+    help: 'The captured message stays inside Flockletter.',
+  },
+  provider_test: {
+    label: 'Staging test provider',
+    action: 'provider test',
+    help: 'The staging provider records one result per test recipient.',
+  },
+  feedback_test: {
+    label: 'Local feedback test',
+    action: 'local feedback test',
+    help: 'Flockletter simulates delivery and feedback locally.',
+  },
+  ses_simulator: {
+    label: 'Amazon SES mailbox simulator',
+    action: 'SES simulator test',
+    help: 'Approving this test submits mail to Amazon SES using only AWS simulator addresses. Customer inboxes receive no mail.',
+  },
+};
+type AvailableMethods = { methods: RehearsalTransport[] };
 export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
   const [audience, setAudience] = useState<RehearsalAudience>('test');
-  const [transport, setTransport] = useState<Rehearsal['transport']>('capture');
+  const [choice, setChoice] = useState<{ brandId: string; method: RehearsalTransport }>({
+    brandId: draft.brandId,
+    method: 'capture',
+  });
+  const transport = choice.brandId === draft.brandId ? choice.method : 'capture';
+  const [directory, setDirectory] = useState<(AvailableMethods & { brandId: string; error?: string }) | null>(
+    null,
+  );
+  const currentDirectory = directory?.brandId === draft.brandId ? directory : null;
+  const options: RehearsalTransport[] = currentDirectory?.methods ?? ['capture'];
+  const methodMissing = !options.includes(transport);
   const [chosenGroup, setChosenGroup] = useState({ brandId: '', id: '' });
   const [groups, setGroups] = useState<{ brandId: string; directory: SegmentDirectory } | null>(null);
   const [groupError, setGroupError] = useState('');
@@ -39,6 +75,25 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
     [error, setError] = useState('');
   const [revision, refresh] = useState(0);
   const keys = useRef(new Map<string, string>());
+  useEffect(() => {
+    setChoice({ brandId: draft.brandId, method: 'capture' });
+  }, [draft.brandId]);
+  useEffect(() => {
+    let current = true;
+    api
+      .call<AvailableMethods>('rehearsal.methods', { brandId: draft.brandId })
+      .then(({ methods }) => {
+        const supported = methods.filter((method) => Object.hasOwn(methodText, method));
+        if (!supported.includes('capture')) throw new Error('The response was missing the capture method.');
+        if (current) setDirectory({ brandId: draft.brandId, methods: supported });
+      })
+      .catch((error: unknown) => {
+        if (current) setDirectory({ brandId: draft.brandId, methods: ['capture'], error: showError(error) });
+      });
+    return () => {
+      current = false;
+    };
+  }, [api, draft.brandId, revision]);
   useEffect(() => {
     if (audience !== 'confirmed') return;
     let active = true;
@@ -109,11 +164,30 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
             <select
               id="rehearsal-method"
               value={transport}
-              onChange={(e) => setTransport(e.target.value as Rehearsal['transport'])}
+              onChange={(e) =>
+                setChoice({ brandId: draft.brandId, method: e.target.value as RehearsalTransport })
+              }
             >
-              <option value="capture">Flockletter capture</option>
-              <option value="provider_test">Staging test provider</option>
+              {methodMissing && (
+                <option value={transport} disabled>
+                  {methodText[transport].label} (unavailable)
+                </option>
+              )}
+              {options.map((method) => (
+                <option key={method} value={method}>
+                  {methodText[method].label}
+                </option>
+              ))}
             </select>
+            {currentDirectory?.error && (
+              <p role="alert">
+                Could not load test methods for this brand. {currentDirectory.error}{' '}
+                <button type="button" className="btn secondary" onClick={() => refresh((v) => v + 1)}>
+                  Reload methods
+                </button>
+              </p>
+            )}
+            {methodMissing && <p className="help">Choose an available method before reviewing this test.</p>}
           </div>
           <div className="field">
             <label htmlFor="capture-audience">Practice audience</label>
@@ -173,17 +247,33 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
           </div>
         </div>
         <p className="help">
-          {audience === 'test'
-            ? 'This rehearsal uses ' + practiceMailbox + '.'
-            : 'Requires a complimentary plan and up to 25 confirmed addresses on reserved test domains.'}{' '}
-          {transport === 'provider_test'
-            ? 'The staging provider records one result per test recipient.'
-            : 'The captured message stays inside Flockletter.'}
+          {audience === 'confirmed' &&
+            'Requires a complimentary plan and up to 25 confirmed addresses on reserved test domains. '}
+          {audience === 'test' && transport !== 'ses_simulator' && `This rehearsal uses ${practiceMailbox}. `}
+          {methodText[transport].help}
+          {transport === 'feedback_test' && audience === 'confirmed' && (
+            <>
+              {' '}
+              Use <code>bounce@delivery.test</code> for a permanent bounce,{' '}
+              <code>complaint@delivery.test</code> for a complaint, or <code>delay@delivery.test</code> for a
+              temporary bounce.
+            </>
+          )}
+          {transport === 'feedback_test' &&
+            audience === 'test' &&
+            ' The fixed test mailbox simulates successful delivery.'}
+          {transport === 'ses_simulator' && audience === 'confirmed' && (
+            <>
+              {' '}
+              Select a group containing only <code>{practiceMailbox}</code>, <code>bounce@delivery.test</code>{' '}
+              or <code>complaint@delivery.test</code>.
+            </>
+          )}
         </p>
         <button
           className="btn"
           type="button"
-          disabled={audience === 'confirmed' && (!groupOptions || selectionMissing)}
+          disabled={methodMissing || (audience === 'confirmed' && (!groupOptions || selectionMissing))}
           onClick={() =>
             void action(async () => {
               const at = scheduled ? scheduleTime.current?.value : '';
@@ -193,14 +283,14 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
                 ...context,
                 expectedVersion: draft.version,
                 audience,
-                ...(transport === 'provider_test' ? { transport } : {}),
+                ...(transport === 'capture' ? {} : { transport }),
                 ...(audience === 'confirmed' && selectedGroup ? { segmentId: selectedGroup } : {}),
                 ...(at ? { dueAt: new Date(at).toISOString() } : {}),
               });
             })
           }
         >
-          {transport === 'provider_test' ? 'Review provider test' : 'Review capture'}
+          Review {methodText[transport].action}
         </button>
       </fieldset>
       {error && (
@@ -208,84 +298,99 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
           {error}
         </p>
       )}
-      {items.map((item) => (
-        <article className="card" key={item.id}>
-          <h3>
-            {item.transport === 'provider_test' ? 'Staging provider test · ' : ''}
-            {item.segment?.name ?? (item.audience === 'test' ? 'Test mailbox' : 'Confirmed test audience')} ·
-            version {item.version}
-          </h3>
-          <p>
-            <strong>{item.state}</strong> · {new Date(item.dueAt).toLocaleString()} · {item.selected} selected
-            · {item.excluded} excluded at review
-          </p>
-          {item.transport === 'provider_test' ? (
+      {items.map((item) => {
+        const method = item.transport ?? 'capture';
+        const providerTest = method !== 'capture';
+        return (
+          <article className="card" key={item.id}>
+            <h3>
+              {providerTest &&
+                (method === 'provider_test' ? 'Staging provider test · ' : `${methodText[method].label} · `)}
+              {item.segment?.name ?? (item.audience === 'test' ? 'Test mailbox' : 'Confirmed test audience')}{' '}
+              · version {item.version}
+            </h3>
             <p>
-              {item.accepted} accepted by the test provider · {item.rejected} rejected · {item.uncertain}{' '}
-              uncertain · {item.submitting} submitting · {item.pending} pending · {item.skipped} skipped or
-              cancelled
+              <strong>{item.state}</strong> · {new Date(item.dueAt).toLocaleString()} · {item.selected}{' '}
+              selected · {item.excluded} excluded at review
             </p>
-          ) : (
-            <p>
-              {item.captured} captured · {item.pending} pending · {item.skipped} skipped or cancelled
-            </p>
-          )}
-          {item.reason && <p>{reasonText[item.reason] ?? item.reason}</p>}
-          <div className="actions">
-            {item.state === 'reviewed' && (
-              <button className="btn" disabled={busy} onClick={() => void action(() => approve(item))}>
-                {item.transport === 'provider_test' ? 'Approve provider test' : 'Approve capture'}
-              </button>
+            {providerTest ? (
+              <p>
+                {item.accepted} accepted by the test provider · {item.rejected} rejected · {item.uncertain}{' '}
+                uncertain · {item.submitting} submitting · {item.pending} pending · {item.skipped} skipped or
+                cancelled
+              </p>
+            ) : (
+              <p>
+                {item.captured} captured · {item.pending} pending · {item.skipped} skipped or cancelled
+              </p>
             )}
-            {(item.state === 'queued' || (item.transport === 'provider_test' && item.uncertain > 0)) && (
-              <button
-                className="btn"
-                disabled={busy}
-                onClick={() =>
-                  void action(async () => {
-                    await mutate('rehearsal.process', { brandId: draft.brandId, id: item.id });
-                  })
-                }
-              >
-                {item.transport === 'provider_test' && item.uncertain > 0
-                  ? 'Check provider status'
-                  : 'Process if due'}
-              </button>
+            {item.reason && <p>{reasonText[item.reason] ?? item.reason}</p>}
+            {method === 'ses_simulator' && item.state === 'reviewed' && (
+              <p className="help">{methodText[method].help}</p>
             )}
-            {['reviewed', 'queued'].includes(item.state) && (
-              <button
-                className="btn secondary"
-                disabled={busy}
-                onClick={() =>
-                  void action(async () => {
-                    await mutate('rehearsal.cancel', { brandId: draft.brandId, id: item.id });
-                  })
-                }
-              >
-                Cancel rehearsal
-              </button>
+            {providerTest && item.state === 'reviewed' && currentDirectory && !options.includes(method) && (
+              <p className="help">
+                This method is unavailable for this brand. Refresh rehearsals to check again.
+              </p>
             )}
-            {item.transport !== 'provider_test' && item.captured > 0 && (
-              <button
-                className="btn secondary"
-                disabled={busy}
-                onClick={() =>
-                  void action(async () => {
-                    setMessage(
-                      await api.call<Message>('rehearsal.message', { brandId: draft.brandId, id: item.id }),
-                    );
-                  })
-                }
-              >
-                Open captured email
-              </button>
+            <div className="actions">
+              {item.state === 'reviewed' && (
+                <button
+                  className="btn"
+                  disabled={busy || (providerTest && !options.includes(method))}
+                  onClick={() => void action(() => approve(item))}
+                >
+                  Approve {methodText[method].action}
+                </button>
+              )}
+              {(item.state === 'queued' || (providerTest && item.uncertain > 0)) && (
+                <button
+                  className="btn"
+                  disabled={busy}
+                  onClick={() =>
+                    void action(async () => {
+                      await mutate('rehearsal.process', { brandId: draft.brandId, id: item.id });
+                    })
+                  }
+                >
+                  {providerTest && item.uncertain > 0 ? 'Check provider status' : 'Process if due'}
+                </button>
+              )}
+              {['reviewed', 'queued'].includes(item.state) && (
+                <button
+                  className="btn secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    void action(async () => {
+                      await mutate('rehearsal.cancel', { brandId: draft.brandId, id: item.id });
+                    })
+                  }
+                >
+                  Cancel rehearsal
+                </button>
+              )}
+              {!providerTest && item.captured > 0 && (
+                <button
+                  className="btn secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    void action(async () => {
+                      setMessage(
+                        await api.call<Message>('rehearsal.message', { brandId: draft.brandId, id: item.id }),
+                      );
+                    })
+                  }
+                >
+                  Open captured email
+                </button>
+              )}
+            </div>
+            {providerTest && (
+              <ProviderOutcomes api={api} brandId={draft.brandId} rehearsalId={item.id} revision={revision} />
             )}
-          </div>
-          {item.transport === 'provider_test' && (
-            <ProviderOutcomes api={api} brandId={draft.brandId} rehearsalId={item.id} revision={revision} />
-          )}
-        </article>
-      ))}
+          </article>
+        );
+      })}
       <button
         className="btn secondary"
         disabled={busy}

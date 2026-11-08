@@ -1,3 +1,4 @@
+import {loadSesRuntime} from './campaign/ses-runtime.js';
 import { loadEnvFile } from 'node:process';
 import { existsSync } from 'node:fs';
 import { loadConfig, configurationGaps } from './config.js';
@@ -15,6 +16,7 @@ import { sandboxGateway } from './billing/gateway.js';
 
 if (existsSync('.env')) loadEnvFile('.env');
 const config = loadConfig();
+const ses=loadSesRuntime(process.env);
 let service: CommandService | undefined;
 let auth: Authenticator | undefined;
 const stop = new AbortController();
@@ -32,6 +34,7 @@ if (configurationGaps(config).length === 0) {
     new SandboxBilling(db, sandboxGateway(config.origin), process.env.FLOCKLETTER_COMPLIMENTARY_WORKSPACE),
     identity.team,
     (workspace, brand) => bindings.some((b) => b.workspace === workspace && b.brand === brand),
+    ses,
   );
   auth = new Authenticator(db, identity);
   const binding = captureBinding(process.env);
@@ -47,7 +50,7 @@ if (configurationGaps(config).length === 0) {
     );
   }
   if (bindings.length) {
-    const worker = new DeliveryWorker(db, identity.isOwner);
+    const worker = new DeliveryWorker(db, identity.isOwner, undefined, ses);
     tasks.push(runDeliveryQueue(bindings, (workspace, brand) => worker.tick(workspace, brand), stop.signal));
   }
 }
@@ -57,6 +60,7 @@ const server = createApp(config, service, auth).listen(config.port, config.host,
 for (const signal of ['SIGTERM', 'SIGINT'])
   process.once(signal, () => {
     stop.abort();
+    ses?.close?.();
     server.close(() => {
       void Promise.allSettled(tasks)
         .then(() => service?.db.close())

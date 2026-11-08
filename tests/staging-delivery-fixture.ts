@@ -133,7 +133,7 @@ export async function startDeliveryFixture() {
           name: 'Delivery report',
           brandIds: [brandId],
           expiresInDays: 1,
-          scopes: ['read', 'campaign:rehearse', 'audience:summary'],
+          scopes: ['read', 'campaign:rehearse', 'audience:summary', 'campaign:simulate'],
         },
         owner,
       )) as { token: string };
@@ -150,6 +150,7 @@ export async function startDeliveryFixture() {
       }
       activeBindings.add(workspaceId + '/' + brandId);
       return {
+        owner,
         workspaceId,
         removeWorkerBinding: () => activeBindings.delete(workspaceId + '/' + brandId),
         brandId,

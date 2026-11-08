@@ -96,6 +96,14 @@ export async function suppress(
   if (evidenceId) {
     await recordTransition(sql, evidenceId, state === 'unsubscribed' ? 'unsubscribed' : 'suppressed', source);
   } else {
+    if ((source === 'campaign-feedback_test' || source === 'campaign-ses_simulator') &&
+        (state === 'hard_bounced' || state === 'complained')) {
+      // A verified negative event is evidence of suppression, never evidence of original consent.
+      await sql.query(`INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain)
+        SELECT workspace_id,brand_id,$2,id,'suppressed','brand_marketing','campaign-feedback-v1',$3,$4,''
+        FROM subscribers WHERE id=$1`,[subscriberId,randomUUID(),hash('Provider reported '+state+' for the reviewed address.'),source]);
+      return;
+    }
     // Preserve a factual opt-out for a legacy contact whose signup evidence is unavailable.
     if (state !== 'unsubscribed' || !['workspace-owner', 'marketing-unsubscribe-link'].includes(source)) {
       throw new Error('A source consent event is required.');

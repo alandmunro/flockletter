@@ -13,6 +13,8 @@ const reasonText: Record<string, string> = {
   authority_revoked: 'The reviewer no longer has permission.',
   reservation_unavailable: 'The approved allowance is no longer reserved.',
   image_unavailable: 'An approved image could not be verified.',
+  simulator_unavailable:
+    'The approved Amazon SES simulator configuration is no longer available for this brand.',
   access_changed: 'The workspace’s access changed.',
   draft_changed: 'The saved draft changed after review.',
   cancelled_by_owner: 'The rehearsal was cancelled.',
@@ -29,7 +31,16 @@ const statusText: Record<RecipientOutcome['state'], string> = {
   captured: 'Captured',
 };
 
-function RecipientList({ recipients }: { recipients: readonly RecipientOutcome[] }) {
+const feedbackText: Record<NonNullable<RecipientOutcome['feedback']>, string> = {
+  delivered: 'The test provider confirmed delivery.',
+  temporary_bounce: 'The test provider reported a temporary bounce.',
+  permanent_bounce:
+    'The test provider reported a permanent bounce. Future mail to the matching subscriber is blocked for this brand.',
+  complaint:
+    'The test provider reported a spam complaint. Future mail to the matching subscriber is blocked for this brand.',
+};
+
+export function RecipientList({ recipients }: { recipients: readonly RecipientOutcome[] }) {
   if (!recipients.length) return <p>No recipient outcomes are available.</p>;
   return (
     <ul aria-label="Recipient outcomes" style={{ overflowWrap: 'anywhere' }}>
@@ -39,6 +50,7 @@ function RecipientList({ recipients }: { recipients: readonly RecipientOutcome[]
           <li key={recipient.id}>
             <strong>{statusText[recipient.state]}</strong> · {recipient.attempts}{' '}
             {recipient.attempts === 1 ? 'attempt' : 'attempts'}
+            {recipient.feedback && <p className="help">{feedbackText[recipient.feedback]}</p>}
             <p className="help">
               Recipient ID <code>{recipient.id}</code>
             </p>

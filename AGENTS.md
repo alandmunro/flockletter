@@ -16,6 +16,8 @@ D-035 covers brand-specific member preparation, static group capture, support dr
 
 D-036 authorizes the staging Newsletter Studio. Preserve authored content on unsupported input, original brand assets, and review of each saved revision. Keep the editor’s distributed notice inventory synchronized with dependency changes. [Editor notices](docs/implementation/STUDIO_LICENSES.md)
 
+D-038 adds a staging-only choice between local feedback and an optional operator-bound SES mailbox simulator. Keep older rehearsal approvals on their selected method. Only the separately reviewed AWS method can target AWS-owned simulator addresses. Protect its credentials and frozen sender configuration. Report AWS contract checks independently of live AWS evidence and the isolated Listmonk exercise. [Campaign feedback](docs/implementation/CAMPAIGN_FEEDBACK.md)
+
 ## Product and public repository boundaries
 
 - The product is Flockletter; the repository slug is `flockletter`.

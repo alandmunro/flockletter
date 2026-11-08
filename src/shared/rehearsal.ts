@@ -1,13 +1,15 @@
 export const rehearsalAudiences = ['test', 'confirmed'] as const;
 export type RehearsalAudience = (typeof rehearsalAudiences)[number];
-export const rehearsalTransports = ['capture', 'provider_test'] as const;
+export const rehearsalTransports = ['capture', 'provider_test', 'feedback_test', 'ses_simulator'] as const;
 export type RehearsalTransport = (typeof rehearsalTransports)[number];
+export type CampaignFeedbackKind = 'delivered' | 'temporary_bounce' | 'permanent_bounce' | 'complaint';
 export type RecipientOutcome = {
   id: string;
   state:
     'pending' | 'submitting' | 'uncertain' | 'accepted' | 'rejected' | 'excluded' | 'cancelled' | 'captured';
   reason: string | null;
   attempts: number;
+  feedback?: CampaignFeedbackKind | null;
 };
 export type PlanId = 'starter' | 'growth' | 'pro';
 export type WorkspaceAccess = {

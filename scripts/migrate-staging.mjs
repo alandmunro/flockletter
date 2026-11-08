@@ -19,14 +19,17 @@ async function run() {
   try {
     // In a protected, echo-disabled terminal the operator can paste the existing
     // migration URI directly. Never accept a credential on the command line.
-    migration = new URL(process.argv[3] === '--uri-stdin' ? line.value : JSON.parse(line.value).migrationUrl);
-    runtime = new URL(process.env.DATABASE_URL);
+    const single = process.argv[3] === '--uri-stdin', pair=process.argv[3] === '--pair-stdin';
+    const data = single ? {migrationUrl:line.value} : JSON.parse(line.value);
+    migration = new URL(data.migrationUrl);
+    runtime = new URL(pair ? data.runtimeUrl : process.env.DATABASE_URL);
   } catch {
     throw new Error('Invalid private staging release input.');
   }
   if (
     process.env.APP_ENV !== 'staging' ||
     !['postgres:', 'postgresql:'].includes(migration.protocol) ||
+    !['postgres:', 'postgresql:'].includes(runtime.protocol) ||
     migration.host !== runtime.host ||
     migration.pathname !== '/flockletter_staging' ||
     runtime.pathname !== migration.pathname ||
