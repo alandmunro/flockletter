@@ -49,6 +49,8 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
+**D-044 release parity:** FL-OPS-001/003/004/006 have additional production provisioning/migration coverage in `tests/production-provision.test.ts`: explicit environment/confirmation, fixed isolated identities, full runtime-boundary checks, idempotent migration replay, protected input/output and refusal without repairing foreign permissions or altering foreign rows. Shared-host capacity and live production identity remain external checks. [Release record](implementation/RELEASE_PARITY.md)
+
 FL-AT-013/014/020/021/025/037/038 have additional staging implementation coverage. The synthetic storefront-to-newsletter test exercises double opt-in, the exact reviewed message and original image, a personal opt-out, and exclusion on the next send. Two workspaces exercise scoped simulator readiness, isolated holds, signed feedback routing and recovery. AWS account evidence and an authorized real inbox remain release gates. [Delivery readiness](implementation/DELIVERY_READINESS.md)
 
 FL-AT-003/014/016/028/031/034/035 have additional coverage for fictional CSV imports, workspace activity, plan and team capacity, support handoff and recovery. The disposable 90-day erasure exercise checks the cancellation boundary, transactional retries, tenant isolation and a quarantined stale restore. The support rehearsal uses a private operator inbox and captured replies. [Audience](implementation/AUDIENCE.md) · [Workspace operations](implementation/WORKSPACE_OPERATIONS.md) · [Support](implementation/SUPPORT_INBOX.md) · [Retention and recovery](implementation/RETENTION_DRILL.md)
