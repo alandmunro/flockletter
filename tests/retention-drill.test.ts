@@ -43,7 +43,8 @@ async function seed(db: pg.Client, workspace: string) {
       s uuid:=current_setting('drill.contact'); conn uuid:=gen_random_uuid(); ev uuid:=gen_random_uuid();
       signup uuid:=gen_random_uuid(); optout uuid:=gen_random_uuid(); job uuid:=gen_random_uuid();
       camp uuid:=gen_random_uuid(); run uuid:=gen_random_uuid(); op uuid:=gen_random_uuid(); seg uuid:=gen_random_uuid();
-      digest text:=repeat('a',64);
+      digest text:=repeat('a',64); support uuid:=gen_random_uuid(); retention uuid:=gen_random_uuid();
+      retention_job uuid:=gen_random_uuid(); delivery uuid:=gen_random_uuid(); recipient uuid:=gen_random_uuid();
     BEGIN
       INSERT INTO workspaces(workspace_id,name) VALUES(w,'Fixture company');
       INSERT INTO brands(workspace_id,id,name) VALUES(w,b,'Fixture brand');
@@ -94,6 +95,62 @@ async function seed(db: pg.Client, workspace: string) {
       INSERT INTO team_grant_brands(workspace_id,user_id,brand_id) VALUES(w,'member',b);
       INSERT INTO audience_segments(workspace_id,brand_id,id,name,slot) VALUES(w,b,seg,'Fixture group',1);
       INSERT INTO audience_segment_members VALUES(w,b,seg,s);
+      INSERT INTO customer_subscriptions(workspace_id,id,source,state,plan,effective_end_at,cancel_at,observed_at)
+        VALUES(w,gen_random_uuid(),'exercise','canceled','starter','2028-01-01 12:00:00Z','2028-01-01 12:00:00Z',now());
+      INSERT INTO customer_subscription_history(workspace_id,provider_account,provider_subscription,revision,provider_customer,replaced_by,snapshot)
+        VALUES(w,'acct_fixture','sub_fixture_previous',1,'cus_fixture','sub_fixture_current','{"source":"exercise","state":"closed","cardVerified":true}');
+      INSERT INTO customer_billing_events(workspace_id,source,event_id,digest,event_kind)
+        VALUES(w,'exercise','fixture-event',digest,'canceled');
+      INSERT INTO customer_billing_intents(workspace_id,id,actor_id,operation_key,command,request_hash,result)
+        VALUES(w,gen_random_uuid(),'fixture',gen_random_uuid(),'fixture',digest,'{"source":"same@example.test"}');
+      INSERT INTO customer_usage_reservations(workspace_id,operation_key,campaign_id,brand_id,period,recipients,request_hash)
+        VALUES(w,'fixture',camp,b,'fixture-period',1,digest);
+      INSERT INTO customer_audience_settings(workspace_id,brand_id,purpose,policy_version,consent_text,source_domain,form_token,exercise_key)
+        VALUES(w,b,'brand-marketing','v1','Fixture permission','example.test','fixture-'||w,decode(digest,'hex'));
+      INSERT INTO customer_audience_imports(workspace_id,brand_id,id,operation_key,actor_id,source,file_digest,result)
+        VALUES(w,b,gen_random_uuid(),gen_random_uuid(),'fixture','fixture',digest,'{"source":"same@example.test"}');
+      INSERT INTO customer_audience_confirmations(workspace_id,brand_id,id,subscriber_id,token_hash,unsubscribe_hash,mode,state,policy_snapshot,expires_at)
+        VALUES(w,b,gen_random_uuid(),s,digest,digest,'exercise','captured','{}',now()+interval '1 day');
+      INSERT INTO customer_audience_optouts(workspace_id,brand_id,id,subscriber_id,token_hash)
+        VALUES(w,b,gen_random_uuid(),s,digest);
+      INSERT INTO customer_team_scenarios(workspace_id,user_id,email,role)
+        VALUES(w,'fixture-member','same@example.test','member');
+      INSERT INTO customer_team_invites(workspace_id,id,email,state,reference)
+        VALUES(w,gen_random_uuid(),'same@example.test','pending','fixture-reference');
+      INSERT INTO customer_team_intents(workspace_id,id,operation_key,actor_id,issuer_id,action,payload,request_hash,state,reference,mode)
+        VALUES(w,gen_random_uuid(),gen_random_uuid(),'fixture','fixture','invite','{"email":"same@example.test"}',digest,'prepared','fixture-reference','exercise');
+      INSERT INTO customer_support_tickets(workspace_id,id,subject,topic,state,reply_to,requester_id,mode)
+        VALUES(w,support,'Fixture support','plans','open','same@example.test','fixture','capture');
+      INSERT INTO customer_support_messages(workspace_id,id,ticket_id,kind,text,provenance)
+        VALUES(w,gen_random_uuid(),support,'incoming','Fixture message','fixture');
+      INSERT INTO customer_support_dispatches(workspace_id,id,ticket_id,ticket_version,operation_key,body,body_digest,state,mode,created_by)
+        VALUES(w,gen_random_uuid(),support,1,gen_random_uuid(),'Fixture reply',digest,'queued','capture','fixture');
+      INSERT INTO customer_support_events(workspace_id,event_id,digest,ticket_id)
+        VALUES(w,'fixture-support',digest,support);
+      INSERT INTO customer_retention_cases(workspace_id,id,source,source_version,effective_end_at,due_at,state,inventory_digest)
+        VALUES(w,retention,'exercise','fixture','2028-01-01 12:00:00Z','2028-03-31 12:00:00Z','due',digest);
+      INSERT INTO customer_retention_jobs(workspace_id,id,case_id,case_version,state,requested_by,manifest_digest)
+        VALUES(w,retention_job,retention,1,'awaiting_operator','fixture',digest);
+      INSERT INTO customer_retention_receipts(workspace_id,job_id,effective_end_at,erased_at,manifest_digest,checkpoint_digest)
+        VALUES(w,retention_job,'2028-01-01 12:00:00Z','2028-03-31 12:00:00Z',digest,digest);
+      INSERT INTO customer_infrastructure_intents(workspace_id,brand_id,id,created_by,mode,request,request_digest,source_revision,source_kind,state)
+        VALUES(w,b,gen_random_uuid(),'fixture','capture','{"fixture":true}',digest,1,'exercise','captured');
+      INSERT INTO customer_provider_routes(workspace_id,brand_id,intent_id,provider_binding,sender_revision,captured,verified,facts)
+        SELECT w,b,id,'capture-fixture',1,true,false,'{}' FROM customer_infrastructure_intents WHERE workspace_id=w AND brand_id=b;
+      INSERT INTO customer_infrastructure_events(workspace_id,id,intent_id,actor_id,event)
+        SELECT w,gen_random_uuid(),id,'fixture','captured' FROM customer_infrastructure_intents WHERE workspace_id=w AND brand_id=b;
+      INSERT INTO customer_sender_profiles(workspace_id,brand_id,profile) VALUES(w,b,'{"name":"Fixture sender","email":"news@example.test"}');
+      INSERT INTO customer_deliveries(workspace_id,brand_id,id,campaign_id,version,actor_id,creator_id,mode,state,content,
+        rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded)
+        VALUES(w,b,delivery,camp,1,'fixture','fixture','capture','reviewed','{}','<p>Fixture</p>','Fixture','[]','fixture',now(),1,0);
+      INSERT INTO customer_delivery_recipients(workspace_id,brand_id,delivery_id,id,subscriber_id,email_digest,engine_reference,state)
+        VALUES(w,b,delivery,recipient,s,digest,'fixture-reference','pending');
+      INSERT INTO customer_delivery_captures(workspace_id,brand_id,delivery_id,recipient_id,payload,message_digest)
+        VALUES(w,b,delivery,recipient,'{"to":"same@example.test"}',digest);
+      INSERT INTO customer_delivery_payloads(workspace_id,brand_id,delivery_id,recipient_id,envelope,message_digest)
+        VALUES(w,b,delivery,recipient,'{"to":"same@example.test"}',digest);
+      INSERT INTO customer_delivery_events(workspace_id,brand_id,delivery_id,recipient_id,event_id,kind,evidence)
+        VALUES(w,b,delivery,recipient,'fixture-delivery','delivered','fixture');
     END $$;`);
     await db.query('COMMIT');
   } catch (error) {
@@ -250,11 +307,11 @@ describe('disposable retention and recovery', () => {
       });
       await expect(drill.purge(closed, deadline)).resolves.toEqual({ status: 'retained' });
       await use(drill.fixture.adminUrl, async (db) => {
-        await db.query("UPDATE sandbox_checkouts SET observed_at=$2::timestamptz + interval '500 microseconds' WHERE workspace_id=$1", [
-          closed,
-          effectiveEnd,
-        ]);
-        expect(await verifiedServiceEnd(db,closed,new Date(effectiveEnd))).toEqual(new Date(effectiveEnd));
+        await db.query(
+          "UPDATE sandbox_checkouts SET observed_at=$2::timestamptz + interval '500 microseconds' WHERE workspace_id=$1",
+          [closed, effectiveEnd],
+        );
+        expect(await verifiedServiceEnd(db, closed, new Date(effectiveEnd))).toEqual(new Date(effectiveEnd));
         await db.query(
           `INSERT INTO workspace_access_events(workspace_id,revision,operation_key,plan,operator_name,reason)
           VALUES($1,3,gen_random_uuid(),'starter','fixture','Restored complimentary access')`,

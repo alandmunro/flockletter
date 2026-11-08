@@ -1,0 +1,63 @@
+# Customer audience and team workflows
+
+This implements workstreams 3 and 4 in `COMPLETE_WORKFLOWS.md`. Applicable requirements are FL-ONB-003/004/005, FL-AUD-001/002/003/004, FL-API-001/002 and decisions D-017/D-026/D-024. Existing FFA commerce, photos, provider settings and account authority are unchanged.
+
+## Audience
+
+Owners configure purpose, consent wording/version and source domain per brand. A wording/purpose change requires a new version. The public form is login-free and uses a random scoped form capability. Native forms render escaped content, default to a required unchecked consent checkbox, require confirmation and keep tracking off. The public server enforces small body limits, IP rate limits, an address-digest daily budget and consent-version checks. No subscriber directory or membership data appears in public responses.
+
+The owner UI provides CSV file selection, column mapping and existing canonical preview, then explicit permission/source attestation before import. The parser accepts at most 1,000 rows, 64 columns and 256 KiB of UTF-8 CSV. Per-row results report invalid/duplicate/kept/new/limit outcomes. Import creates only pending records, records the actor/source/file digest/result durably, and cannot confirm or clear unsubscribed/complained/bounced states. Operation receipts prevent duplicate application and reject altered retries.
+
+Contact capacity is shared across workspace brands, counting unique normalized pending or confirmed addresses conservatively. Pending addresses reserve capacity so that confirmation does not silently exceed the allowance. The same email in two brands consumes one capacity slot but keeps separate brand consent. Workspace advisory locks serialize final-slot races.
+
+Exercise signup captures a confirmation for authenticated owner inspection. The owner can open the native public confirmation page or explicitly redeem it in the UI; both use the same persistent confirmation state machine. The factual event is labeled `customer-exercise-confirmation`, never genuine live delivery/consent. `productionConsentEligible` excludes those records until an actual live confirmation event exists. Merely importing or being present in another brand never creates evidence.
+
+Live confirmation requires explicit provider and a 32-byte confirmation key. The worker commits submitting intent before one provider submission and thereafter uses only lookup reconciliation. Lost responses never cause a speculative resend. Real confirmation can replace an exercise-only confirmation for production eligibility. Activation remains off by default and external mail was not sent in these tests.
+
+Confirmation tokens have durable digests, 24-hour expiry and scope binding. Marketing opt-out tokens use independent random secrets stored only as digests. GET renders an intentional form without changing subscriptions; POST persists suppression, and supported originless one-click POST works without login or paid access. Opt-out still works if signup is disabled. Stronger complaint/bounce states are preserved. Never log query tokens; captured full message URLs belong only in protected owner message views, never audit or reports.
+
+## Team
+
+Clerk is the sole real login and membership authority. The separate staging scenario is clearly labeled and stores synthetic members/invitations in dedicated tables. It cannot mint a Clerk session or real membership. Exercise operation records bind their mode and cannot be reconciled against real Clerk after configuration changes.
+
+Every owner-session read/mutation verifies current Clerk ownership. Invitations consume finite seats while pending, and unknown invitation attempts reserve capacity. Real finite plans also require a matching Clerk membership cap. Member removal cannot remove the active issuer or the last owner; confirmed real removal clears local narrower brand grants. Ownership transfer first promotes another current member, verifies their ownership, then durably claims the demotion phase and rechecks the issuer before demotion. Unknown outcomes are inspected without repeating a mutation.
+
+Real intent persistence precedes network calls. Clerk requests have fixed endpoints, no redirects and no automatic mutation retries. The provider response alone is not success: reconciliation reads exact membership/invitation facts and invitation private reference. Background reconciliation operates on persisted issuer IDs with a worker audit identity, never a fabricated session; any remaining transfer mutation checks the original issuer's current ownership. No real invitations or account changes were made during implementation.
+
+## Acceptance and activation
+
+Owner browser exercises: configure brand consent; preview/import a CSV with a duplicate and invalid row; inspect a captured message; confirm and refresh; unsubscribe and verify suppression. Repeat with a second workspace and brand. In Team, initialize the separate scenario, invite, accept, revoke/remove, transfer, and test seat/last-owner failures. The normal signed-in owner API is used throughout.
+
+Real PostgreSQL tests cover row outcomes, idempotency, tenant isolation, concurrent last-slot races, consent mismatch, suppression replay, capture-to-live confirmation, lost provider acknowledgments, no speculative resends, transfer phases and exercise/Clerk mode separation. Public route tests additionally check scanner-safe GET, confirmation POST and origin rejection. Focused lint/typecheck and production build are part of parent integration validation.
+
+Provider activation needs explicit environment configuration and separate real-account testing. Captured exercise evidence is not a claim of live Clerk invitation or external mail verification.
+
+## Model contribution record
+
+Local Qwen (`qwen3.8-27b-mlx@8bit`, mechanical mode, temperature 0.6/top_p 0.95) wrote the native public-route integration test scaffold: signup page, signup POST, scanner-safe confirmation GET, confirmation POST, origin rejection and unsubscribe checks. Chat corrected an invalid server type, duplicated fixture setup and mismatched service/origin, then strengthened the actual marketing one-click test. That accepted scaffold took 163.92 seconds and emitted 8,599 characters; these are measured request figures, not project contribution percentages. An earlier TeamLifecycle request in reasoning mode was stopped after producing no usable output, and its UI was implemented in chat.
+
+Chat retained the consent/security/identity/capacity decisions, migrations, domain services, actual Clerk adapter, owner UI, cross-file coordination and final review. Targeted audience/team validation currently passes fourteen real PostgreSQL/HTTP tests and focused lint. External provider delivery and real Clerk invitation/removal/transfer were deliberately not run as part of captured staging implementation.
+
+Additional accepted local work: Qwen wrote the actual `AudienceImportResults.tsx` leaf component, including grouped outcomes, semantic results table, empty state and pending-only confirmation actions (39.82 seconds, 1,841 emitted characters). Chat stripped response fences, inspected and integrated it. Qwen also drafted the captured-delivery integration fixture and four scenarios (114.69 seconds, 6,542 emitted characters); Chat corrected guessed migration names, brand RLS, real opt-out plumbing and the version-change test, then added four failure-path cases. All eight delivery PostgreSQL tests pass. A separate real private Listmonk pool test passes for workspace A→B→A with unchanged original PNG attachment bytes and no external email provider. Those provider-safe tests exercise real rendering, not live email delivery.
+
+## Explicit audience-write connection parity
+
+Exactly three operations accept an owner-issued `audience:write` connection: `audienceOnboarding.import`, `audienceOnboarding.importResult` and `audienceOnboarding.requestConfirmation`. Configuration, signup exercises, direct exercise confirmation, status and captured-message reads remain current owner-session-only. The grant does not imply directory reads, captured tokens, or campaign sending.
+
+The domain revalidates the original issuer's current ownership and the persisted connection's scope, exact brand, expiry and nonrevocation **after** acquiring the workspace lock and before reading a prior receipt. Connection expiry uses `clock_timestamp()` so time spent waiting for the lock cannot extend an expired grant. A row share lock prevents revocation/permission changes from racing through a currently accepted transaction. Caller claims never replace the persisted brand/scope check.
+
+A connection can recover only imports recorded under that exact actor ID. A current owner session can recover any import in the selected brand. Results expose pending subscriber IDs necessary for requesting confirmation, not private confirmation or unsubscribe capabilities. Tests cover two brand scopes, forged broader caller scope, another connection's and the owner's import results, missing write permission, revoked ownership, revoked/expired grants, revocation while waiting for the workspace lock and expiry during a lock wait.
+
+Local Qwen mechanically drafted the persisted connection fixture helper (18.24 seconds, 997 emitted characters). Chat corrected two import paths, retained all authorization decisions and authored the grant abuse/concurrency assertions.
+
+## Restored-erasure boundary
+
+A restored queued job cannot bypass a completed-erasure receipt. Confirmation claiming cancels unsubmitted work when the receipt is present, and a second check immediately before provider submission runs under the same workspace lock used by the erasure executor. That lock remains held across the provider call, while the submission intent was already committed separately. Unknown prior submissions retain lookup-only reconciliation. Tests insert synthetic local receipts, including one precisely between claim commit and provider submission, and verify no new provider call.
+
+Real team mutations similarly check the receipt before preparing a direct action and again under the workspace lock immediately before every external mutation. Ownership-transfer demotion has both a phase-claim gate and the external-call gate. Worker inspection may establish an already-completed result after erasure, but cannot promote, demote, invite, revoke or remove any membership. No hosted erasure or real Clerk operation was performed. Local Qwen drafted the synthetic-receipt fixture helper (16.09 seconds, 882 characters); Chat replaced its invented tagged-SQL call with the repository's `sql.query` contract and corrected fixed test digests, then authored the boundary/race assertions.
+
+Additional delivery regressions freeze the legal sender configuration at review/approval, block a changed profile before submission, retain the original postal address and exact CID/photo bytes in a historical captured email, and enforce a frozen usage reservation period. The unknown-outcome test now crosses a genuine exercise billing renewal and verifies lookup settles the original period without another submission or charging the new period. Explicit send-connection tests cover required draft-read permission, exact persisted brand, expiry, current issuer ownership, revocation after a workspace-lock wait and receipt retries.
+
+The native public-form HTTP test includes opaque `Origin: null`: only exact same-origin navigation metadata is accepted; missing, cross-site or non-navigation metadata is rejected. Local Qwen wrote the sender/photo fixture helper (38.27 seconds, 1,867 characters; accepted after review/formatting) and exact-metadata native HTTP helper (25.60 seconds, 1,592 characters; Chat corrected the timeout to start before receiving a response). Chat defined the authorization/period/metadata acceptance cases and reviewed all outputs. The grant-wait tests initially exposed a read-report revocation gap in the delivery implementation for the parent to fix.
+
+Final regression status: the parent corrected the read-report revocation gap and added canonical domain-entry authorization. The tests now verify owner-only sender configuration also rejects direct connection invocation. All **35 owned audience/team/delivery/native-form/private-renderer tests pass together**, with real PostgreSQL and real private Listmonk rendering enabled. Owned-path lint and global typecheck pass. Captured/live-provider distinctions above remain unchanged; no live email or Clerk membership changes occurred.

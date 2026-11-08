@@ -19,6 +19,8 @@ The public pages work with blank Clerk files, and `/readyz` reports the missing 
 
 `selfhost/secrets.mjs` generates fresh credentials in a private directory with file permissions that let the assigned non-root container read its individual mount. Rerunning the command verifies existing credentials. Keep the directory with the installation's backups. PostgreSQL reads its bootstrap credentials on the first startup of the volume. Use `docker compose -f selfhost/compose.yaml down` to stop the application and retain its database.
 
+Fresh bootstrap now prepares the fixed `flockletter_customer_jobs` and `flockletter_retention_control` private schemas under bootstrap ownership, granting the existing migrator only `USAGE` and `CREATE WITH GRANT OPTION`. The runtime role receives no database `CREATE` permission, accesses scheduler functions solely through reviewed migrations, and retains no direct access to underlying private tables or retention controls. For existing installations, operators must prepare these fixed schemas with the same restricted grants before running migrations.
+
 ## Try the synthetic owner flow
 
 This separate project runs the web process on the host's actual loopback interface so the existing loopback identity check applies to every request. Use it for disposable local demonstrations.

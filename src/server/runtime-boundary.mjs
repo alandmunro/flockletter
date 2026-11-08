@@ -90,6 +90,30 @@ export async function verifyRuntimeBoundary(client, expected = {}) {
     "SELECT has_function_privilege(current_user,'public.flockletter_default_company_id(text)','EXECUTE') AS allowed",
   );
   if (!functions.rows[0]?.allowed) throw Error('The runtime role needs to initialize its default company.');
+  const scheduler=(await client.query(`SELECT
+    to_regnamespace('flockletter_customer_jobs') IS NOT NULL AS present,
+    has_schema_privilege(current_user,'flockletter_customer_jobs','USAGE') AS usage,
+    has_schema_privilege(current_user,'flockletter_customer_jobs','CREATE') AS create_schema,
+    has_table_privilege(current_user,'flockletter_customer_jobs.scopes','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS table_access,
+    has_any_column_privilege(current_user,'flockletter_customer_jobs.scopes','SELECT,INSERT,UPDATE,REFERENCES') AS column_access,
+    has_schema_privilege(current_user,'flockletter_retention_control','USAGE,CREATE') AS retention_access`)).rows[0];
+  if(!scheduler?.present||!scheduler.usage||scheduler.create_schema||scheduler.table_access||scheduler.column_access||scheduler.retention_access)
+    throw Error('Customer worker routing and retention control require their restricted private boundaries.');
+  const privateTables=await client.query(`SELECT EXISTS(SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='flockletter_customer_jobs' AND c.relkind IN ('r','p','v','m','f') AND
+    (has_table_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR
+     has_any_column_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,REFERENCES'))) AS unsafe`);
+  if(privateTables.rows[0]?.unsafe)throw Error('Private worker capacity and routing tables must not be accessible to runtime credentials.');
+  const signatures=['wake(text,timestamp with time zone)','snooze(text,timestamp with time zone)','due_scopes()','record_pass(text,text)','scope_status(text)','claim_provisioning_budget(text,uuid,uuid,integer)'];
+  const routines=await client.query(`SELECT p.oid::regprocedure::text signature,p.prosecdef,
+    p.proconfig=ARRAY['search_path=pg_catalog']::text[] AS fixed_path,
+    p.proowner<>current_user::regrole::oid AS different_owner,
+    has_function_privilege(current_user,p.oid,'EXECUTE') AS allowed,
+    EXISTS(SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+      WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_execute
+    FROM pg_proc p WHERE p.oid=ANY(ARRAY(SELECT to_regprocedure('flockletter_customer_jobs.'||s) FROM unnest($1::text[]) s))`,[signatures]);
+  if(routines.rowCount!==signatures.length||routines.rows.some(row=>!row.prosecdef||!row.fixed_path||!row.different_owner||!row.allowed||row.public_execute))
+    throw Error('Customer worker routines need fixed paths, explicit execution grants and migration ownership.');
   return {
     database: identity.database,
     role: identity.role,

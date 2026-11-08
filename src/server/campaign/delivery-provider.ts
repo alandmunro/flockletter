@@ -11,6 +11,7 @@ export type DeliveryEnvelope = {
   html: string;
   text: string;
   unsubscribe?: { url: string };
+  sender?:{name:string;replyTo:string};
   images: { name: string; mime: string; sha256: string; bytes: Buffer }[];
 };
 // not_submitted is authoritative proof that this attempt cannot have been accepted.

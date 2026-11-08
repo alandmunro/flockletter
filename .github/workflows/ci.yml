@@ -23,7 +23,7 @@ jobs:
       - name: Exercise private Listmonk restart and two-workspace isolation
         run: |
           FLOCKLETTER_PRIVATE_ENGINE=embedded node scripts/prepare-listmonk.mjs
-          FLOCKLETTER_TEST_PRIVATE_ENGINE=1 node_modules/.bin/vitest run tests/embedded-listmonk.test.ts
+          FLOCKLETTER_TEST_PRIVATE_ENGINE=1 node_modules/.bin/vitest run tests/embedded-listmonk.test.ts tests/customer-engine.test.ts
           node --import tsx scripts/prove-private-listmonk.ts
           node --import tsx scripts/prove-listmonk-isolation.ts
   verify:
@@ -40,6 +40,7 @@ jobs:
       - run: node scripts/studio-notices.mjs --check-build
       - run: npx playwright-core install --with-deps chromium webkit
       - run: npm run audience:verify
+      - run: node --import tsx scripts/prove-customer-workflows.ts
       - run: node --import tsx scripts/prove-team-ui.ts
       - run: node --import tsx scripts/prove-studio.ts
       - run: node --import tsx scripts/prove-studio-email.ts

@@ -2,9 +2,16 @@ import type { Database, Sql } from './db.js';
 import { AppError, requireCondition } from './errors.js';
 import { workspaceAccess } from './campaign/access.js';
 import { plans, type Capability } from '../shared/contracts.js';
-import type { TeamPage, TeamRole, DirectoryMember, PendingInvitation, TeamInvitationPage } from '../shared/team.js';
+import type {
+  TeamPage,
+  TeamRole,
+  DirectoryMember,
+  PendingInvitation,
+  TeamInvitationPage,
+} from '../shared/team.js';
 import type { ClerkInvitationPilot } from './team-invitation-provider.js';
 import { invitationControls } from './team-invitations.js';
+import { customerSeatLimit, type BillingOptions } from './customer-billing/service.js';
 
 export type ClerkTeam = {
   members: (
@@ -13,7 +20,11 @@ export type ClerkTeam = {
     limit: number,
   ) => Promise<{ total: number; members: Pick<DirectoryMember, 'userId' | 'name' | 'membership'>[] }>;
   membership: (user: string, workspace: string) => Promise<'owner' | 'member' | null>;
-  invitations?: (workspace: string, offset: number, limit: number) => Promise<{ total: number; invitations: PendingInvitation[] }>;
+  invitations?: (
+    workspace: string,
+    offset: number,
+    limit: number,
+  ) => Promise<{ total: number; invitations: PendingInvitation[] }>;
   invitePilot?: ClerkInvitationPilot;
 };
 export const unavailableTeam: ClerkTeam = {
@@ -24,20 +35,45 @@ export const unavailableTeam: ClerkTeam = {
     throw new AppError(503, 'membership_unavailable', 'The current Clerk membership could not be verified.');
   },
 };
-export async function seatLimit(sql: Sql) {
+export async function seatLimit(sql: Sql, options?: Partial<BillingOptions>) {
+  if (options) {
+    const workspace = (
+      await sql.query<{ workspace: string }>("SELECT current_setting('app.workspace_id',true) workspace")
+    ).rows[0]?.workspace;
+    return workspace ? customerSeatLimit(sql, workspace, options) : 1;
+  }
   const access = await workspaceAccess(sql);
   if (!access.plan) return 1;
   return plans.find((p) => p.id === access.plan)!.users;
 }
-const invitationDirectoryError = () => new AppError(503, 'invitation_directory_unavailable',
-  'Clerk invitation and seat counts are unavailable. Retry shortly.');
-export async function teamInvitations(db: Database, workspace: string, owner: string, clerk: ClerkTeam, offset: number): Promise<TeamInvitationPage> {
+const invitationDirectoryError = () =>
+  new AppError(
+    503,
+    'invitation_directory_unavailable',
+    'Clerk invitation and seat counts are unavailable. Retry shortly.',
+  );
+export async function teamInvitations(
+  db: Database,
+  workspace: string,
+  owner: string,
+  clerk: ClerkTeam,
+  offset: number,
+  options?: Partial<BillingOptions>,
+): Promise<TeamInvitationPage> {
   const limit = 25;
   // Verify again at the point this dedicated reader releases invitation addresses.
   let membership;
-  try { membership = await clerk.membership(owner, workspace); }
-  catch { throw invitationDirectoryError(); }
-  requireCondition(membership === 'owner', 403, 'owner_required', 'Current Clerk workspace ownership is required.');
+  try {
+    membership = await clerk.membership(owner, workspace);
+  } catch {
+    throw invitationDirectoryError();
+  }
+  requireCondition(
+    membership === 'owner',
+    403,
+    'owner_required',
+    'Current Clerk workspace ownership is required.',
+  );
   if (!clerk.invitations) throw invitationDirectoryError();
   let directory, members;
   let capacity: Awaited<ReturnType<ClerkInvitationPilot['inspect']>> | undefined;
@@ -47,31 +83,55 @@ export async function teamInvitations(db: Database, workspace: string, owner: st
     members = await clerk.members(workspace, 0, 1);
     if (clerk.invitePilot?.binding.workspace === workspace) {
       capacity = await clerk.invitePilot.inspect(workspace);
-      if(capacity.members.length!==members.total || capacity.invitations.filter((row)=>row.state==='pending').length!==directory.total)
+      if (
+        capacity.members.length !== members.total ||
+        capacity.invitations.filter((row) => row.state === 'pending').length !== directory.total
+      )
         throw invitationDirectoryError();
     }
-  } catch { throw invitationDirectoryError(); }
-  if (!Number.isSafeInteger(directory.total) || directory.total < 0 || directory.invitations.length > limit ||
-      (directory.invitations.length > 0 && offset + directory.invitations.length > directory.total) ||
-      !Number.isSafeInteger(members.total) || members.total < 1 || !Number.isSafeInteger(members.total + directory.total))
+  } catch {
     throw invitationDirectoryError();
-  const {seats,pilot} = await db.tenant(workspace,async(sql)=>{
-    const seats=await seatLimit(sql);
-    return {seats,pilot:await invitationControls(sql,workspace,clerk,seats,capacity)};
+  }
+  if (
+    !Number.isSafeInteger(directory.total) ||
+    directory.total < 0 ||
+    directory.invitations.length > limit ||
+    (directory.invitations.length > 0 && offset + directory.invitations.length > directory.total) ||
+    !Number.isSafeInteger(members.total) ||
+    members.total < 1 ||
+    !Number.isSafeInteger(members.total + directory.total)
+  )
+    throw invitationDirectoryError();
+  const { seats, pilot } = await db.tenant(workspace, async (sql) => {
+    const seats = await seatLimit(sql, options);
+    return { seats, pilot: await invitationControls(sql, workspace, clerk, seats, capacity) };
   });
-  const effectiveLimit = pilot?.maximum ? Math.min(seats ?? pilot.maximum,pilot.maximum) : seats;
+  const effectiveLimit = pilot?.maximum ? Math.min(seats ?? pilot.maximum, pilot.maximum) : seats;
   return {
-    invitations: directory.invitations.map(({id,email,expiresAt}) => ({id,email,expiresAt})),
-    total: directory.total, members: members.total, offset, limit, seats,
-    available: pilot?.blocked ? 0 : effectiveLimit === null ? null :
-      Math.max(0, effectiveLimit - members.total - directory.total - (pilot?.reserved ?? 0)),
-    ...(pilot ? {pilot} : {}),
+    invitations: directory.invitations.map(({ id, email, expiresAt }) => ({ id, email, expiresAt })),
+    total: directory.total,
+    members: members.total,
+    offset,
+    limit,
+    seats,
+    available: pilot?.blocked
+      ? 0
+      : effectiveLimit === null
+        ? null
+        : Math.max(0, effectiveLimit - members.total - directory.total - (pilot?.reserved ?? 0)),
+    ...(pilot ? { pilot } : {}),
   };
 }
-export async function teamPage(sql: Sql, w: string, clerk: ClerkTeam, offset: number): Promise<TeamPage> {
+export async function teamPage(
+  sql: Sql,
+  w: string,
+  clerk: ClerkTeam,
+  offset: number,
+  options?: Partial<BillingOptions>,
+): Promise<TeamPage> {
   const limit = 25,
     page = await clerk.members(w, offset, limit),
-    seats = await seatLimit(sql);
+    seats = await seatLimit(sql, options);
   const records = (
     await sql.query<{ user_id: string; permission: TeamRole; brand_ids: string[] }>(
       `SELECT g.user_id,g.permission,
@@ -103,6 +163,7 @@ export async function grantMember(
   user: string,
   permission: TeamRole,
   brandIds: string[],
+  options?: Partial<BillingOptions>,
 ) {
   requireCondition(
     (await clerk.membership(user, w)) === 'member',
@@ -110,7 +171,7 @@ export async function grantMember(
     'member_required',
     'Select a current non-owner member of this Clerk workspace.',
   );
-  const seats = await seatLimit(sql);
+  const seats = await seatLimit(sql, options);
   if (seats !== null) {
     const { total } = await clerk.members(w, 0, 1);
     requireCondition(
@@ -149,7 +210,13 @@ export async function revokeMember(sql: Sql, user: string) {
   );
   return { revoked: true, userId: user };
 }
-export async function memberPermissions(sql: Sql, w: string, user: string, clerk: ClerkTeam) {
+export async function memberPermissions(
+  sql: Sql,
+  w: string,
+  user: string,
+  clerk: ClerkTeam,
+  options?: Partial<BillingOptions>,
+) {
   const row = (
     await sql.query<{ permission: TeamRole; brand_ids: string[] }>(
       `SELECT g.permission,array_agg(b.brand_id ORDER BY b.brand_id) brand_ids
@@ -158,7 +225,7 @@ export async function memberPermissions(sql: Sql, w: string, user: string, clerk
     )
   ).rows[0];
   requireCondition(row, 403, 'brand_access_required', 'Ask a workspace owner to grant access to a brand.');
-  const seats = await seatLimit(sql);
+  const seats = await seatLimit(sql, options);
   if (seats !== null)
     requireCondition(
       (await clerk.members(w, 0, 1)).total <= seats,

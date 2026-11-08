@@ -10,9 +10,17 @@ import { senderDomain } from './sender.js';
 import { companyOrBrandName } from './companies.js';
 import {segmentAction,segmentEmails,segmentName} from './segments.js';
 import {clerkUserId,teamRole,invitationEmail} from './team.js';
+import { customerBillingCommands } from './customer-billing.js';
+import { customerAudienceCommands } from './customer-audience.js';
+import { customerTeamCommands } from './customer-team.js';
+import { customerSupportCommands } from './customer-support.js';
+import { customerRetentionCommands } from './customer-retention.js';
+import { customerDeliveryCommands } from './customer-delivery.js';
+import { customerOperationsCommands } from './customer-operations.js';
+import { customerInfrastructureCommands } from './customer-infrastructure.js';
 
 export type { IntakeStatus } from './subscriber.js';
-export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate'] as const;
+export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write'] as const;
 export type Capability = typeof capabilities[number];
 export const limits = { fileBytes: 5 * 1024 * 1024, batchBytes: 20 * 1024 * 1024, batchFiles: 10, imagePixels: 25_000_000, campaignImages: 6, workspaceBytes: 100 * 1024 * 1024, assets: 500, drafts: 100, connections: 10, preparationOperations: 2000 } as const;
 export const plans = [
@@ -40,7 +48,7 @@ export const emptyContent = (): CampaignContent => ({ title: '', subject: '', pr
 export type AssetSummary = { id: string; name: string; mime: string; size: number; width: number; height: number; sha256: string; createdAt: string };
 export type Campaign = { id: string; brandId: string; version: number; content: CampaignContent; createdAt: string; updatedAt: string; status: 'draft' };
 export type Brand = { id: string; name: string };
-export type Workspace = { name: string; hasDraft?:boolean; canEdit?:boolean; brands: Brand[]; entitlement: 'not_activated'|'complimentary'; canManageConnections: boolean; preparationLimits: typeof limits; plans: typeof plans };
+export type Workspace = { name: string; accessLabel?:string; hasDraft?:boolean; canEdit?:boolean; brands: Brand[]; entitlement: 'not_activated'|'complimentary'; canManageConnections: boolean; preparationLimits: typeof limits; plans: typeof plans };
 export type Gap = { code: string; title: string; detail: string; area: 'content' | 'sender' | 'audience' | 'billing' | 'delivery' };
 export type Preflight = { campaignId: string; version: number; canSend: false; contentReady: boolean; gaps: Gap[]; audience?: { confirmed: number; excluded: number } };
 export type Connection = { id: string; name: string; scopes: Capability[]; brandIds: string[]; createdAt: string; expiresAt: string; revokedAt: string | null };
@@ -50,6 +58,14 @@ const id = z.uuid();
 const audienceId = id.toLowerCase();
 const descriptor = <T extends z.ZodRawShape>(description: string, scope: Capability | 'owner', mutation: boolean, shape: T) => ({ description, scope, mutation, schema: z.object(shape).strict() });
 export const commands = {
+  ...customerBillingCommands,
+  ...customerAudienceCommands,
+  ...customerTeamCommands,
+  ...customerSupportCommands,
+  ...customerRetentionCommands,
+  ...customerDeliveryCommands,
+  ...customerOperationsCommands,
+  ...customerInfrastructureCommands,
   'workspace.get': descriptor('Inspect workspace, plan catalogue and preparation limits. Does not create records.', 'read', false, {}),
   'workspace.preflight': descriptor('Start here: inspect all workspace setup gaps and preparation limits before gathering content or photos. Never starts billing or sends.', 'read', false, {}),
   'workspace.initialize': descriptor('Create the current Clerk organization workspace and first brand once. Does not activate a subscription.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(100), brandName: z.string().trim().min(1).max(100) }),
@@ -117,7 +133,7 @@ export const commands = {
   }),
   'audience.unsubscribe': descriptor('Stop marketing for this contact and brand. The contact identity makes retries idempotent. Owner session required.', 'owner', true, { brandId: audienceId, id: audienceId }),
   'intake.configure': descriptor('Enable or pause subscriber intake for one configured brand. Does not enable campaigns.', 'owner', true, { brandId: id, enabled: z.boolean(), operationKey: key }),
-  'connection.create': descriptor('Issue a scoped, expiring connection. Secret is displayed once and omitted from retries. Owner session required.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(80), scopes: z.array(z.enum(capabilities)).min(1).max(6), brandIds: z.array(id).min(1).max(5), expiresInDays: z.number().int().min(1).max(90) }),
+  'connection.create': descriptor('Issue a scoped, expiring connection. Secret is displayed once and omitted from retries. Owner session required.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(80), scopes: z.array(z.enum(capabilities)).min(1).max(capabilities.length).refine(values=>new Set(values).size===values.length,'Choose each permission once.'), brandIds: z.array(id).min(1).max(5), expiresInDays: z.number().int().min(1).max(90) }),
   'connection.revoke': descriptor('Revoke a connection immediately. Owner session required.', 'owner', true, { operationKey: key, id }),
 } as const;
 export type CommandName = keyof typeof commands;

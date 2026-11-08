@@ -4,15 +4,34 @@ import { workspaceAccess } from './campaign/access.js';
 import { requireCondition } from './errors.js';
 import { plans } from '../shared/contracts.js';
 import type { Company, CompanyDirectory } from '../shared/companies.js';
+import { customerEligibility, type BillingOptions } from './customer-billing/service.js';
 
-async function companyPlan(sql: Sql) {
+async function companyPlan(sql: Sql, options?: Partial<BillingOptions>) {
+  if (options) {
+    const workspace = (
+      await sql.query<{ workspace: string }>("SELECT current_setting('app.workspace_id',true) workspace")
+    ).rows[0]?.workspace;
+    if (workspace) {
+      const status = await customerEligibility(sql, workspace, options);
+      if (status.eligible && status.limits)
+        return {
+          name: plans.find((item) => item.id === status.plan)?.name ?? 'Preparation',
+          companies: status.limits.companies,
+          brands: status.limits.brands,
+        };
+    }
+    return { name: 'Preparation', companies: 1, brands: 1 };
+  }
   const access = await workspaceAccess(sql);
   const plan = plans.find((item) => item.id === access.plan);
   return { name: plan?.name ?? 'Preparation', companies: plan?.companies ?? 1, brands: plan?.brands ?? 1 };
 }
 
-export async function companyDirectory(sql: Sql): Promise<CompanyDirectory> {
-  const plan = await companyPlan(sql);
+export async function companyDirectory(
+  sql: Sql,
+  options?: Partial<BillingOptions>,
+): Promise<CompanyDirectory> {
+  const plan = await companyPlan(sql, options);
   const { rows } = await sql.query<{
     company_id: string;
     company_name: string;
@@ -72,8 +91,8 @@ async function availableName(sql: Sql, table: Table, name: string, exceptId: str
   );
 }
 // All command mutations and complimentary plan changes hold the same workspace advisory lock.
-async function requireCapacity(sql: Sql, table: Table) {
-  const plan = await companyPlan(sql);
+async function requireCapacity(sql: Sql, table: Table, options?: Partial<BillingOptions>) {
+  const plan = await companyPlan(sql, options);
   const { rows } = await sql.query<{ total: number }>('SELECT count(*)::int AS total FROM ' + table);
   requireCondition(
     rows[0]!.total < plan[table],
@@ -82,9 +101,14 @@ async function requireCapacity(sql: Sql, table: Table) {
     'This workspace has reached its ' + entity[table] + ' limit of ' + plan[table] + '.',
   );
 }
-export async function createCompany(sql: Sql, workspaceId: string, name: string) {
+export async function createCompany(
+  sql: Sql,
+  workspaceId: string,
+  name: string,
+  options?: Partial<BillingOptions>,
+) {
   await availableName(sql, 'companies', name);
-  await requireCapacity(sql, 'companies');
+  await requireCapacity(sql, 'companies', options);
   const id = randomUUID();
   await sql.query('INSERT INTO companies(workspace_id,id,name) VALUES($1,$2,$3)', [workspaceId, id, name]);
   return { id, name };
@@ -95,10 +119,16 @@ export async function renameCompany(sql: Sql, id: string, name: string) {
   await sql.query('UPDATE companies SET name=$2 WHERE id=$1', [id, name]);
   return { id, name };
 }
-export async function createBrand(sql: Sql, workspaceId: string, companyId: string, name: string) {
+export async function createBrand(
+  sql: Sql,
+  workspaceId: string,
+  companyId: string,
+  name: string,
+  options?: Partial<BillingOptions>,
+) {
   await requireRecord(sql, 'companies', companyId);
   await availableName(sql, 'brands', name);
-  await requireCapacity(sql, 'brands');
+  await requireCapacity(sql, 'brands', options);
   const id = randomUUID();
   await sql.query('INSERT INTO brands(workspace_id,id,name) VALUES($1,$2,$3)', [workspaceId, id, name]);
   // The insert first associates the brand with the default company for backward compatibility.

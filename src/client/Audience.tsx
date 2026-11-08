@@ -1,4 +1,5 @@
 import {Segments} from './Segments.js';
+import {AudienceOnboarding} from './AudienceOnboarding.js';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type { Brand } from '../shared/contracts.js';
 import {
@@ -91,6 +92,7 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
       <p className="eyebrow">{brand.name} / Audience</p>
       <h1 className="page-heading">Audience</h1>
       <Counts key={revision} api={api} brandId={brand.id} />
+      <AudienceOnboarding api={api} brandId={brand.id} onChanged={changed}/>
       <Segments key={brand.id} api={api} brandId={brand.id} />
       <ImportPreview api={api} brand={brand} onApplied={changed} />
       <AudienceExport api={api} brand={brand} />

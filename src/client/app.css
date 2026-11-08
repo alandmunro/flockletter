@@ -9,3 +9,5 @@
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 
 .intake-metrics{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:.35rem 1rem;align-items:baseline}.intake-metrics dt{color:var(--muted)}.intake-metrics dd{margin:0;overflow-wrap:anywhere}.intake-metrics~div{margin-block:.8rem}
+
+.customer-capture-preview{display:block;width:100%;min-height:540px;border:1px solid var(--border,#e5d4db);border-radius:12px;background:white}.delivery-record{padding:1.5rem 0;border-top:1px solid var(--border,#e5d4db)}.message-text{white-space:pre-wrap;overflow-wrap:anywhere}.delivery-record .actions{margin:1rem 0}

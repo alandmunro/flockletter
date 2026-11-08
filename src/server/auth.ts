@@ -83,7 +83,7 @@ export function localIdentity(): IdentityProvider {
   };
 }
 export class Authenticator {
-  constructor(readonly db: Database, readonly identity: IdentityProvider) {}
+  constructor(readonly db: Database, readonly identity: IdentityProvider,readonly billingOptions?:import('./customer-billing/service.js').BillingOptions) {}
   async authenticate(request: ExpressRequest): Promise<Actor> {
     const authorization = request.get('authorization') ?? '';
     requireCondition(authorization.startsWith('Bearer ') && authorization.length < 8192, 401, 'sign_in_required', 'A valid bearer credential is required.');
@@ -107,7 +107,7 @@ export class Authenticator {
     catch { throw new AppError(503, 'membership_unavailable', 'Current workspace membership could not be verified. Retry shortly.'); }
     requireCondition(role,403,'membership_required','Current Clerk workspace membership is required.');
     if(role==='member'){
-      const access=await this.db.tenant(identity.workspaceId,sql=>memberPermissions(sql,identity.workspaceId,identity.userId,this.identity.team!));
+      const access=await this.db.tenant(identity.workspaceId,sql=>memberPermissions(sql,identity.workspaceId,identity.userId,this.identity.team!,this.billingOptions));
       return {...identity,actorId:'user:'+identity.userId,owner:false,kind:'session',...access};
     }
     return { ...identity, actorId: `user:${identity.userId}`, owner:true, kind: 'session', scopes: ['read', 'draft:write', 'assets:write', 'audience:summary','campaign:rehearse','campaign:simulate'], brandIds: null };
