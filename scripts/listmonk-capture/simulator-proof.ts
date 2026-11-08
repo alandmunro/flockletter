@@ -14,7 +14,7 @@ export function isolatedSimulator(workspaceId: string, brandId: string) {
     maxAttempts: 1,
     requestHandler: {
       handle: async (req: { body: string | Uint8Array }) => {
-        const body = JSON.parse(Buffer.from(req.body).toString('utf8'));
+        const body = JSON.parse(typeof req.body === 'string' ? req.body : new TextDecoder().decode(req.body));
         wire.push(body);
         const key = body.EmailTags.find((tag: { Name: string }) => tag.Name === 'fl_operation')?.Value;
         assert(key);
@@ -80,6 +80,12 @@ export function isolatedSimulator(workspaceId: string, brandId: string) {
         assert.equal(file.ContentDisposition, 'INLINE');
         assert.equal(file.ContentType, image.mime);
         assert(original.html.includes('cid:' + file.ContentId));
+        assert.equal(typeof file.RawContent, 'string');
+        assert.equal(
+          file.RawContent,
+          image.bytes.toString('base64'),
+          'SES JSON must contain canonical base64 for the unchanged original',
+        );
         assert.deepEqual(Buffer.from(file.RawContent, 'base64'), image.bytes);
       }
     },
