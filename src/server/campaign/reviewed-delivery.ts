@@ -2,6 +2,12 @@ import { createHash } from 'node:crypto';
 import type { Sql } from '../db.js';
 import type { DeliveryEnvelope } from './delivery-provider.js';
 import { rehearsalRow, settleReservation, submissionBlock, type CheckOwner } from './rehearsal.js';
+import { AppError } from '../errors.js';
+import {
+  buildMarketingMessageLinks,
+  unsubscribeProfile,
+  type MarketingLinks,
+} from '../subscribers/marketing-links.js';
 
 type Reviewed = Awaited<ReturnType<typeof rehearsalRow>>;
 export async function deliveryBlock(
@@ -50,6 +56,44 @@ export async function finishIfDone(sql: Sql, id: string) {
       WHERE rehearsal_id=$1 AND state IN ('pending','submitting','uncertain'))`,
     [id],
   );
+}
+
+// Personalize only at the last provider boundary. Drafts, engine callbacks, receipts
+// and customer-facing reports never contain a redeemable capability.
+export async function finalRecipientMessage(
+  sql: Sql,
+  row: Reviewed,
+  message: DeliveryEnvelope,
+  subscriberId: string | null,
+  settings?: MarketingLinks,
+): Promise<DeliveryEnvelope | null> {
+  if (!row.content.unsubscribeProfile) return message;
+  const scope = { workspaceId: message.workspaceId, brandId: message.brandId };
+  if (!settings || !subscriberId || unsubscribeProfile(settings, scope) !== row.content.unsubscribeProfile)
+    return null;
+  try {
+    const { bodyUrl } = await buildMarketingMessageLinks(sql, settings, { ...scope, subscriberId }, true);
+    const footer =
+      '<p style="text-align:center;font:14px Arial,sans-serif"><a href="' +
+      bodyUrl +
+      '">Unsubscribe from this newsletter</a></p>';
+    const legacy =
+      '<p style="font-size:12px;color:#69515d">Preview only. Verified sender details and unsubscribe controls are required before delivery.</p></main></body></html>';
+    const html = message.html.endsWith(legacy)
+      ? message.html.slice(0, -legacy.length) + footer + '</main></body></html>'
+      : message.html.replace(/<\/body><\/html>$/i, footer + '</body></html>');
+    if (html === message.html) return null;
+    return {
+      ...message,
+      html,
+      text: message.text + '\n\nUnsubscribe from this newsletter: ' + bodyUrl,
+      unsubscribe: { url: bodyUrl },
+    };
+  } catch (error) {
+    if (error instanceof AppError && ['unsubscribe_unavailable', 'recipient_ineligible'].includes(error.code))
+      return null;
+    throw error;
+  }
 }
 
 async function originalImages(

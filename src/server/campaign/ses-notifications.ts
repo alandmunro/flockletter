@@ -26,6 +26,22 @@ const notification = z.object({
   Token: z.string().max(8192).optional(),
 });
 type Notification = z.infer<typeof notification>;
+function readNotification(body: Buffer) {
+  try { return notification.parse(JSON.parse(body.toString('utf8'))); }
+  catch { throw invalid(); }
+}
+export class SesFeedbackRouter {
+  private handlers: Map<string, SesNotifications>;
+  constructor(handlers: readonly SesNotifications[]) {
+    this.handlers = new Map(handlers.map(handler => [handler.route.topicArn, handler]));
+  }
+  async handle(db: Database, body: Buffer) {
+    const msg = readNotification(body);
+    const handler = this.handlers.get(msg.TopicArn);
+    if (!handler) throw failed();
+    await handler.verifyAndApply(db, msg);
+  }
+}
 const trustedOrigin = (route: SesRoute) => 'https://sns.' + route.region + '.amazonaws.com';
 function signedBytes(msg: Notification) {
   const keys: (keyof Notification)[] =
@@ -97,12 +113,9 @@ export class SesNotifications {
     }
   }
   async handle(db: Database, body: Buffer) {
-    let msg: Notification;
-    try {
-      msg = notification.parse(JSON.parse(body.toString('utf8')));
-    } catch {
-      throw invalid();
-    }
+    return this.verifyAndApply(db, readNotification(body));
+  }
+  async verifyAndApply(db: Database, msg: Notification) {
     if (msg.TopicArn !== this.route.topicArn || Date.parse(msg.Timestamp) > Date.now() + 5 * 60000)
       throw failed();
     let cert: X509Certificate;

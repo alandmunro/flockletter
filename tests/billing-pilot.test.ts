@@ -5,7 +5,7 @@ import { startDatabase } from '../scripts/database-fixture.js';
 import { recordAccess } from '../scripts/complimentary-access.js';
 import { Database } from '../src/server/db.js';
 import { SandboxBilling } from '../src/server/billing/service.js';
-import { sandboxGateway, type BillingGateway, type SessionResult } from '../src/server/billing/gateway.js';
+import { sandboxGateway, subscriptionPlan, type BillingGateway, type SessionResult } from '../src/server/billing/gateway.js';
 import { CommandService, type Actor } from '../src/server/service.js';
 
 let fixture: Awaited<ReturnType<typeof startDatabase>>,
@@ -75,6 +75,35 @@ beforeEach(async () => {
 const status = () => db.tenant(workspace, (sql) => billing.status(sql, workspace));
 const key = () => randomUUID();
 describe('isolated billing sandbox', () => {
+  it('updates the effective tier only from the reconciled subscription and keeps the original checkout replayable', async () => {
+    const originalKey=key();
+    await billing.checkout(actor,'starter',originalKey);
+    const event = (id:string) => Buffer.from(JSON.stringify({id,kind:'checkout.session.completed',
+      workspace,intent:calls[0],objectId:providerState.id}));
+    providerState={...providerState,status:'active',customer:'cus_fixture',subscription:'sub_fixture',effectivePlan:'starter',url:null};
+    await billing.feedback(event('evt_original'),'signed');
+    providerState={...providerState,effectivePlan:'growth'};
+    await billing.checkout(actor,'starter',originalKey);
+    expect((await status()).plan).toBe('starter');
+    await billing.feedback(event('evt_change'),'signed');
+    await billing.feedback(event('evt_change'),'signed');
+    expect((await status()).plan).toBe('growth');
+    providerState={...providerState,effectivePlan:'starter'};
+    await billing.feedback(event('evt_back'),'signed');
+    expect((await status()).plan).toBe('starter');
+    expect(await db.tenant(workspace,async sql=>(await sql.query("SELECT plan FROM sandbox_checkouts")).rows[0]?.plan)).toBe('starter');
+    expect(await db.tenant(workspace,async sql=>(await sql.query("SELECT count(*)::int n FROM operations WHERE actor_id='system:stripe-sandbox-plan'")).rows[0]?.n)).toBe(2);
+    expect(await new CommandService(db).execute('workspace.get',{},actor)).toMatchObject({entitlement:'not_activated'});
+  });
+  it('accepts only the exact single, catalogued monthly sandbox price and quantity', () => {
+    const price={id:prices.growth,livemode:false,unit_amount:2500,unit_amount_decimal:'2500.00',currency:'usd',
+      recurring:{interval:'month',interval_count:1,usage_type:'licensed'},billing_scheme:'per_unit'} as const;
+    expect(subscriptionPlan(prices,{price,quantity:1})).toBe('growth');
+    for (const change of [{id:'price_other'},{unit_amount_decimal:'2500.01'},{livemode:true},{currency:'cad'},
+      {recurring:{...price.recurring,interval:'year'}},{billing_scheme:'tiered'}] as const)
+      expect(()=>subscriptionPlan(prices,{price:{...price,...change},quantity:1})).toThrow();
+    expect(()=>subscriptionPlan(prices,{price,quantity:2})).toThrow();
+  });
   it('persists one intent before an uncertain external call, reuses it across retries, and never stores a checkout URL', async () => {
     rejectOnce = true;
     await expect(billing.checkout(actor, 'growth', key())).rejects.toMatchObject({

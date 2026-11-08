@@ -63,12 +63,19 @@ function tokenFor(key: Buffer, origin: string, scope: Scope, id: string) {
   return 'v1.' + selector(origin, scope) + '.' + id + '.' + signature;
 }
 type LinkRow = { id: string; token_hash: string };
+export function unsubscribeProfile(settings: MarketingLinks | undefined, scope: Scope) {
+  if (!settings?.signingKey || !settings.scopes.has(selector(settings.origin, scope))) return null;
+  return createHmac('sha256', settings.signingKey)
+    .update(JSON.stringify(['reviewed-marketing-v1', settings.origin, scope.workspaceId, scope.brandId]))
+    .digest('hex');
+}
 
 // Internal worker boundary. The caller has already authorized the exact recipient and holds its brand transaction.
 export async function buildMarketingMessageLinks(
   sql: Sql,
   settings: MarketingLinks,
   recipient: Scope & { subscriberId: string },
+  existingOnly = false,
 ) {
   const scope = settings.scopes.get(selector(settings.origin, recipient));
   requireCondition(
@@ -87,13 +94,15 @@ export async function buildMarketingMessageLinks(
   const fingerprint = createHmac('sha256', settings.signingKey)
     .update(JSON.stringify(['marketing-signer-v1', settings.origin]))
     .digest('hex');
-  const id = randomUUID();
-  const candidate = tokenFor(settings.signingKey, settings.origin, scope, id);
-  await sql.query(
-    `INSERT INTO subscriber_marketing_links(workspace_id,brand_id,id,subscriber_id,signer_fingerprint,token_hash)
+  if (!existingOnly) {
+    const id = randomUUID();
+    const candidate = tokenFor(settings.signingKey, settings.origin, scope, id);
+    await sql.query(
+      `INSERT INTO subscriber_marketing_links(workspace_id,brand_id,id,subscriber_id,signer_fingerprint,token_hash)
     VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (workspace_id,brand_id,subscriber_id,signer_fingerprint) DO NOTHING`,
-    [scope.workspaceId, scope.brandId, id, recipient.subscriberId, fingerprint, hash(candidate)],
-  );
+      [scope.workspaceId, scope.brandId, id, recipient.subscriberId, fingerprint, hash(candidate)],
+    );
+  }
   const row = (
     await sql.query<LinkRow>(
       'SELECT id,token_hash FROM subscriber_marketing_links WHERE subscriber_id=$1 AND signer_fingerprint=$2',

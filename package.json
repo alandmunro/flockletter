@@ -23,6 +23,7 @@
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "api:generate": "node --import tsx scripts/generate-api.ts",
     "support:draft": "node --import tsx scripts/support-draft.ts",
+    "support:inbox": "node --experimental-sqlite --import tsx scripts/support-inbox.ts",
     "audience:verify": "node --import tsx scripts/prove-audience.ts"
   },
   "dependencies": {

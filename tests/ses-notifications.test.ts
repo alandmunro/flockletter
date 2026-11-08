@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { decodeSesEvent, SesNotifications } from '../src/server/campaign/ses-notifications.js';
+import { decodeSesEvent, SesFeedbackRouter, SesNotifications } from '../src/server/campaign/ses-notifications.js';
 import { parseSesRoute, type SesRoute } from '../src/server/campaign/ses-runtime.js';
 import { PrivateListmonk } from '../src/server/campaign/private-listmonk.js';
 import { CommandService } from '../src/server/service.js';
@@ -145,6 +145,17 @@ afterAll(async () => {
 });
 
 describe('signed SES simulator notifications', () => {
+  it('routes only a configured topic and rechecks its signature after selecting the brand', async () => {
+    const other = {...makeRoute('org_other'),topicArn:route.topicArn+'-other'};
+    const first=vi.fn(async () => signer.certificate), second=vi.fn(async () => signer.certificate);
+    const router=new SesFeedbackRouter([new SesNotifications(route,first),new SesNotifications(other,second)]);
+    const payload=signed(notification(other,{eventType:'Send'}));
+    await router.handle(site.db,body(payload));
+    expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledOnce();
+    await expect(router.handle(site.db,body({...payload,TopicArn:route.topicArn}))).rejects.toMatchObject({code:'invalid_provider_event'});
+    await expect(router.handle(site.db,body({...payload,TopicArn:route.topicArn+'-unknown'}))).rejects.toMatchObject({code:'invalid_provider_event'});
+    expect(first).toHaveBeenCalledOnce();
+  });
   it('verifies the signature with an optional subject and rejects changed payloads, wrong topics, SHA-1 and future timestamps', async () => {
     const load = vi.fn(async () => signer.certificate);
     const handler = new SesNotifications(route, load);

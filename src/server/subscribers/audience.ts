@@ -124,10 +124,20 @@ export async function contactDetail(sql: Sql, id: string, cursor?: string): Prom
       sourceDomain: row.source_domain,
       recordedAt: row.recorded_at.toISOString(),
     }));
+  // An owner's practice-import declaration is provenance, not subscriber consent.
+  // Read the original workspace/brand receipt without retaining the uploaded file.
+  const origin = !cursor && (await sql.query<{ recorded_at: Date; row: number }>(`
+    SELECT o.created_at AS recorded_at, (item->>'row')::int AS row
+    FROM operations o CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(o.result->'rows')='array' THEN o.result->'rows' ELSE '[]'::jsonb END) AS item
+    WHERE o.result->>'source'='practice_csv' AND o.result->>'brandId'=current_setting('app.intake_brand_id',true)
+      AND o.result @> jsonb_build_object('rows',jsonb_build_array(jsonb_build_object('subscriberId',$1::text)))
+      AND item->>'subscriberId'=$1 AND item->>'outcome'='pending_added' LIMIT 1`,[id])).rows[0];
   return {
     contact: contactView(person),
     events,
     nextCursor: rows.length > historySize ? events[historySize - 1]!.id : null,
+    ...(origin ? { practiceImport: { row: origin.row, recordedAt: origin.recorded_at.toISOString() } } : {}),
   };
 }
 

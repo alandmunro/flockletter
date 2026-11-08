@@ -1,3 +1,4 @@
+import type { MarketingLinks } from '../subscribers/marketing-links.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { constants } from 'node:fs';
@@ -10,7 +11,7 @@ import type { Database } from '../db.js';
 import { AppError } from '../errors.js';
 import { captureBinding } from './worker.js';
 import type { CheckOwner } from './rehearsal.js';
-import type { SesRuntime } from './ses-runtime.js';
+import type { SesConfiguration } from './ses-runtime.js';
 import { PrivateListmonk } from './private-listmonk.js';
 
 export function privateMessenger(secret: string, receive: (message: unknown) => Promise<void>) {
@@ -72,8 +73,9 @@ export function privateMessenger(secret: string, receive: (message: unknown) => 
 export async function startPrivateMessenger(
   db: Database,
   checkOwner: CheckOwner,
-  ses: SesRuntime | undefined,
+  ses: SesConfiguration | undefined,
   env: NodeJS.ProcessEnv = process.env,
+  marketing?: MarketingLinks,
 ) {
   if (!env.FLOCKLETTER_PRIVATE_ENGINE || env.FLOCKLETTER_PRIVATE_ENGINE === 'off') return;
   const scope = captureBinding(env);
@@ -95,7 +97,7 @@ export async function startPrivateMessenger(
   });
   const { port } = server.address() as AddressInfo;
   const engine = new EmbeddedListmonk('http://127.0.0.1:' + port + '/message', secret);
-  const dispatcher = new PrivateListmonk(db, checkOwner, scope, engine, ses);
+  const dispatcher = new PrivateListmonk(db, checkOwner, scope, engine, ses, marketing);
   return {
     dispatcher,
     async close() {

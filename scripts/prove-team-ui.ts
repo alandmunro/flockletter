@@ -13,6 +13,7 @@ import { loadConfig } from '../src/server/config.js';
 import { Database } from '../src/server/db.js';
 import { CommandService, type Actor } from '../src/server/service.js';
 import type { ClerkTeam } from '../src/server/team.js';
+import type { IssuedInvitation } from '../src/server/team-invitation-provider.js';
 import { emptyContent, type Campaign, type CommandName, type Workspace } from '../src/shared/contracts.js';
 
 const workspace = 'org_local_sample',
@@ -30,6 +31,10 @@ const directory = [
     membership: 'member' as const,
   })),
 ];
+const pilotEmail='browser-invite@example.test';
+const simulatedInvitations:IssuedInvitation[]=Array.from({length:26},(_,i)=>({
+  id:'orginv_fixture_'+i,workspace,role:'org:member',email:'invited'+i+'@example.test',reference:null,state:'pending',
+}));
 const clerk: ClerkTeam = {
   async members(w, offset, limit) {
     return w === workspace
@@ -38,6 +43,22 @@ const clerk: ClerkTeam = {
   },
   async membership(user, w) {
     return w === workspace ? (directory.find((member) => member.userId === user)?.membership ?? null) : null;
+  },
+  async invitations(w, offset, limit) {
+    assert.equal(w, workspace);
+    const pending=simulatedInvitations.map(({id,email})=>({id,email,expiresAt:'2028-12-01T00:00:00.000Z'}));
+    return {total:pending.length, invitations:pending.slice(offset,offset+limit)};
+  },
+  invitePilot:{
+    binding:{workspace,recipients:[pilotEmail]},
+    async inspect(){return {maximum:0,members:directory.map(({userId})=>userId+'@example.test'),invitations:[...simulatedInvitations]};},
+    async lookup(){return [...simulatedInvitations];},
+    async create(request){
+      assert.equal(request.workspace,workspace); assert.equal(request.email,pilotEmail);assert.equal(request.issuer,owner);
+      const row:IssuedInvitation={id:'orginv_browser',workspace,role:'org:member',email:request.email,
+        reference:request.reference,state:'pending'};
+      simulatedInvitations.push(row);return row;
+    },
   },
 };
 function fixtureIdentity(): IdentityProvider {
@@ -197,6 +218,7 @@ async function proveMemberAccess(
     'scope_required',
   );
   await denied(viewerPage, origin, viewer, 'team.list', { offset: 0 }, 403, 'owner_required');
+  await denied(viewerPage, origin, viewer, 'team.invitations', { offset: 0 }, 403, 'owner_required');
 
   const editorPage = await memberPage(browser, origin, editor);
   await editorPage.getByText('Editor access · Trail Reports', { exact: true }).waitFor();
@@ -316,11 +338,27 @@ try {
   page.setDefaultTimeout(8000);
   const button = (name: string) => page.getByRole('button', { name, exact: true });
   await page.goto(origin);
+  await page.route('**/api/v1/commands/team.invitations', (route) => route.abort('failed'));
   await button('Team').click();
   const roster = page.getByRole('table', { name: 'Team roster' });
   await roster.waitFor();
   assert.equal(await roster.locator('tbody tr').count(), 25);
-  await page.getByText('Unlimited', { exact: true }).waitFor();
+  await page.getByText('Unlimited', { exact: true }).first().waitFor();
+  await button('Retry invitation list').waitFor();
+  await page.unroute('**/api/v1/commands/team.invitations');
+  await button('Retry invitation list').click();
+  await page.getByText('invited0@example.test', { exact: true }).waitFor();
+  await button('Next invitations').click();
+  await page.getByText('invited25@example.test', { exact: true }).waitFor();
+  assert.equal(await page.getByText('invited0@example.test', {exact:true}).count(),0);
+  await button('Previous invitations').click();
+  await page.getByText('invited0@example.test', {exact:true}).waitFor();
+  await page.getByLabel('Approved recipient').selectOption(pilotEmail);
+  await button('Send member invitation').click();
+  await page.getByText('Clerk recorded the invitation as pending.',{exact:true}).waitFor();
+  await page.getByLabel('Approved recipient').selectOption(pilotEmail);
+  assert.equal(await button('Send member invitation').count(),0);
+  assert.equal(simulatedInvitations.filter((row)=>row.email===pilotEmail).length,1);
   await screenshot(page, 'team-desktop');
   assert.equal(
     await roster
@@ -424,10 +462,12 @@ try {
   );
   assert.deepEqual(audit, [
     { action: 'team.grant', count: 3 },
+    { action: 'team.invite.recorded', count: 1 },
+    { action: 'team.invite.requested', count: 1 },
     { action: 'team.revoke', count: 2 },
   ]);
   console.info(
-    'Team desktop/mobile, Clerk-fixture paging, focused forms, grant/revoke retry, seat limits and audit passed.',
+    'Team desktop/mobile, Clerk-fixture invitation paging, one synthetic invitation, grant/revoke retry, seat limits and audit passed.',
   );
   await proveMemberAccess(browser, origin, service, alpine, trail);
 } finally {

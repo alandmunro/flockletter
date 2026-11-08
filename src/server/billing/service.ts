@@ -6,6 +6,7 @@ import { workspaceAccess } from '../campaign/access.js';
 import type { Actor } from '../service.js';
 import type { PlanId } from '../../shared/rehearsal.js';
 import type { BillingGateway, BillingIntent, SessionResult } from './gateway.js';
+import { effectiveSandboxPlan, recordSandboxPlan } from './observed-plan.js';
 
 const safeWindow = 23 * 3600000;
 function isUnusedExpiry(
@@ -34,7 +35,7 @@ export class SandboxBilling {
       mode: this.gateway ? 'sandbox' : 'off',
       complimentary: !!access.plan || workspace === this.complimentaryTarget,
       status: intent?.status ?? 'not_started',
-      plan: intent?.plan ?? null,
+      plan: intent ? await effectiveSandboxPlan(sql,intent) : null,
       trialEnd: intent?.trial_end?.toISOString() ?? null,
       restartableId: isUnusedExpiry(intent) ? intent.id : null,
       canOpenPortal:
@@ -363,6 +364,8 @@ export class SandboxBilling {
         'The event is for a different subscription.',
       );
       await this.save(sql, intent, current, true);
+      if (current.effectivePlan && current.subscription && current.customer)
+        await recordSandboxPlan(sql,event.workspace,intent,current.effectivePlan,event.id);
       await sql.query('UPDATE sandbox_events SET finished=true WHERE event_id=$1', [event.id]);
     });
   }

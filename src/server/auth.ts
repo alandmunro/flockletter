@@ -7,6 +7,21 @@ import { digest } from './content.js';
 import { AppError, requireCondition } from './errors.js';
 import type { Actor } from './service.js';
 import {memberPermissions,type ClerkTeam} from './team.js';
+import type { PendingInvitation } from '../shared/team.js';
+import {clerkInvitationPilot} from './team-invitation-provider.js';
+
+type ClerkOrganizations = ReturnType<typeof createClerkClient>['organizations'];
+export async function pendingClerkInvitations(directory: Pick<ClerkOrganizations,'getOrganizationInvitationList'>, workspace: string, offset: number, limit: number) {
+  const page = await directory.getOrganizationInvitationList({ organizationId: workspace, status: ['pending'], offset, limit });
+  if (page.data.length > limit) throw Error('Invalid invitation page.');
+  const invitations: PendingInvitation[] = page.data.map((row) => {
+    if (row.organizationId !== workspace || row.status !== 'pending' || !row.id || !row.emailAddress ||
+        !Number.isSafeInteger(row.expiresAt) || row.expiresAt <= 0)
+      throw Error('Invalid invitation in the workspace directory.');
+    return { id: row.id, email: row.emailAddress, expiresAt: new Date(row.expiresAt).toISOString() };
+  });
+  return { total: page.totalCount, invitations };
+}
 
 export type IdentityProvider = {
   session(request: ExpressRequest): Promise<{ userId: string; workspaceId: string }>;
@@ -16,6 +31,7 @@ export type IdentityProvider = {
 export function clerkIdentity(config: Config): IdentityProvider {
   const clerk = createClerkClient({ secretKey: config.clerkSecretKey, publishableKey: config.clerkPublishableKey });
   const team:ClerkTeam={
+    invitePilot:config.invitationBinding && config.clerkSecretKey ? clerkInvitationPilot(clerk.organizations, config.invitationBinding,config.clerkSecretKey) : undefined,
     async membership(userId,workspaceId){
       const page=await clerk.organizations.getOrganizationMembershipList({organizationId:workspaceId,userId:[userId],limit:2});
       const member=page.data.find(row=>row.publicUserData?.userId===userId);
@@ -29,7 +45,8 @@ export function clerkIdentity(config: Config): IdentityProvider {
         return [{userId:user.userId,name:[user.firstName,user.lastName].filter(Boolean).join(' ')||'Workspace member',
           membership:row.role==='org:admin'?'owner' as const:'member' as const}];
       })};
-    }
+    },
+    invitations: (workspace,offset,limit) => pendingClerkInvitations(clerk.organizations,workspace,offset,limit),
   };
   return {
     team,
@@ -55,7 +72,8 @@ export function clerkIdentity(config: Config): IdentityProvider {
 export function localIdentity(): IdentityProvider {
   return {
     team:{async membership(user,w){return user==='local_owner'&&w==='org_local_sample'?'owner':null;},
-      async members(w,offset){return {total:w==='org_local_sample'?1:0,members:w==='org_local_sample'&&offset===0?[{userId:'local_owner',name:'Local owner',membership:'owner'}]:[]};}},
+      async members(w,offset){return {total:w==='org_local_sample'?1:0,members:w==='org_local_sample'&&offset===0?[{userId:'local_owner',name:'Local owner',membership:'owner'}]:[]};},
+      async invitations(){return {total:0,invitations:[]};}},
     async session(request) {
       requireCondition(['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(request.socket.remoteAddress ?? ''), 403, 'loopback_required', 'Local identity requires loopback access.');
       requireCondition(request.get('authorization') === 'Bearer local-development-only', 401, 'sign_in_required', 'The local development session is required.');

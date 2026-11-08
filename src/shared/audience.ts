@@ -34,4 +34,7 @@ export type ConsentEvent = {
   sourceDomain: string;
   recordedAt: string;
 };
-export type ContactDetail = { contact: AudienceContact; events: ConsentEvent[]; nextCursor: string | null };
+export type ContactDetail = {
+  contact: AudienceContact; events: ConsentEvent[]; nextCursor: string | null;
+  practiceImport?: { row: number; recordedAt: string };
+};

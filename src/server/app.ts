@@ -8,7 +8,8 @@ import { AppError } from './errors.js';
 import { configurationGaps, type Config } from './config.js';
 import type { Authenticator } from './auth.js';
 import { authorize, type CommandService } from './service.js';
-import { SesNotifications } from './campaign/ses-notifications.js';
+import { SesNotifications,SesFeedbackRouter } from './campaign/ses-notifications.js';
+import { sesScopes } from './campaign/ses-runtime.js';
 import { subscriberRoutes } from './subscribers/routes.js';
 import { marketingUnsubscribeRoutes } from './subscribers/marketing-routes.js';
 
@@ -60,7 +61,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     if (!service || !auth) return next(new AppError(503, 'setup_required', 'Workspace operations require the Flockletter database and Clerk backend connection.'));
     next();
   });
-  const sesNotifications=service?.ses && new SesNotifications(service.ses.route);
+  const sesNotifications=service?.ses && new SesFeedbackRouter(sesScopes(service.ses).map(s => new SesNotifications(s.route)));
   app.post('/api/v1/campaign-feedback/ses',express.raw({type:['text/plain','application/json'],limit:'256kb'}),async(req,res)=>{
     if(!sesNotifications) throw new AppError(503,'simulator_not_configured','SES campaign feedback is not configured.');
     if(!Buffer.isBuffer(req.body)) throw new AppError(415,'unsupported_notification','Expected a signed SNS notification.');
@@ -98,7 +99,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
       const release = () => { if (!released) { activeUploads--; released = true; } };
       res.once('finish', release); res.once('close', release);
     }
-    const limit = name==='asset.uploadBatch' ? '29mb' : name==='audience.previewImport' ? '350kb' : (name==='campaign.create'||name==='campaign.update') ? '160kb' : name.startsWith('audience.') ? '4kb' : '64kb';
+    const limit = name==='asset.uploadBatch' ? '29mb' : (name==='audience.previewImport'||name==='audience.applyPracticeImport') ? '350kb' : (name==='campaign.create'||name==='campaign.update') ? '160kb' : name.startsWith('audience.') ? '4kb' : '64kb';
     express.json({ limit, strict: true })(req, res, error => {
       if (error) return next(error);
       void service!.execute(name, req.body, actor).then(result => res.json({ result })).catch(next);

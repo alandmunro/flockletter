@@ -1,3 +1,4 @@
+import { loadMarketingLinks } from './subscribers/marketing-links.js';
 import {startPrivateMessenger} from './campaign/private-messenger.js';
 import {loadSesRuntime} from './campaign/ses-runtime.js';
 import { loadEnvFile } from 'node:process';
@@ -17,6 +18,7 @@ import { sandboxGateway } from './billing/gateway.js';
 
 if (existsSync('.env')) loadEnvFile('.env');
 const config = loadConfig();
+const marketing = loadMarketingLinks(config.origin);
 const ses=loadSesRuntime(process.env);
 let service: CommandService | undefined;
 let messenger:Awaited<ReturnType<typeof startPrivateMessenger>>;
@@ -28,7 +30,7 @@ if (configurationGaps(config).length === 0) {
   await db.verifyBoundary();
   const identity = config.localIdentity ? localIdentity() : clerkIdentity(config);
   const bindings = deliveryBindings(process.env);
-  messenger=await startPrivateMessenger(db,identity.isOwner,ses);
+  messenger=await startPrivateMessenger(db,identity.isOwner,ses,process.env,marketing);
   service = new CommandService(
     db,
     new SubscriberIntake(db, loadIntakeBinding(config), loadLinkBinding(config)),
@@ -39,6 +41,7 @@ if (configurationGaps(config).length === 0) {
     (workspace, brand) => bindings.some((b) => b.workspace === workspace && b.brand === brand),
     ses,
     messenger?.dispatcher,
+    config.environment, marketing,
   );
   auth = new Authenticator(db, identity);
   const binding = captureBinding(process.env);
@@ -54,7 +57,7 @@ if (configurationGaps(config).length === 0) {
     );
   }
   if (bindings.length) {
-    const worker = new DeliveryWorker(db, identity.isOwner, undefined, ses, messenger?.dispatcher);
+    const worker = new DeliveryWorker(db, identity.isOwner, undefined, ses, messenger?.dispatcher, marketing);
     tasks.push(runDeliveryQueue(bindings, (workspace, brand) => worker.tick(workspace, brand), stop.signal));
   }
 }

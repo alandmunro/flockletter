@@ -1,3 +1,4 @@
+import { loadMarketingLinks } from '../subscribers/marketing-links.js';
 import { startPrivateMessenger } from './private-messenger.js';
 import { loadSesRuntime } from './ses-runtime.js';
 import { existsSync } from 'node:fs';
@@ -10,6 +11,7 @@ import { DeliveryWorker } from './delivery-worker.js';
 
 if (existsSync('.env')) loadEnvFile('.env');
 const config = loadConfig();
+const marketing = loadMarketingLinks(config.origin);
 const ses = loadSesRuntime(process.env);
 const bindings = deliveryBindings(process.env);
 if (!bindings.length || configurationGaps(config).length)
@@ -21,8 +23,8 @@ const stop = new AbortController();
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => stop.abort());
 try {
   await db.verifyBoundary();
-  messenger = await startPrivateMessenger(db, identity.isOwner, ses);
-  const worker = new DeliveryWorker(db, identity.isOwner, undefined, ses, messenger?.dispatcher);
+  messenger = await startPrivateMessenger(db, identity.isOwner, ses, process.env, marketing);
+  const worker = new DeliveryWorker(db, identity.isOwner, undefined, ses, messenger?.dispatcher, marketing);
   await runDeliveryQueue(bindings, (w, b) => worker.tick(w, b), stop.signal);
 } finally {
   await messenger?.close();

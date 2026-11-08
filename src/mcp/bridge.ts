@@ -28,7 +28,7 @@ export function createMcpServer(call: ApiCaller, assetRoot?: string) {
     server.registerTool(name.replace('.', '_'), {
       description: definition.description,
       inputSchema: definition.schema.shape,
-      annotations: { readOnlyHint: !definition.mutation, destructiveHint: false, idempotentHint: true, openWorldHint: ['rehearsal.approve','rehearsal.process'].includes(name) },
+      annotations: { readOnlyHint: !definition.mutation, destructiveHint: false, idempotentHint: true, openWorldHint: ['rehearsal.approve','rehearsal.process','sender.deliveryReadiness'].includes(name) },
     }, async (input: Record<string, unknown>) => result(name, definition.schema.parse(input)));
   }
   if (assetRoot) server.registerTool('asset_upload_files', {

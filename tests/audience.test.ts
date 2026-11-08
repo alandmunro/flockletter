@@ -262,6 +262,7 @@ describe('brand audience workspace', () => {
     try {
       const names = (await mcp.listTools()).tools.map((t) => t.name);
       expect(names).toContain('audience_summary');
+      expect(names).not.toContain('audience_applyPracticeImport');
       for (const name of ['audience_list', 'audience_contact', 'audience_unsubscribe'])
         expect(names).not.toContain(name);
       const result = await mcp.callTool({ name: 'audience_summary', arguments: { brandId: brand } });

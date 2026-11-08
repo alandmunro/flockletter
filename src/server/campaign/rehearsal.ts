@@ -17,6 +17,7 @@ import {
 import { simulatorDestination } from './ses-simulator.js';
 import { reservePractice, utcPeriod, workspaceAccess } from './access.js';
 import { requireSegment } from '../subscribers/segments.js';
+import { buildMarketingMessageLinks, unsubscribeProfile, type MarketingLinks } from '../subscribers/marketing-links.js';
 
 // Every rehearsal transport accepts only syntactically valid reserved-domain destinations.
 export function isPracticeAddress(address: string) {
@@ -29,7 +30,7 @@ type Row = {
   id: string;
   campaign_id: string;
   version: number;
-  content: CampaignContent;
+  content: CampaignContent & { unsubscribeProfile?: string };
   creator_id: string;
   actor_id: string;
   audience: RehearsalAudience;
@@ -62,9 +63,10 @@ type ReportRow = Pick<
   | 'excluded'
   | 'reason'
 > &
-  Pick<Rehearsal, 'pending' | 'captured' | 'skipped' | 'submitting' | 'uncertain' | 'accepted' | 'rejected'>;
+  Pick<Rehearsal, 'pending' | 'captured' | 'skipped' | 'submitting' | 'uncertain' | 'accepted' | 'rejected'> &
+  { includes_unsubscribe: boolean };
 const reportColumns = `r.id,r.campaign_id,r.version,r.audience,r.transport,r.segment_id,r.segment_name,r.state,r.due_at,r.selected,r.excluded,r.reason,
-  counts.pending,counts.captured,counts.skipped,counts.submitting,counts.uncertain,counts.accepted,counts.rejected`;
+  r.content ? 'unsubscribeProfile' AS includes_unsubscribe,counts.pending,counts.captured,counts.skipped,counts.submitting,counts.uncertain,counts.accepted,counts.rejected`;
 const countRecipients = `CROSS JOIN LATERAL (
   SELECT count(*) FILTER(WHERE p.state='pending')::int pending,count(*) FILTER(WHERE p.state='captured')::int captured,
     count(*) FILTER(WHERE p.state IN('cancelled','excluded'))::int skipped,
@@ -94,6 +96,7 @@ function reportView(row: ReportRow): Rehearsal {
     submitting: row.submitting,
     skipped: row.skipped,
     reason: row.reason,
+    ...(row.includes_unsubscribe ? { includesUnsubscribe: true } : {}),
   };
 }
 export async function rehearsalReport(sql: Sql, id: string): Promise<Rehearsal> {
@@ -142,6 +145,7 @@ export async function reviewRehearsal(
   segmentId?: string,
   transport: RehearsalTransport = 'capture',
   providerBinding: string | null = null,
+  unsubscribe?: { settings: MarketingLinks | undefined },
 ) {
   requireCondition(
     !segmentId || audience === 'confirmed',
@@ -176,6 +180,10 @@ export async function reviewRehearsal(
     'access_required',
     'A complimentary plan is required for a brand audience rehearsal.',
   );
+  const scope = {workspaceId:actor.workspaceId,brandId:draft.brandId};
+  const profile = unsubscribe && unsubscribeProfile(unsubscribe.settings,scope);
+  if (unsubscribe) requireCondition(audience === 'confirmed' && transport !== 'capture' && profile,422,
+    'unsubscribe_unavailable','Choose confirmed test contacts, a provider rehearsal and a configured unsubscribe signer for this brand.');
   const id = randomUUID();
   let segment: { id: string; name: string } | undefined;
   let selected = 1,
@@ -214,6 +222,11 @@ export async function reviewRehearsal(
     );
     if(transport==='ses_simulator' || transport==='listmonk_ses') requireCondition(hits.every(p=>simulatorDestination(p.email_normalized)),422,'simulator_audience','Choose a group containing only the fixed SES simulator test aliases.');
     recipients = hits;
+    if (unsubscribe?.settings) {
+      // Commit each capability with the review. A later provider acknowledgment may be lost even when mail was accepted.
+      for (const recipient of hits)
+        await buildMarketingMessageLinks(sql,unsubscribe.settings,{...scope,subscriberId:recipient.id});
+    }
     selected = hits.length;
     excluded = hits[0]!.total - selected;
   }
@@ -241,7 +254,7 @@ export async function reviewRehearsal(
       id,
       draft.id,
       draft.version,
-      JSON.stringify(draft.content),
+      JSON.stringify({...draft.content,unsubscribeProfile:profile || undefined}),
       actor.userId,
       actor.actorId,
       audience,

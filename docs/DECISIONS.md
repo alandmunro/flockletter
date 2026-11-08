@@ -48,6 +48,8 @@ Open signup describes the intended launched product. The foundation provides cam
 
 ## Implementation decisions under D-030
 
+**D-041 · Pilot readiness and workspace operations.** Under the owner's instruction to continue independently, staging can exercise separately bound SES workspaces, explicit holds and recipient-specific unsubscribe links. Use an attended review and reserved addresses. Add a fictional-address CSV import, shared plan and team capacity views, workspace delivery alerts, an operator support-inbox rehearsal and a disposable 90-day purge and restore. These implementation choices do not select commercial terms or authorize customer mail, public list imports, hosted account erasure or new paid infrastructure. [First-newsletter workflow](implementation/DELIVERY_READINESS.md)
+
 | ID | Decision | Basis |
 | --- | --- | --- |
 | D-033 | Give current workspace owners a brand-specific contact directory, consent history and unsubscribe action. Make aggregate counts an optional, brand-specific connection scope. Show current counts in campaign preflight. | The owner requested continued development. The implementation team selected the audience workflow from FL-AUD-001/002/004 and FL-CAM-002. Import policy, tracking, recipient snapshots and live delivery remain separate work. [Audience workflow](implementation/AUDIENCE.md) |

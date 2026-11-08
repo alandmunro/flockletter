@@ -29,6 +29,7 @@ export type SessionResult = {
   status: string;
   trialEnd: Date | null;
   effectiveEnd?: Date | null;
+  effectivePlan?: PlanId;
 };
 export interface BillingGateway {
   account: string;
@@ -40,6 +41,35 @@ export interface BillingGateway {
 }
 const invalid = () =>
   new AppError(503, 'sandbox_mismatch', 'The Flockletter billing sandbox could not be verified.');
+type CatalogPrice = Pick<Stripe.Price, 'id' | 'livemode' | 'currency' | 'billing_scheme' | 'unit_amount'> & {
+  unit_amount_decimal: { toString(): string } | null;
+  recurring: Pick<
+    NonNullable<Stripe.Price['recurring']>,
+    'interval' | 'interval_count' | 'usage_type'
+  > | null;
+};
+export function subscriptionPlan(
+  prices: Record<PlanId, string>,
+  item: { price: CatalogPrice; quantity?: number },
+) {
+  const price = item.price;
+  const plan = plans.find((candidate) => prices[candidate.id] === price.id);
+  if (
+    !plan ||
+    item.quantity !== 1 ||
+    price.livemode ||
+    price.currency !== 'usd' ||
+    price.billing_scheme !== 'per_unit' ||
+    price.unit_amount !== plan.priceMinor ||
+    (price.unit_amount_decimal !== null &&
+      !new RegExp('^' + plan.priceMinor + '(?:\\.0+)?$').test(price.unit_amount_decimal.toString())) ||
+    price.recurring?.interval !== 'month' ||
+    price.recurring.interval_count !== 1 ||
+    price.recurring.usage_type !== 'licensed'
+  )
+    throw invalid();
+  return plan.id;
+}
 export function sandboxGateway(
   origin: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -103,17 +133,34 @@ export function sandboxGateway(
       throw invalid();
     let status = s.status ?? 'open',
       trialEnd: Date | null = null;
+    let effectivePlan: PlanId | undefined;
     const subscription = typeof s.subscription === 'object' && s.subscription ? s.subscription : null;
     if (s.status === 'complete' && subscription) {
       if (
         subscription.livemode ||
         subscription.metadata.fl_intent !== intent.id ||
         subscription.metadata.fl_workspace !== intent.workspace_id ||
+        !ref(s.customer) ||
         ref(subscription.customer) !== ref(s.customer) ||
-        subscription.items.data.length !== 1 ||
-        subscription.items.data[0]?.price.id !== intent.provider_price
+        subscription.items.has_more ||
+        subscription.items.data.length !== 1
       )
         throw invalid();
+      effectivePlan = subscriptionPlan(prices, subscription.items.data[0]!);
+      if (
+        effectivePlan !== intent.plan &&
+        (!intent.observed_at || intent.subscription_id !== subscription.id)
+      ) {
+        // A portal update may beat the first webhook. Verify the original checkout price before accepting the transition.
+        const original = await stripe.checkout.sessions.listLineItems(s.id, { limit: 2 });
+        if (
+          original.has_more ||
+          original.data.length !== 1 ||
+          original.data[0]?.price?.id !== intent.provider_price ||
+          original.data[0]?.quantity !== 1
+        )
+          throw invalid();
+      }
       let pm = subscription.default_payment_method;
       if (!pm && subscription.status === 'trialing' && typeof s.customer === 'string') {
         const customer = await stripe.customers.retrieve(s.customer, {
@@ -139,6 +186,7 @@ export function sandboxGateway(
           ? new Date(subscription.ended_at * 1000)
           : null,
       trialEnd,
+      effectivePlan,
     };
   }
   return {

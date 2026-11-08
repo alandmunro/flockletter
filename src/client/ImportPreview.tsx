@@ -7,6 +7,7 @@ import {
 } from '../shared/import-preview.js';
 import type { Brand } from '../shared/contracts.js';
 import { base64, type Api } from './api.js';
+import { PracticeImport } from './PracticeImport.js';
 
 const issueLabels: Record<ImportIssue, string> = {
   invalid_email: 'Invalid or missing email address',
@@ -54,7 +55,7 @@ function PreviewResults({ result }: { result: ImportPreviewResult }) {
   );
 }
 
-export function ImportPreview({ api, brand }: { api: Api; brand: Brand }) {
+export function ImportPreview({ api, brand, onApplied }: { api: Api; brand: Brand; onApplied: () => void }) {
   const fileId = useId(),
     columnId = useId();
   const fileControl = useRef<HTMLInputElement>(null);
@@ -189,6 +190,9 @@ export function ImportPreview({ api, brand }: { api: Api; brand: Brand }) {
         <>
           <p role="status">Preview complete.</p>
           <PreviewResults result={result} />
+          {result.practiceRowLimit && selection && (result.rows > 0 && result.rows <= result.practiceRowLimit
+            ? <PracticeImport api={api} brand={brand} file={selection.file} column={column} onApplied={onApplied} />
+            : <p>Practice imports accept 1 to {result.practiceRowLimit} data rows at a time.</p>)}
         </>
       )}
     </details>

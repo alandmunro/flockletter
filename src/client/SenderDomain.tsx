@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { operationKey, type Api } from './api.js';
 import type { Brand } from '../shared/contracts.js';
-import type { SenderStatus } from '../shared/sender.js';
+import type { DeliveryReadiness, SenderStatus } from '../shared/sender.js';
 export function SenderDomain({ api, brand }: { api: Api; brand: Brand }) {
   const [value, setValue] = useState(''),
     [status, setStatus] = useState<SenderStatus>(),
@@ -9,7 +9,11 @@ export function SenderDomain({ api, brand }: { api: Api; brand: Brand }) {
     [error, setError] = useState('');
   const input = useId(),
     key = useRef(operationKey());
+  const [report, setReport] = useState<DeliveryReadiness>();
+  const selected = useRef(brand.id);
   useEffect(() => {
+    selected.current = brand.id;
+    setReport(undefined);
     let current = true;
     api
       .call<SenderStatus>('sender.status', { brandId: brand.id })
@@ -39,12 +43,26 @@ export function SenderDomain({ api, brand }: { api: Api; brand: Brand }) {
       );
       key.current = operationKey();
       setStatus(next);
+      setReport(undefined);
       setValue(next.domain ?? '');
       if (next.lookupUnavailable) setError('The DNS lookup was unavailable. Retry in one minute.');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not check the domain.');
     } finally {
       setBusy(false);
+    }
+  }
+  async function checkProvider() {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api.call<DeliveryReadiness>('sender.deliveryReadiness', { brandId: brand.id });
+      if (selected.current === brand.id) setReport(result);
+    } catch (err) {
+      if (selected.current === brand.id)
+        setError(err instanceof Error ? err.message : 'Could not inspect delivery setup.');
+    } finally {
+      if (selected.current === brand.id) setBusy(false);
     }
   }
   return (
@@ -98,6 +116,36 @@ export function SenderDomain({ api, brand }: { api: Api; brand: Brand }) {
             Check DNS record
           </button>
         </>
+      )}
+      <h3>Delivery readiness</h3>
+      <button type="button" className="btn secondary" disabled={busy} onClick={() => void checkProvider()}>
+        Check delivery setup
+      </button>
+      {report && (
+        <div>
+          <p role="status">
+            {report.simulatorConfigured
+              ? 'Configured for an AWS simulator test.'
+              : 'Setup is incomplete for the AWS simulator.'}{' '}
+            Customer delivery is disabled on staging.
+          </p>
+          {report.providerCheckedAt && (
+            <p>Provider checked {new Date(report.providerCheckedAt).toLocaleString()}.</p>
+          )}
+          <ul>
+            {report.checks.map((check) => (
+              <li key={check.label}>
+                <strong>{check.label}</strong> ·{' '}
+                {check.state === 'ready'
+                  ? 'Ready'
+                  : check.state === 'unverified'
+                    ? 'Unverified'
+                    : 'Action needed'}
+                {check.state !== 'ready' && <div>{check.detail}</div>}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {error && <p role="alert">{error}</p>}
     </section>

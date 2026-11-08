@@ -16,7 +16,23 @@ export const importPreviewInput = z
   })
   .strict();
 export type ImportPreviewInput = z.infer<typeof importPreviewInput>;
+export const practiceImportRows = 250;
+export const practiceImportDeclaration = 'fictional-contact-permission-v1' as const;
+export const practiceImportDeclarationText = 'I have permission to contact these fictional addresses on behalf of this brand.';
+export const applyImportInput = importPreviewInput.extend({
+  operationKey: z.uuid(),
+  declaration: z.literal(practiceImportDeclaration),
+});
+export type ApplyImportInput = z.infer<typeof applyImportInput>;
 export type ImportIssue = 'invalid_email' | 'column_count' | 'duplicate';
+export type ApplyOutcome = ImportIssue | 'pending_added' | 'kept_pending' | 'kept_confirmed' |
+  'kept_suppressed' | 'reserved_domain_required' | 'contact_limit';
+export type ApplyImportResult = {
+  brandId: string;
+  source: 'practice_csv';
+  declaration: typeof practiceImportDeclaration;
+  rows: { row: number; outcome: ApplyOutcome; subscriberId?: string }[];
+};
 export type ImportPreviewResult = {
   rows: number;
   invalid: number;
@@ -26,6 +42,7 @@ export type ImportPreviewResult = {
   pending: number;
   suppressed: number;
   examples: { row: number; issue: ImportIssue }[];
+  practiceRowLimit?: number;
 };
 
 export function parseImportCsv(text: string): string[][] {

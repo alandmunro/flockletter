@@ -25,5 +25,6 @@ describe('operator support drafts', () => {
     await expect(supportDraft('plans', async () => '<think>hidden</think>')).rejects.toThrow();
     await expect(supportDraft('audience', async () => 'x'.repeat(2510))).rejects.toThrow();
     await expect(supportDraft('audience', async () => 'Unsafe' + String.fromCharCode(27) + 'control')).rejects.toThrow();
+    await expect(supportDraft('audience', async () => 'Unsafe' + String.fromCodePoint(0x202e) + 'direction')).rejects.toThrow();
   });
 });
