@@ -5,6 +5,7 @@ import console from 'node:console';
 import { URL } from 'node:url';
 import pg from 'pg';
 import { applyMigrations } from './apply-migrations.mjs';
+import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
 
 async function run() {
   const tag = process.argv[2];
@@ -16,14 +17,19 @@ async function run() {
   input.close();
   let migration, runtime;
   try {
-    migration = new URL(JSON.parse(line.value).migrationUrl);
-    runtime = new URL(process.env.DATABASE_URL);
+    // In a protected, echo-disabled terminal the operator can paste the existing
+    // migration URI directly. Never accept a credential on the command line.
+    const single = process.argv[3] === '--uri-stdin', pair=process.argv[3] === '--pair-stdin';
+    const data = single ? {migrationUrl:line.value} : JSON.parse(line.value);
+    migration = new URL(data.migrationUrl);
+    runtime = new URL(pair ? data.runtimeUrl : process.env.DATABASE_URL);
   } catch {
     throw new Error('Invalid private staging release input.');
   }
   if (
     process.env.APP_ENV !== 'staging' ||
     !['postgres:', 'postgresql:'].includes(migration.protocol) ||
+    !['postgres:', 'postgresql:'].includes(runtime.protocol) ||
     migration.host !== runtime.host ||
     migration.pathname !== '/flockletter_staging' ||
     runtime.pathname !== migration.pathname ||
@@ -47,7 +53,14 @@ async function run() {
   } finally {
     await client.end();
   }
-  console.log('Flockletter migration 002 applied to isolated staging.');
+  const runtimeCheck = new pg.Client({connectionString:runtime.href,connectionTimeoutMillis:8000,statement_timeout:30000});
+  await runtimeCheck.connect();
+  try {
+    await verifyRuntimeBoundary(runtimeCheck,{database:'flockletter_staging',role:'flockletter_staging_runtime'});
+  } finally {
+    await runtimeCheck.end();
+  }
+  console.log('Flockletter migrations applied to isolated staging.');
 }
 try {
   await run();

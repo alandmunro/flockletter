@@ -1,8 +1,10 @@
 # Staging setup and acceptance
 
-The Flockletter staging web service runs in the existing Render workspace, Oregon region. It uses the Free plan and the implementation branch with automatic deployment off. Its Clerk development application, staging database and release secrets belong to Flockletter.
+The Flockletter staging web service runs in the existing Render workspace, Oregon region. It uses Render’s Free web compute plan and deploys manually from the implementation branch. Its Clerk development application, staging database and release secrets belong to Flockletter.
 
 The authenticated workspace is deployed at the [staging hostname](https://flockletter.frostyflamingosoftware.com). The service uses its dedicated Clerk development application and restricted runtime connection. Render monitors `/readyz` for database readiness. [Render service](https://dashboard.render.com/web/srv-dbn5lb6gekts738v63ag) · [Verification record](VERIFICATION.md)
+
+The [staging campaign pilot](CAMPAIGN_PILOT.md) and [workspace workflows](WORKSPACE_OPERATIONS.md) extend the original foundation checks below. The web process polls the explicitly bound synthetic brand for both capture and provider rehearsals. Approved schedules persist in PostgreSQL while the web service sleeps. If a rehearsal comes due during that time, opening staging wakes the service and its worker processes the overdue run. External delivery and live checkout remain disabled. [Render Free instance behavior](https://render.com/docs/free#spinning-down-on-idle)
 
 ## Service configuration
 
@@ -27,6 +29,8 @@ Set secrets in Render's Environment screen, not in source control or chat:
 Configure Clerk Organizations and Google, Apple, Microsoft and email verification-code login in the Flockletter instance. Only current `org:admin` members receive foundation authority. Use two synthetic organizations for acceptance. Do not reuse another application's identities, production keys or customer membership.
 
 Create the dedicated logical database and migration/runtime identities through an authorized database administration path. Before shared-host activation, inspect database storage, connections, memory/CPU and effective inherited grants; preserve existing applications' roles/settings. The runtime must have CONNECT/USAGE and DML on Flockletter tables only, no schema/database CREATE, role ownership, superuser or BYPASSRLS authority, and no role membership that grants those privileges. Revoke default PUBLIC privileges on the new logical database. Configure the runtime to connect only to the Flockletter database. If the shared cluster grants CONNECT through PUBLIC, inspect the runtime role’s effective foreign table, sequence, schema and privileged-function access through the catalogs before activation. Keep the migration credential outside the running web service.
+
+For a release while the web service is on Free and the database rejects external connections, use a temporary private Render background worker in the staging region, on the tested commit. Give it no secrets, public endpoint, linked environment group, or automatic deployments. In its Render Shell disable input echo/history; run `APP_ENV=staging node scripts/migrate-staging.mjs <release-tag> --pair-stdin` and supply exactly one private JSON line containing `migrationUrl` and `runtimeUrl` from the existing Flockletter staging release group. Restore echo immediately afterward. The helper checks both database/role identities, applies the migration and verifies effective privileges with the runtime role. Remove the temporary worker after verification. Do not upgrade the web service or open the shared database to external connections for a release.
 
 Apply `npm run db:migrate` using `MIGRATION_DATABASE_URL` and `RUNTIME_DATABASE_ROLE` from a protected release environment. This runs the idempotent foundation schema under a migration lock. It does not create database roles or change shared host grants. Then deploy with only the restricted `DATABASE_URL`. Startup verifies the dedicated database name, role privileges and forced row-level policies. A failed check must be fixed, not bypassed.
 

@@ -1,0 +1,15 @@
+# Workspace erasure and recovery drill
+
+Run `npm test -- tests/retention-drill.test.ts tests/retention.test.ts`. The exercise starts its own temporary PostgreSQL cluster on loopback and supplies its own connection details. It requires local process and socket access. [Operator implementation](../../scripts/retention-drill.ts) · [Acceptance test](../../tests/retention-drill.test.ts)
+
+The test fills every managed Flockletter table with records for two fictional workspaces. They share subscriber and brand identifiers and an email address. Each workspace has two brands. Records include image bytes, campaign drafts, Listmonk handoffs, subscriber consent, tokens, contact-bearing operation results, and operator grants.
+
+For this exercise the clock starts at the verified effective end of a canceled sandbox subscription. The operator retains an active, unverified or complimentary account. At 90 full days it deletes the selected workspace in foreign-key order. The deletion role exists in the disposable cluster, has no login and obeys row-level security. The transaction verifies that every managed table is empty for the selected workspace before recording a receipt with its identifier and two timestamps. A failed transaction restores the rows and writes no receipt. Repeated requests return the original receipt. The application keeps its existing database privileges.
+
+## Restore from a stale snapshot
+
+1. The drill clones the source into a second logical database before cancellation data is erased. Its runtime role cannot connect.
+2. The source erases the due workspace. The surviving workspace records an unsubscribe in one brand and a complaint in another. The operator freezes the source and seals a checkpoint in a separate, restricted logical database. It contains erasure receipts and evidence for terminal consent states. It contains no email addresses or message bodies.
+3. With the source offline, the operator applies the checkpoint to the restored snapshot. It erases the closed account, restores the surviving brand-specific suppressions, consumes outstanding confirmation tokens and cancels unattempted confirmation deliveries for the affected contacts. Runtime access returns in the same transaction after reconciliation succeeds. An injected failure exercises rollback and keeps runtime access closed. Repeating recovery preserves the same result.
+
+This covers application-owned PostgreSQL records for FL-AUD-005, FL-AT-016 and FL-OPS-005. The clock is the staging convention. Hosted deletion, legal holds, backup expiry, retention of minimal records, external provider copies, separate engine storage and exported files require the O-009 policy and operating evidence. The fixture’s source, restore and checkpoint share one disposable cluster. A production checkpoint needs independently protected storage and recovery verification. The hosted workspace continues to report its retention preview. [Requirements](../SRD.md#data-hosting-and-service-operation) · [Self-host backup exercise](SELF_HOST.md#run-the-isolated-restore-drill)

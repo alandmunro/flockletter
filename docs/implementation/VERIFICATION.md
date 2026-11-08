@@ -35,6 +35,8 @@ An oversized base64 string exposed stack exhaustion in a repeated-group validati
 
 ## Hosted staging
 
+The subsequent PR #2 implementation adds separately gated first-party subscriber intake. Its staging database proof, captured email contract, admin UI and remaining live-provider gates are recorded in the [intake verification](SUBSCRIBER_INTAKE_OPERATIONS.md#november-7-staging-proof).
+
 The separate Oregon web service has manual deploys. The initial gated deployment reached `live` on November 6 at 22:55 UTC. Render deployed the hosted sign-in revision `ef08d78` on November 7 at 02:55 UTC. The custom hostname resolves to the staging service, and Render issued its TLS certificate. [Staging website](https://flockletter.frostyflamingosoftware.com)
 
 - A synthetic user completed Clerk passwordless email-code sign-in over the private HTTPS route and created a staging organization. Refreshing the Flockletter page retained the session and displayed the signed-in workspace setup status. This exercise used Clerk's development verification code.
@@ -61,3 +63,49 @@ Apple and Microsoft authenticated callbacks, Clerk verification-code delivery to
 - For hosted staging, the local model drafted the eight origin tests, the owner decision notes and a sign-in evidence summary. Chat verified the tests, corrected the support-forwarding assumption against the actual routing table and edited the evidence to distinguish sign-in from new-account signup. Chat handled the permission decisions, database bootstrap, proxy, provider setup, Clerk browser policy, two focused HTTP regression tests and live browser checks.
 - For credential activation, the local model drafted the database and support-routing verification note. Chat reviewed it against the release output and clarified that the runtime lacks creation privileges. Chat configured Clerk, Render and Cloudflare, implemented the bounded session refresh and verified the authenticated workspace, image upload, campaign preview and persistence after restart.
 - For the social sign-in and forwarding checks, the local model drafted the evidence note. Chat performed the provider and mailbox tests, checked the results and edited the note to distinguish the addressed aliases from the destination Inbox.
+
+## November 7 staging campaign and workspace verification
+
+Flockletter PR #7 added captured campaign rehearsal, public plan limits and the isolated billing adapter. On hosted staging a signed-in synthetic owner prepared the “First snow at the trailhead” subject, attached the original test image and captured one reviewed message. Its version and captured content survived refresh. The Listmonk integration test captured one confirmed fictional recipient and excluded the pending subscriber. [Campaign checks](https://github.com/alandmunro/flockletter/actions/runs/42418233060)
+
+Workspace tests cover Clerk owner, editor and viewer journeys on real HTTP/PostgreSQL with synthetic membership, group-selected campaign snapshots after group deletion, lost confirmations, duplicate work, explicit date selection, opt-outs after review, test-only Stripe restart with archived evidence, and a 90-day retention preview. Native Chrome also submitted the marketing opt-out form with JavaScript disabled. A disposable two-database Docker restore rejected a stale subscriber snapshot and accepted a fresh snapshot that preserved the opt-out. The local Qwen model produced a support draft based on the three approved prices. Sensitive categories return a human handoff. [Workspace operations](WORKSPACE_OPERATIONS.md)
+
+## Newsletter Studio
+
+FL-AT-017/036 have automated proof for a saved Studio revision across the browser, HTTP, MCP and PostgreSQL. Tests cover two workspaces, scoped original assets, rejected unknown blocks, retained earlier content, recovery from a lost acknowledgment, stale approvals and frozen captures. The self-hosted build includes the dependency inventory and notices. [Studio workflow](NEWSLETTER_STUDIO.md) · [Engine proof](LISTMONK_CAPTURE.md#newsletter-studio-revisions) · [Staging PR](https://github.com/alandmunro/flockletter/pull/11)
+
+| Client or renderer | Observed result |
+| --- | --- |
+| WebKit, 900 and 390 pixel viewports | One original PNG filled the 552-pixel body and two 268-pixel desktop columns. Ignoring image styles preserved the desktop fit. On the phone-width preview, all three images filled the available 358 pixels and the columns stacked in reading order. The preview made no external requests. |
+| Gmail web, received message | An authorized self-test reached the test inbox. All three placements decoded at the original 480 × 180 resolution, displayed at 552, 268 and 268 pixels, and retained their separate alternative text. The collection button kept its destination. The received plaintext and HTML matched the fixture after line-ending normalization. All three image references used the one original PNG, verified by SHA-256. |
+| Outlook | Actual client rendering is pending access to a signed-in test mailbox. The downloadable synthetic message can be opened there without another delivery. |
+| Gmail phone app, received message | The owner opened the same self-test on their phone and confirmed that the two smaller photos stacked vertically, the collection button was visible and the message fit without sideways scrolling. |
+
+## Scheduled staging delivery worker
+
+The worker integration suite uses disposable PostgreSQL, HTTP and the MCP SDK. It checks a future schedule, an opt-out before dispatch (zero attempts), timeout followed by one receipt, concurrent workers, crash recovery, original image bytes, cancellation while a receipt is unresolved, changed drafts, missing reservations and cross-tenant access. A separate real Listmonk 6.2.0 loopback run scheduled two synthetic recipients; one was excluded, and one accepted submission produced exactly one authenticated messenger callback after a lost acknowledgment. Neither path contacted an external email provider. [Worker coverage](../../tests/staging-delivery-worker.test.ts) · [Engine proof](LISTMONK_CAPTURE.md)
+
+The same 10 worker integration cases and 2 scheduler cases passed on the Flockletter Render staging host in an isolated database with the web service’s environment credentials removed. GitHub also ran the [pinned Listmonk container](https://github.com/alandmunro/flockletter/actions/runs/42432727774/job/128584934927) and the [restore drill](https://github.com/alandmunro/flockletter/actions/runs/42432727783/job/128584935114).
+
+Local Qwen drafted the dashboard outcome display, recording-provider scaffold and messenger assertions. Chat corrected the attempt count for skipped recipients, accessibility labels, fixture assumptions and MIME checksum validation; it designed the durable claim/reconciliation, reviewed the implementation and ran the staging checks. No token or cost attribution is estimated.
+# November 8 staging verification
+
+[PR 19](https://github.com/alandmunro/flockletter/pull/19) passed the Linux checks, private Listmonk exercise and isolated database restore. Commit `2342a06` deployed to the existing free staging web service. Both staging origins reported healthy, with external campaign sending disabled.
+
+In the signed-in verification workspace, a three-row CSV produced one new pending contact, one duplicate and one skipped address outside the reserved test domain. Opening the new contact showed its CSV row and no recorded subscriber consent. The Team screen read one member and zero invitations from staging Clerk. The Workspace panel calculated the Starter comparison and identified the missing SES binding and credentials while reporting the staging worker ready. This check did not send mail, start a Stripe trial or enroll a real subscriber.
+
+## D-043: remaining integrations, November8
+
+Built the separate operator surface, native/automated support, protected cross-workspace trial enrollment and hosted retention/recovery integrations. Multiple restricted-role PostgreSQL tests and exact HTTP/MCP authorization tests cover case expiry/revocation, same-case policy previews, immutable request keys, private namespace permission drift, unknown external outcomes and the erasure/write race. Source and acceptance details are in [platform completion](PLATFORM_COMPLETION.md), [trial protection](TRIAL_ABUSE.md), and [hosted retention](HOSTED_RETENTION.md).
+
+The new normal browser journey opens a workspace-only operator case, drafts/reviews the exact support answer, records captured delivery and fits a390px screen. Existing seven customer workflows also pass normal desktop/mobile journeys with disposable data. [Desktop capture](evidence/platform-operator-desktop.png) · [Phone capture](evidence/platform-operator-mobile.png). Captures contain synthetic data.
+
+Local Qwen drafts were used for fixture/test scaffolding, support UI presentation, retention types and playbook notes; chat corrected invalid imports/types, overly broad assertions and misleading capture/authority wording. Architecture, money/security decisions, implementation integration and all final review remain in chat. Percentages are not inferred from unmeasured token usage.
+
+Live Stripe, Resend, AWS Object Lock/engine-disposal and hosted customer erasure checks remain activation work. No real customer email, charge, deletion or production release is represented by these captured/disposable tests. Staging release result is recorded after the reviewed merge/deployment.
+
+Final local release checks: **88 test files,561 passing tests and2 explicitly gated engine tests**; lint, TypeScript and production build passed. Enabling the real private engine separately passed all5 engine tests, including both gated checks. Dependency audit found zero vulnerabilities; the locked Studio notice/build check passed. Both desktop/mobile operator and seven customer-workflow browser journeys passed.
+
+The first D-043 hosted release merged through PR22 as `6fe47b0de448c5165de2b94e8924e51b87a73084` and became live in Render deploy `dep-dboeco15efls73dkievg`. Migrations were applied only to `flockletter_staging` using its existing restricted release roles; runtime permission/guard verification passed. `/readyz` returned200 with no gaps and sending disabled. `/api/config` reported staging, platform capture and captured/exercise customer workflows. A foreign-origin operator request returned403. The actual Clerk-signed owner control room loaded and stayed signed in after refresh; no business workspace was initialized merely to test credentials. The public staging site remains on the free plan.
+
+Live native email acceptance still needs one authorized receiving-provider verification: Resend's current API reference documents provider-computed `authentication.dmarc`, while its OpenAPI document currently omits the field. The adapter treats missing/null/non-pass proof as quarantine and never trusts raw `Authentication-Results` headers. [API reference](https://resend.com/docs/api-reference/emails/retrieve-received-email) · [official OpenAPI](https://github.com/resend/resend-openapi/blob/main/resend.yaml). Outbound Reply-To is derived from the stored participant-bound thread, not customer input.

@@ -2,13 +2,29 @@
 
 ## Current authorization
 
+On November 8 the owner authorized all seven remaining customer workstreams, asked for much more local-model coding with chat oversight, and requested a staging application to exercise within 12 hours. D-042 and [the integration plan](docs/implementation/COMPLETE_WORKFLOWS.md) extend the earlier foundation scope. Complete reusable implementations and normal UI/API/MCP paths. Explicit captured exercises must use the same durable state machines while external activation stays separately configured. Continue without routine questions while the owner is away. Record local drafts actually used and corrections made.
+
+The owner requested all independently buildable work after the staging assessment. D-034 covers the staging campaign pilot, sender ownership checks, protected complimentary grants, customer administration, Stripe sandbox integration and independent engine tests. D-037 adds a separate, explicitly approved synthetic provider rehearsal and a real Listmonk integration in isolation. The original staging provider stores its receipts locally. Preserve old capture approvals; unresolved provider outcomes require lookup, never a speculative resend. [Pilot operation](docs/implementation/CAMPAIGN_PILOT.md)
+
+Under the owner's direction to continue building, D-033 adds an owner audience directory and consent history, durable brand-specific opt-out and an optional aggregate-only assistant capability. Use the existing Flockletter subscriber records and verify populated flows with disposable addresses. [Audience workflow and verification](docs/implementation/AUDIENCE.md)
+
 The owner authorized implementation of Flockletter PR #2 on November 7, 2026. This adds the Flockletter side of first-party subscriber intake, scoped owner controls, confirmation and unsubscribe, suppression and captured staging tests. Keep public FFA collection, production and live-provider activation behind the gates in [the intake specification](docs/implementation/FFA_SUBSCRIBER_INTAKE.md). FFA PR #181 is the separate storefront proposal.
 
 The owner has authorized the foundation implementation and staging verification, and asked the assistant to make reasonable implementation decisions without routine confirmation. Build the independent application shell, isolated database setup, canonical UI/API/MCP operations, campaign drafts, bounded batch images, preview and actionable validation. Use the approved visual system and exact supplied logo. Record decisions and evidence in docs/implementation. Production deployment, live mailing and paid public activation are outside this workstream. Existing FFA staging may be resumed when needed; this does not authorize changing production or another application's data/settings. Gather genuinely missing configuration together after completing independent work.
 
 Read [the SRD](docs/SRD.md), [decisions](docs/DECISIONS.md) and [phase 1 review](docs/PHASE_1.md) before work. Accepted owner decisions, proposed requirements and unresolved decisions are distinct. Do not silently promote a proposal to an accepted decision. Later explicit owner instructions take precedence; update the documents to reflect them.
 
+D-035 covers brand-specific member preparation, static group capture, support drafts, retention preview and isolated self-host recovery under D-030. These workflows use explicit scopes and the same source of authority in UI, API and MCP. [Workspace workflows](docs/implementation/WORKSPACE_OPERATIONS.md)
+
+D-036 authorizes the staging Newsletter Studio. Preserve authored content on unsupported input, original brand assets, and review of each saved revision. Keep the editor’s distributed notice inventory synchronized with dependency changes. [Editor notices](docs/implementation/STUDIO_LICENSES.md)
+
+D-038 adds a staging-only choice between local feedback and an optional operator-bound SES mailbox simulator. Keep older rehearsal approvals on their selected method. AWS simulator access requires an explicitly reviewed AWS method. Protect its credentials and frozen sender configuration. Report AWS contract checks independently of live AWS evidence and the isolated Listmonk exercise. [Campaign feedback](docs/implementation/CAMPAIGN_FEEDBACK.md)
+
+D-039 adds two explicitly reviewed private Listmonk methods for the bound staging brand. Use Flockletter’s protected database for operation state and receipts. The engine and its disposable database use loopback. The local method stays inside Flockletter. The optional SES method can submit only to AWS-owned simulator mailboxes. [Private Listmonk operation](docs/implementation/PRIVATE_LISTMONK.md)
+
 ## Product and public repository boundaries
+
+D-041 covers the additional staging implementation. Use server-owned SES mappings, separately reviewed personal unsubscribe links, and the synthetic import, support and retention exercises. Read [delivery readiness](docs/implementation/DELIVERY_READINESS.md) before working on the provider boundary. Production mailing, public paid activation and retention on hosted customer data retain their separate release requirements.
 
 - The product is Flockletter; the repository slug is `flockletter`.
 - Flockletter is an independent open-source mailing SaaS. Frosty Flamingo Apparel is its first intended customer.
@@ -22,6 +38,8 @@ Read [the SRD](docs/SRD.md), [decisions](docs/DECISIONS.md) and [phase 1 review]
 Delegate bounded mechanical coding, boilerplate, test scaffolding, repetitive conversions, documentation scaffolding and first-draft commit messages to the configured local coding model when available. Use the locally installed model through the `llm` command; keep machine-specific model configuration outside this public repository. Never select removed or unavailable models.
 
 Keep architecture, product intent, security, money, tenant isolation, acceptance criteria and final review with the primary assistant. Supply the local model with the relevant facts and constraints, then review its output before use. Preserve the local service's recommended sampling defaults and allow sufficient reasoning time; do not impose a small token budget. If one correction does not resolve a draft's problems, finish that assignment in the primary assistant. If the local service is unavailable or no suitable mechanical assignment exists, continue and explain why.
+
+For bounded mechanical drafts, use the optional `llm --mechanical --stats` mode when the local command supports it. This mode must use a verified template for the installed model, preserve its sampling defaults and context, and enforce at most two concurrent requests. It avoids extended reasoning for routine drafts. Security, billing policy and integration still require primary review. Keep the machine-specific adapter outside this repository.
 
 Every completion report must identify actual local-model and primary-assistant contributions, including corrected or replaced drafts and skipped delegation. Report token or cost percentages only when measured.
 

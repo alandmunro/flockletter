@@ -1,0 +1,37 @@
+.audience-groups > details,
+.audience-groups > .field,
+.audience-groups article > details,
+.audience-groups article > form,
+.audience-groups article > button {
+  margin-block-start: 1rem;
+}
+.audience-groups summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.audience-groups form {
+  display: grid;
+  gap: 0.75rem;
+  justify-items: start;
+  margin-block: 0.75rem;
+}
+.audience-groups form .field {
+  width: min(100%, 36rem);
+  min-width: 0;
+}
+.audience-groups input,
+.audience-groups textarea {
+  max-width: 100%;
+}
+.audience-groups article h3 {
+  overflow-wrap: anywhere;
+}
+.audience-groups dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.5rem;
+}
+.audience-groups dd {
+  margin: 0.3rem 0;
+  font-weight: 600;
+}

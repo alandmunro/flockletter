@@ -1,0 +1,549 @@
+import { useEffect, useRef, useState } from 'react';
+import type { Campaign, CommandName } from '../shared/contracts.js';
+import {
+  isListmonkMethod,
+  practiceMailbox,
+  type Rehearsal,
+  type RehearsalAudience,
+  type RehearsalTransport,
+  type WorkspaceAccess,
+  type Usage,
+} from '../shared/rehearsal.js';
+import { operationKey, type Api } from './api.js';
+import type { SegmentDirectory } from '../shared/segments.js';
+import { ProviderOutcomes } from './ProviderOutcomes.js';
+
+const showError = (e: unknown) =>
+  e instanceof Error ? e.message : 'Flockletter could not complete this request.';
+const reasonText: Record<string, string> = {
+  authority_revoked: 'The reviewer no longer has access.',
+  access_changed: 'Workspace access changed.',
+  draft_changed: 'The saved draft changed.',
+  simulator_unavailable:
+    'The approved Amazon SES simulator configuration is no longer available for this brand.',
+  engine_unavailable: 'The private Listmonk test is unavailable for this brand.',
+  engine_render_failed: 'Listmonk could not prepare the reviewed message.',
+  unsubscribe_unavailable: 'The reviewed unsubscribe setup changed. Check the brand and review again.',
+  cancelled_by_owner: 'Cancelled by a workspace owner or authorized connection.',
+};
+type Message = { subject: string; text: string; html: string; mailbox: string };
+const methodText: Record<
+  RehearsalTransport,
+  { label: string; action: string; help: string; audienceGuide?: 'feedback' | 'ses' }
+> = {
+  capture: {
+    label: 'Flockletter capture',
+    action: 'capture',
+    help: 'The captured message stays inside Flockletter.',
+  },
+  provider_test: {
+    label: 'Staging test provider',
+    action: 'provider test',
+    help: 'The staging provider records one result per test recipient.',
+  },
+  feedback_test: {
+    label: 'Local feedback test',
+    action: 'local feedback test',
+    help: 'Flockletter simulates delivery and feedback locally.',
+    audienceGuide: 'feedback',
+  },
+  ses_simulator: {
+    label: 'Amazon SES mailbox simulator',
+    action: 'SES simulator test',
+    help: 'Approving this test submits mail to Amazon SES using only AWS simulator addresses. Customer inboxes receive no mail.',
+    audienceGuide: 'ses',
+  },
+  listmonk_test: {
+    label: 'Private Listmonk test',
+    action: 'private Listmonk test',
+    help: 'The message stays inside Flockletter. Listmonk prepares it for a simulated delivery.',
+    audienceGuide: 'feedback',
+  },
+  listmonk_ses: {
+    label: 'Listmonk with Amazon SES simulator',
+    action: 'Listmonk SES simulator test',
+    help: 'Listmonk prepares the reviewed message. Approving this test lets Flockletter send it only to AWS-owned simulator mailboxes.',
+    audienceGuide: 'ses',
+  },
+};
+type AvailableMethods = { methods: RehearsalTransport[]; unsubscribeAvailable?: true };
+export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
+  const [audience, setAudience] = useState<RehearsalAudience>('test');
+  const [unsubscribeBrand,setUnsubscribeBrand] = useState('');
+  const [choice, setChoice] = useState<{ brandId: string; method: RehearsalTransport }>({
+    brandId: draft.brandId,
+    method: 'capture',
+  });
+  const transport = choice.brandId === draft.brandId ? choice.method : 'capture';
+  const audienceGuide = methodText[transport].audienceGuide;
+  const [directory, setDirectory] = useState<(AvailableMethods & { brandId: string; error?: string }) | null>(
+    null,
+  );
+  const currentDirectory = directory?.brandId === draft.brandId ? directory : null;
+  const options: RehearsalTransport[] = currentDirectory?.methods ?? ['capture'];
+  const methodMissing = !options.includes(transport);
+  const [chosenGroup, setChosenGroup] = useState({ brandId: '', id: '' });
+  const [groups, setGroups] = useState<{ brandId: string; directory: SegmentDirectory } | null>(null);
+  const [groupError, setGroupError] = useState('');
+  const selectedGroup = chosenGroup.brandId === draft.brandId ? chosenGroup.id : '';
+  const groupOptions = groups?.brandId === draft.brandId ? groups.directory.items : null;
+  const selectionMissing = Boolean(
+    selectedGroup && groupOptions && !groupOptions.some((group) => group.id === selectedGroup),
+  );
+  const [scheduled, setScheduled] = useState(false);
+  const scheduleTime = useRef<HTMLInputElement>(null);
+  const [listed, setListed] = useState<{ brandId: string; campaignId: string; rows: Rehearsal[] } | null>(
+    null,
+  );
+  const items = listed?.brandId === draft.brandId && listed.campaignId === draft.id ? listed.rows : [];
+  const [message, setMessage] = useState<Message | null>(null);
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
+  const [revision, refresh] = useState(0);
+  const [reportRevision, updateReports] = useState(0);
+  const latestPrivateApproval = useRef(0);
+  const [approvalRevision, followPrivateApproval] = useState(0);
+  const keys = useRef(new Map<string, string>());
+  useEffect(() => {
+    setChoice({ brandId: draft.brandId, method: 'capture' });
+  }, [draft.brandId]);
+  useEffect(() => {
+    let current = true;
+    api
+      .call<AvailableMethods>('rehearsal.methods', { brandId: draft.brandId })
+      .then(({ methods }) => {
+        const supported = methods.filter((method) => Object.hasOwn(methodText, method));
+        if (!supported.includes('capture')) throw new Error('The response was missing the capture method.');
+        if (current) setDirectory({ brandId: draft.brandId, methods: supported });
+      })
+      .catch((error: unknown) => {
+        if (current) setDirectory({ brandId: draft.brandId, methods: ['capture'], error: showError(error) });
+      });
+    return () => {
+      current = false;
+    };
+  }, [api, draft.brandId, revision]);
+  useEffect(() => {
+    if (audience !== 'confirmed') return;
+    let active = true;
+    setGroupError('');
+    setGroups(null);
+    api
+      .call<SegmentDirectory>('segment.list', { brandId: draft.brandId })
+      .then((directory) => {
+        if (active) setGroups({ brandId: draft.brandId, directory });
+      })
+      .catch((e: unknown) => {
+        if (active) setGroupError(showError(e));
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, audience, draft.brandId, revision]);
+  useEffect(() => {
+    let current = true;
+    let timer: number | undefined;
+    let delay = 3000;
+    const deadline = Date.now() + 120_000;
+    function scheduleReport() {
+      if (Date.now() + delay > deadline) return;
+      timer = window.setTimeout(() => void loadReports(true), delay);
+      delay = Math.min(delay * 2, 12_000);
+    }
+    async function loadReports(follow: boolean) {
+      if (!current || (follow && Date.now() >= deadline)) return;
+      if (follow && document.visibilityState !== 'visible') {
+        scheduleReport();
+        return;
+      }
+      try {
+        const rows = await api.call<Rehearsal[]>('rehearsal.list', {
+          brandId: draft.brandId,
+          campaignId: draft.id,
+        });
+        if (!current || approvalRevision !== latestPrivateApproval.current) return;
+        setListed({ brandId: draft.brandId, campaignId: draft.id, rows });
+        if (follow) updateReports((value) => value + 1);
+        if (
+          rows.some(
+            (row) =>
+              isListmonkMethod(row.transport) &&
+              row.state === 'queued' &&
+              Date.parse(row.dueAt) <= Date.now(),
+          )
+        )
+          scheduleReport();
+      } catch (e) {
+        if (current && !follow) setError(showError(e));
+      }
+    }
+    void loadReports(false);
+    return () => {
+      current = false;
+      window.clearTimeout(timer);
+    };
+  }, [api, draft.brandId, draft.id, revision, approvalRevision]);
+  async function mutate<T>(name: CommandName, input: Record<string, unknown>) {
+    const fingerprint = JSON.stringify([name, input]),
+      key = keys.current.get(fingerprint) ?? operationKey();
+    keys.current.set(fingerprint, key);
+    const result = await api.call<T>(name, { operationKey: key, ...input });
+    keys.current.delete(fingerprint);
+    return result;
+  }
+  async function action(fn: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    setMessage(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError(showError(e));
+    } finally {
+      setBusy(false);
+      refresh((v) => v + 1);
+    }
+  }
+  const context = { brandId: draft.brandId, campaignId: draft.id };
+  async function approve(item: Rehearsal) {
+    const approved = await mutate<Rehearsal>('rehearsal.approve', { brandId: draft.brandId, id: item.id });
+    const due = Date.parse(approved.dueAt) <= Date.now();
+    if (isListmonkMethod(approved.transport) && approved.id === item.id && approved.campaignId === draft.id) {
+      setListed((current) => {
+        if (current?.brandId !== draft.brandId || current.campaignId !== draft.id) return current;
+        return {
+          ...current,
+          rows: current.rows.map((row) =>
+            row.id === approved.id && row.state === 'reviewed' ? approved : row,
+          ),
+        };
+      });
+      if (due) followPrivateApproval(++latestPrivateApproval.current);
+    }
+    if (due) await mutate('rehearsal.process', { brandId: draft.brandId, id: item.id });
+  }
+  return (
+    <section className="card" aria-labelledby="rehearsal-heading">
+      <h2 id="rehearsal-heading">Campaign rehearsal</h2>
+      <p>Review the saved version and test recipients before approving a rehearsal.</p>
+      <fieldset disabled={busy}>
+        <div className="field-grid">
+          <div className="field">
+            <label htmlFor="rehearsal-method">Rehearsal method</label>
+            <select
+              id="rehearsal-method"
+              aria-describedby="rehearsal-method-help"
+              value={transport}
+              onChange={(e) =>
+                setChoice({ brandId: draft.brandId, method: e.target.value as RehearsalTransport })
+              }
+            >
+              {methodMissing && (
+                <option value={transport} disabled>
+                  {methodText[transport].label} (unavailable)
+                </option>
+              )}
+              {options.map((method) => (
+                <option key={method} value={method}>
+                  {methodText[method].label}
+                </option>
+              ))}
+            </select>
+            {currentDirectory?.error && (
+              <p role="alert">
+                Could not load test methods for this brand. {currentDirectory.error}{' '}
+                <button type="button" className="btn secondary" onClick={() => refresh((v) => v + 1)}>
+                  Reload methods
+                </button>
+              </p>
+            )}
+            {methodMissing && <p className="help">Choose an available method before reviewing this test.</p>}
+          </div>
+          <div className="field">
+            <label htmlFor="capture-audience">Practice audience</label>
+            <select
+              id="capture-audience"
+              value={audience}
+              onChange={(e) => setAudience(e.target.value as RehearsalAudience)}
+            >
+              <option value="test">One test mailbox</option>
+              <option value="confirmed">Confirmed test contacts in this brand</option>
+            </select>
+          </div>
+          {audience === 'confirmed' && (
+            <div className="field">
+              <label htmlFor="capture-group">Audience group</label>
+              <select
+                id="capture-group"
+                disabled={!groupOptions}
+                value={selectedGroup}
+                onChange={(event) => setChosenGroup({ brandId: draft.brandId, id: event.target.value })}
+              >
+                <option value="">Entire brand</option>
+                {selectionMissing && (
+                  <option value={selectedGroup}>Group unavailable · choose another</option>
+                )}
+                {groupOptions?.map((group) => (
+                  <option value={group.id} key={group.id}>
+                    {group.name}
+                  </option>
+                ))}
+              </select>
+              {groupError && (
+                <p role="alert">
+                  {groupError}{' '}
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => refresh((value) => value + 1)}
+                  >
+                    Reload groups
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
+          <div className="field">
+            <label>
+              <input type="checkbox" checked={scheduled} onChange={(e) => setScheduled(e.target.checked)} />{' '}
+              Schedule for later
+            </label>
+            {audience === 'confirmed' && transport !== 'capture' && currentDirectory?.unsubscribeAvailable &&
+              <label><input type="checkbox" checked={unsubscribeBrand === draft.brandId}
+                onChange={e => setUnsubscribeBrand(e.target.checked ? draft.brandId : '')} /> Include a personal one-click unsubscribe link</label>}
+            {scheduled && (
+              <>
+                <label htmlFor="capture-time">Scheduled time (local)</label>
+                <input ref={scheduleTime} id="capture-time" type="datetime-local" required />
+              </>
+            )}
+          </div>
+        </div>
+        <p className="help" id="rehearsal-method-help">
+          {audience === 'confirmed' &&
+            'Requires a complimentary plan and up to 25 confirmed addresses on reserved test domains. '}
+          {audience === 'test' && audienceGuide !== 'ses' && `This rehearsal uses ${practiceMailbox}. `}
+          {methodText[transport].help}
+          {audienceGuide === 'feedback' && audience === 'confirmed' && (
+            <>
+              {' '}
+              Use <code>bounce@delivery.test</code> for a permanent bounce,{' '}
+              <code>complaint@delivery.test</code> for a complaint, or <code>delay@delivery.test</code> for a
+              temporary bounce.
+            </>
+          )}
+          {audienceGuide === 'feedback' &&
+            audience === 'test' &&
+            ' The fixed test mailbox simulates successful delivery.'}
+          {audienceGuide === 'ses' && audience === 'confirmed' && (
+            <>
+              {' '}
+              Select a group containing only <code>{practiceMailbox}</code>, <code>bounce@delivery.test</code>{' '}
+              or <code>complaint@delivery.test</code>.
+            </>
+          )}
+        </p>
+        <button
+          className="btn"
+          type="button"
+          disabled={methodMissing || (audience === 'confirmed' && (!groupOptions || selectionMissing))}
+          onClick={() =>
+            void action(async () => {
+              const at = scheduled ? scheduleTime.current?.value : '';
+              if (scheduled && (!at || !Number.isFinite(Date.parse(at)) || Date.parse(at) <= Date.now()))
+                throw new Error('Enter a future local time before creating this scheduled review.');
+              await mutate('rehearsal.review', {
+                ...context,
+                expectedVersion: draft.version,
+                audience,
+                ...(transport === 'capture' ? {} : { transport }),
+                ...(audience === 'confirmed' && selectedGroup ? { segmentId: selectedGroup } : {}),
+                ...(audience === 'confirmed' && transport !== 'capture' && currentDirectory?.unsubscribeAvailable && unsubscribeBrand === draft.brandId ? { includeUnsubscribe: true } : {}),
+                ...(at ? { dueAt: new Date(at).toISOString() } : {}),
+              });
+            })
+          }
+        >
+          Review {methodText[transport].action}
+        </button>
+      </fieldset>
+      {error && (
+        <p className="notice error" role="alert">
+          {error}
+        </p>
+      )}
+      {items.map((item) => {
+        const method = item.transport ?? 'capture';
+        const providerTest = method !== 'capture';
+        const uncertainAction = isListmonkMethod(method) ? 'Check rehearsal status' : 'Check provider status';
+        const recipientRevision = isListmonkMethod(method)
+          ? `${revision}/${item.state}/${item.state === 'queued' && Date.parse(item.dueAt) <= Date.now() ? reportRevision : 0}`
+          : revision;
+        return (
+          <article className="card" key={item.id}>
+            <h3>
+              {providerTest &&
+                (method === 'provider_test' ? 'Staging provider test · ' : `${methodText[method].label} · `)}
+              {item.segment?.name ?? (item.audience === 'test' ? 'Test mailbox' : 'Confirmed test audience')}{' '}
+              · version {item.version}
+            </h3>
+            <p>
+              <strong>{item.state}</strong> · {new Date(item.dueAt).toLocaleString()} · {item.selected}{' '}
+              selected · {item.excluded} excluded at review
+            </p>
+            {providerTest ? (
+              <p>
+                {item.accepted} accepted by the test provider · {item.rejected} rejected · {item.uncertain}{' '}
+                uncertain · {item.submitting} submitting · {item.pending} pending · {item.skipped} skipped or
+                cancelled
+              </p>
+            ) : (
+              <p>
+                {item.captured} captured · {item.pending} pending · {item.skipped} skipped or cancelled
+              </p>
+            )}
+            {item.reason && <p>{reasonText[item.reason] ?? item.reason}</p>}
+            {item.includesUnsubscribe && <p>Each eligible test recipient gets a personal link and one-click unsubscribe headers.</p>}
+            {methodText[method].audienceGuide === 'ses' && item.state === 'reviewed' && (
+              <p className="help">{methodText[method].help}</p>
+            )}
+            {providerTest && item.state === 'reviewed' && currentDirectory && !options.includes(method) && (
+              <p className="help">
+                This method is unavailable for this brand. Refresh rehearsals to check again.
+              </p>
+            )}
+            <div className="actions">
+              {item.state === 'reviewed' && (
+                <button
+                  className="btn"
+                  disabled={busy || (providerTest && !options.includes(method))}
+                  onClick={() => void action(() => approve(item))}
+                >
+                  Approve {methodText[method].action}
+                </button>
+              )}
+              {(item.state === 'queued' || (providerTest && item.uncertain > 0)) && (
+                <button
+                  className="btn"
+                  disabled={busy}
+                  onClick={() =>
+                    void action(async () => {
+                      await mutate('rehearsal.process', { brandId: draft.brandId, id: item.id });
+                    })
+                  }
+                >
+                  {providerTest && item.uncertain > 0 ? uncertainAction : 'Process if due'}
+                </button>
+              )}
+              {['reviewed', 'queued'].includes(item.state) && (
+                <button
+                  className="btn secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    void action(async () => {
+                      await mutate('rehearsal.cancel', { brandId: draft.brandId, id: item.id });
+                    })
+                  }
+                >
+                  Cancel rehearsal
+                </button>
+              )}
+              {!providerTest && item.captured > 0 && (
+                <button
+                  className="btn secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    void action(async () => {
+                      setMessage(
+                        await api.call<Message>('rehearsal.message', { brandId: draft.brandId, id: item.id }),
+                      );
+                    })
+                  }
+                >
+                  Open captured email
+                </button>
+              )}
+            </div>
+            {providerTest && (
+              <ProviderOutcomes
+                api={api}
+                brandId={draft.brandId}
+                rehearsalId={item.id}
+                revision={recipientRevision}
+              />
+            )}
+          </article>
+        );
+      })}
+      <button
+        className="btn secondary"
+        disabled={busy}
+        onClick={() => {
+          setError('');
+          refresh((v) => v + 1);
+        }}
+      >
+        Refresh rehearsals
+      </button>
+      {message && (
+        <div className="card">
+          <h3>Captured email</h3>
+          <p>
+            {message.subject} · {message.mailbox}
+          </p>
+          <iframe
+            className="preview-frame"
+            sandbox=""
+            title="Captured campaign email"
+            srcDoc={message.html}
+          />
+          <details>
+            <summary>Plain-text email</summary>
+            <pre>{message.text}</pre>
+          </details>
+        </div>
+      )}
+    </section>
+  );
+}
+export function WorkspaceAccessPanel({ api }: { api: Api }) {
+  const [data, setData] = useState<{ access: WorkspaceAccess; usage: Usage }>(),
+    [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    api
+      .call<{ access: WorkspaceAccess; usage: Usage }>('workspace.access', {})
+      .then((value) => {
+        if (active) setData(value);
+      })
+      .catch((e) => {
+        if (active) setError(showError(e));
+      });
+    return () => {
+      active = false;
+    };
+  }, [api]);
+  return (
+    <section className="card">
+      <h2>Workspace access and practice usage</h2>
+      {error ? (
+        <p role="alert">{error}</p>
+      ) : !data ? (
+        <p role="status">Loading access…</p>
+      ) : (
+        <>
+          <p>{data.access.plan ? 'Complimentary · ' + data.access.plan : 'Preparation access'}</p>
+          <p>
+            Practice usage for {data.usage.period} (UTC). {data.usage.campaigns} campaigns and{' '}
+            {data.usage.messages} messages used. {data.usage.reservedCampaigns} campaigns and{' '}
+            {data.usage.reservedMessages} messages reserved.
+          </p>
+          <p className="help">
+            Practice usage is tracked separately from a paid plan. Local rehearsals stay inside Flockletter. AWS charges its usual delivery rate for mailbox simulator submissions.
+          </p>
+        </>
+      )}
+    </section>
+  );
+}

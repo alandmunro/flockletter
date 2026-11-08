@@ -1,6 +1,7 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": false, "outDir": "dist/server", "rootDir": "src", "declaration": true },
+  "compilerOptions": { "noEmit": false, "outDir": "dist/server", "rootDir": "src", "declaration": true, "allowJs": true },
+  "files": ["src/server/runtime-boundary.mjs", "src/shared/runtime-tables.json"],
   "include": ["src/server", "src/shared", "src/mcp"],
   "exclude": ["src/client"]
 }

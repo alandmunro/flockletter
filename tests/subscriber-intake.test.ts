@@ -13,6 +13,7 @@ import { CommandService, type Actor } from '../src/server/service.js';
 import { SubscriberIntake, suppress } from '../src/server/subscribers/intake.js';
 import { loadIntakeBinding, type IntakeBinding } from '../src/server/subscribers/config.js';
 import { actionUrl } from '../src/server/subscribers/tokens.js';
+import { buildMarketingMessageLinks, loadMarketingLinks, redeemMarketingLink } from '../src/server/subscribers/marketing-links.js';
 import {
   CapturedConfirmation,
   ResendConfirmation,
@@ -167,6 +168,26 @@ afterEach(async () => {
 });
 
 describe('FFA first-party subscriber intake', () => {
+  it('NL-009/011: the scoped readiness probe checks the source and worker without enrolling anyone', async () => {
+    const probe = (site = binding.sourceDomain, token = credential) => http(path(), {
+      method: 'HEAD', headers: { authorization: 'Bearer ' + token, 'x-flockletter-source-domain': site },
+    });
+    const response = await probe();
+    expect(response.status).toBe(204);
+    expect(response.headers.get('x-flockletter-confirmation-mode')).toBe('capture');
+    expect(await rows('SELECT id FROM subscribers')).toEqual([]);
+    expect(await rows('SELECT bucket FROM subscriber_rate_buckets')).toEqual([]);
+    expect((await probe('wrong.example')).status).toBe(503);
+    const other = await issue(['read']);
+    expect((await probe(binding.sourceDomain, other.token)).status).toBe(403);
+    await mode(false);
+    expect((await probe()).status).toBe(503);
+    await mode(true);
+    await rows("UPDATE subscriber_intake_settings SET heartbeat_at=now()-interval '10 minutes'");
+    expect((await probe()).status).toBe(503);
+    removed = true;
+    expect((await probe()).status).toBe(403);
+  });
   it('FI-001/002/003: matches the FFA server contract, atomically deduplicates concurrent contacts and replays', async () => {
     const key = id();
     const results = await Promise.all([
@@ -448,6 +469,32 @@ describe('FFA first-party subscriber intake', () => {
     expect((await post(form(), id(), another.token)).status).toBe(429);
     expect(await rows('SELECT id FROM subscriber_outbox')).toHaveLength(1);
   });
+  it('FI-012: each rate window keeps its allowance until its full duration has elapsed', async () => {
+    expect((await post()).status).toBe(202);
+    for (const [bucket, limit, recentAge, expiredAge] of [
+      ['brand-minute', 60, '15 seconds', '61 seconds'],
+      ['brand-day', 1000, '2 hours', '25 hours'],
+    ] as const) {
+      // Offset from the boundary so the old calendar-based reset fails at every time of day.
+      const window = await rows(
+        `UPDATE subscriber_rate_buckets SET requests=$2,
+          window_at=date_trunc('second', clock_timestamp()) - $3::interval - interval '250 milliseconds'
+          WHERE bucket=$1 RETURNING window_at`,
+        [bucket, limit, recentAge],
+      );
+      expect(window).toHaveLength(1);
+      expect((await post()).status).toBe(429);
+      const afterRejection = await rows('SELECT window_at FROM subscriber_rate_buckets WHERE bucket=$1', [bucket]);
+      expect(afterRejection).toEqual(window);
+      await rows('UPDATE subscriber_rate_buckets SET window_at=clock_timestamp()-$2::interval WHERE bucket=$1', [
+        bucket, expiredAge,
+      ]);
+      expect((await post()).status).toBe(202);
+      const afterExpiry = await rows('SELECT requests FROM subscriber_rate_buckets WHERE bucket=$1', [bucket]);
+      expect(afterExpiry).toEqual([{ requests: 1 }]);
+    }
+    expect(await rows('SELECT id FROM subscriber_outbox')).toHaveLength(1);
+  });
   it('FI-013: only a signed feedback event tied to this delivery can suppress; replay and soft bounce are harmless', async () => {
     const key = 'whsec_' + randomBytes(32).toString('base64');
     const live = { ...binding, mode: 'live' as const, webhookSecret: key };
@@ -554,6 +601,26 @@ describe('FFA first-party subscriber intake', () => {
     expect(await (await post()).json()).toEqual(signupAccepted);
     expect((await rows('SELECT state FROM subscribers'))[0]?.state).toBe('unsubscribed');
   });
+  it('keeps a marketing message opt-out after a real first-party confirmation, an intake pause and a repeated storefront signup', async () => {
+    expect((await post()).status).toBe(202);
+    const confirmation=await delivered();
+    expect((await action('confirm',confirmation.confirm)).status).toBe(200);
+    const person=(await rows('SELECT id FROM subscribers'))[0]!.id;
+    const scope={workspaceId:binding.workspaceId,brandId:binding.brandId};
+    const marketing=loadMarketingLinks(binding.origin,{
+      FLOCKLETTER_UNSUBSCRIBE_BINDINGS:JSON.stringify([scope]),
+      FLOCKLETTER_UNSUBSCRIBE_SIGNING_KEY:randomBytes(32).toString('hex'),
+    })!;
+    const envelope=await db.brand(scope.workspaceId,scope.brandId,sql=>buildMarketingMessageLinks(sql,marketing,{...scope,subscriberId:person}));
+    await mode(false);
+    await redeemMarketingLink(db,marketing,new URL(envelope.bodyUrl).searchParams.get('t')!);
+    await mode(true);
+    expect(await (await post()).json()).toEqual(signupAccepted);
+    expect(await rows('SELECT state FROM subscribers')).toEqual([{state:'unsubscribed'}]);
+    expect(await rows("SELECT source FROM subscriber_consent_events WHERE event='unsubscribed'")).toEqual([{source:'marketing-unsubscribe-link'}]);
+    expect(await worker.tick()).toBe(false);
+    expect(capture.messages.size).toBe(1);
+  });
   it('honors a pending recipient opt-out before an outbox provider can be called', async () => {
     await post();
     const job = (await rows('SELECT unsubscribe_id FROM subscriber_outbox'))[0]!;
@@ -562,6 +629,44 @@ describe('FFA first-party subscriber intake', () => {
     expect(await worker.tick()).toBe(false);
     expect(capture.messages.size).toBe(0);
     expect(await rows('SELECT state FROM subscriber_outbox')).toEqual([{ state: 'cancelled' }]);
+  });
+  it('honors concurrent owner opt-outs at the operation cap and cancels an undispatched confirmation', async () => {
+    expect((await post()).status).toBe(202);
+    const person = (await rows('SELECT id FROM subscribers'))[0]!.id;
+    const input = { brandId: binding.brandId, id: person };
+    for (const name of ['audience.summary', 'audience.list', 'audience.contact', 'audience.unsubscribe']) {
+      expect((await post(input, id(), credential, '/api/v1/commands/' + name)).status).toBe(403);
+    }
+    await db.tenant(binding.workspaceId, sql => sql.query(
+      "INSERT INTO operations(workspace_id,actor_id,operation_key,request_hash,result) SELECT $1,'fixture',i::text,'fixture','{}'::jsonb FROM generate_series(1,2000) i",
+      [binding.workspaceId],
+    ));
+    await expect(mode(true)).rejects.toMatchObject({ code: 'preparation_limit' });
+    const receipts = await Promise.all([1, 2].map(() => service.execute('audience.unsubscribe', input, owner)));
+    expect(receipts).toEqual([{ id: person, suppressed: true }, { id: person, suppressed: true }]);
+    expect(await rows('SELECT state FROM subscriber_outbox')).toEqual([{ state: 'cancelled' }]);
+    expect(await rows("SELECT id FROM subscriber_confirmation_tokens WHERE action='confirm' AND consumed_at IS NULL")).toEqual([]);
+    expect(await (await post()).json()).toEqual(signupAccepted);
+    expect(await worker.tick()).toBe(false);
+    expect(capture.messages.size).toBe(0);
+    expect(await rows('SELECT event,source FROM subscriber_consent_events ORDER BY recorded_at')).toEqual([
+      { event: 'signup_requested', source: 'storefront-footer' }, { event: 'unsubscribed', source: 'workspace-owner' },
+    ]);
+    expect(await rows('SELECT resource_id FROM audit WHERE action=$1',['audience.unsubscribe'])).toEqual([{ resource_id: person }]);
+  });
+  it('keeps a confirmed owner opt-out effective with intake paused and across repeat signups', async () => {
+    await post();
+    const link = await delivered();
+    expect((await action('confirm', link.confirm)).status).toBe(200);
+    await mode(false);
+    const person = (await rows('SELECT id FROM subscribers'))[0]!.id;
+    await service.execute('audience.unsubscribe', { brandId: binding.brandId, id: person }, owner);
+    await mode(true);
+    await Promise.all([post(), action('unsubscribe', link.unsubscribe)]);
+    expect(await rows('SELECT state FROM subscribers')).toEqual([{ state: 'unsubscribed' }]);
+    expect(await rows('SELECT source FROM subscriber_consent_events WHERE event=$1', ['unsubscribed'])).toEqual([{ source: 'workspace-owner' }]);
+    expect(await worker.tick()).toBe(false);
+    expect(capture.messages.size).toBe(1);
   });
   it('allows an owner to pause intake when the workspace preparation operation limit has been reached', async () => {
     await db.tenant(binding.workspaceId, (sql) =>

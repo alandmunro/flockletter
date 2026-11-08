@@ -1,25 +1,40 @@
 import { readFile } from 'node:fs/promises';
 import { URL } from 'node:url';
+import tables from '../src/shared/runtime-tables.json' with {type:'json'};
 
 export async function applyMigrations(client, role) {
   if (!/^flockletter_[a-z0-9_]+$/.test(role)) throw new Error('Use the dedicated Flockletter runtime role.');
   await client.query("SELECT pg_advisory_lock(hashtext('flockletter:migrations'))");
   try {
-    for (const name of ['001_foundation.sql', '002_subscriber_intake.sql']) {
+    for (const name of ['001_foundation.sql', '002_subscriber_intake.sql','003_campaign_rehearsals.sql','004_sender_domains.sql','005_billing_sandbox.sql','006_companies.sql','007_marketing_unsubscribe.sql','008_team_access.sql','009_audience_segments.sql','010_retention_preview.sql','011_checkout_recovery.sql','012_segment_contact_cleanup.sql','013_staging_delivery_worker.sql','014_campaign_feedback.sql','015_private_listmonk.sql','016_customer_billing.sql','017_customer_audience.sql','018_customer_team.sql','019_customer_support_retention.sql','020_customer_delivery.sql','021_customer_scheduler.sql','022_brand_infrastructure.sql','023_provisioning_budget.sql','024_customer_billing_rejoin.sql','025_trial_abuse.sql','026_support_automation.sql','027_retention_operations.sql','028_platform_controls.sql']) {
       await client.query(await readFile(new URL('../migrations/' + name, import.meta.url), 'utf8'));
     }
     await client.query('BEGIN');
     await client.query(`GRANT USAGE ON SCHEMA public TO "${role}"`);
-    await client.query(
-      `GRANT SELECT, INSERT, UPDATE, DELETE ON workspaces,brands,campaigns,assets,connections,operations,audit,subscriber_signup_operations TO "${role}"`,
-    );
-    await client.query(
-      `GRANT SELECT, INSERT, UPDATE ON subscriber_intake_settings,subscribers,subscriber_confirmation_tokens,subscriber_outbox,subscriber_rate_buckets TO "${role}"`,
-    );
-    await client.query(
-      `REVOKE UPDATE, DELETE, TRUNCATE ON subscriber_consent_events,subscriber_feedback FROM "${role}"`,
-    );
-    await client.query(`GRANT SELECT, INSERT ON subscriber_consent_events,subscriber_feedback TO "${role}"`);
+    const names = tables.map(table => table.name);
+    // Remove drift from earlier releases, including grants on individual columns.
+    const columns = await client.query(`
+      SELECT format('REVOKE %s (%I) ON public.%I FROM %s',
+        acl.privilege_type, a.attname, c.relname, CASE WHEN acl.grantee=0 THEN 'PUBLIC' ELSE quote_ident($2::text) END) AS revoke
+      FROM pg_class c JOIN pg_attribute a ON a.attrelid=c.oid
+      CROSS JOIN LATERAL aclexplode(a.attacl) acl
+      WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY($1) AND a.attnum>0 AND NOT a.attisdropped
+        AND acl.grantee IN (0, (SELECT oid FROM pg_roles WHERE rolname=$2))`, [names,role]);
+    for (const {revoke} of columns.rows) await client.query(revoke);
+    const qualified = list => list.map(name=>'public."'+name+'"').join(', ');
+    await client.query(`REVOKE ALL PRIVILEGES ON ${qualified(names)} FROM "${role}", PUBLIC`);
+    const groups=new Map();
+    for (const {name,permissions} of tables) {
+      const allowed = permissions.join(', ');
+      if (!groups.has(allowed)) groups.set(allowed,[]);
+      groups.get(allowed).push(name);
+    }
+    for (const [allowed,group] of groups)
+      await client.query(`GRANT ${allowed} ON ${qualified(group)} TO "${role}"`);
+    await client.query(`GRANT EXECUTE ON FUNCTION public.flockletter_default_company_id(text) TO "${role}"`);
+    await client.query(`GRANT USAGE ON SCHEMA flockletter_customer_jobs TO "${role}"`);
+    await client.query(`GRANT EXECUTE ON FUNCTION flockletter_customer_jobs.wake(text,timestamptz),flockletter_customer_jobs.snooze(text,timestamptz),flockletter_customer_jobs.due_scopes(),flockletter_customer_jobs.record_pass(text,text),flockletter_customer_jobs.scope_status(text),flockletter_customer_jobs.claim_provisioning_budget(text,uuid,uuid,integer) TO "${role}"`);
+    await client.query(`GRANT EXECUTE ON FUNCTION public.flockletter_restore_blocked(),public.flockletter_retention_blocked(text),public.flockletter_platform_hold(text),flockletter_customer_jobs.trial_claim(text,text,text,text,integer,integer,text,uuid,text,text,text),flockletter_customer_jobs.register_support_reply_route(text,uuid,text,text,timestamptz),flockletter_customer_jobs.resolve_support_reply_route(text) TO "${role}"`);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

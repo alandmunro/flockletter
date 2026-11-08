@@ -9,6 +9,23 @@ concurrency:
   group: foundation-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  listmonk-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: bash scripts/listmonk-capture/run.sh
+      - name: Exercise private Listmonk restart and two-workspace isolation
+        run: |
+          FLOCKLETTER_PRIVATE_ENGINE=embedded node scripts/prepare-listmonk.mjs
+          FLOCKLETTER_TEST_PRIVATE_ENGINE=1 node_modules/.bin/vitest run tests/embedded-listmonk.test.ts tests/customer-engine.test.ts
+          node --import tsx scripts/prove-private-listmonk.ts
+          node --import tsx scripts/prove-listmonk-isolation.ts
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -20,5 +37,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: node scripts/studio-notices.mjs --check-build
+      - run: npx playwright-core install --with-deps chromium webkit
+      - run: npm run audience:verify
+      - run: node --import tsx scripts/prove-customer-workflows.ts
+      - run: node --import tsx scripts/prove-platform.ts
+      - run: node --import tsx scripts/prove-team-ui.ts
+      - run: node --import tsx scripts/prove-studio.ts
+      - run: node --import tsx scripts/prove-studio-email.ts
+      - run: node --import tsx scripts/prove-marketing-unsubscribe.ts
       - run: node --import tsx scripts/generate-api.ts && git diff --exit-code -- docs/api/openapi.json
       - run: npm audit --audit-level=moderate

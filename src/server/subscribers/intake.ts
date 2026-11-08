@@ -39,13 +39,23 @@ async function gate(sql: Sql, lock = false) {
 function ready(g: Gate | undefined, binding: IntakeBinding | undefined) {
   return Boolean(binding && g?.fresh && g.worker_fingerprint === fingerprint(binding));
 }
-async function bump(sql: Sql, w: string, b: string, name: string, window: 'minute' | 'day', limit: number) {
+async function bump(
+  sql: Sql,
+  workspaceId: string,
+  brandId: string,
+  name: string,
+  duration: '1 minute' | '24 hours',
+  limit: number,
+) {
   const r = await sql.query<{ requests: number }>(
-    `INSERT INTO subscriber_rate_buckets(workspace_id,brand_id,bucket,window_at,requests)
-    VALUES($1,$2,$3,date_trunc($4::text,now()),1) ON CONFLICT(workspace_id,brand_id,bucket) DO UPDATE SET
-    requests=CASE WHEN subscriber_rate_buckets.window_at=excluded.window_at THEN least(subscriber_rate_buckets.requests+1,$5+1) ELSE 1 END,
-    window_at=excluded.window_at RETURNING requests`,
-    [w, b, name, window, limit],
+    `INSERT INTO subscriber_rate_buckets AS bucket(workspace_id,brand_id,bucket,window_at,requests)
+    VALUES($1,$2,$3,clock_timestamp(),1) ON CONFLICT(workspace_id,brand_id,bucket) DO UPDATE SET
+    requests=CASE WHEN excluded.window_at >= bucket.window_at + $4::interval THEN 1
+                 ELSE least(bucket.requests+1,$5+1) END,
+    window_at=CASE WHEN excluded.window_at >= bucket.window_at + $4::interval THEN excluded.window_at
+                  ELSE bucket.window_at END
+    RETURNING requests`,
+    [workspaceId, brandId, name, duration, limit],
   );
   return r.rows[0]!.requests <= limit;
 }
@@ -65,8 +75,9 @@ export async function recordTransition(
 export async function suppress(
   sql: Sql,
   subscriberId: string,
-  evidenceId: string,
+  evidenceId: string | null,
   state: 'unsubscribed' | 'hard_bounced' | 'complained',
+  source: string = state,
 ) {
   const update = await sql.query(
     `UPDATE subscribers SET state=$2,updated_at=now() WHERE id=$1 AND state<>$2
@@ -82,7 +93,30 @@ export async function suppress(
     "UPDATE subscriber_outbox SET state='cancelled',lease_id=NULL,lease_until=NULL WHERE subscriber_id=$1 AND state IN ('pending','leased') AND attempts=0",
     [subscriberId],
   );
-  await recordTransition(sql, evidenceId, state === 'unsubscribed' ? 'unsubscribed' : 'suppressed', state);
+  if (evidenceId) {
+    await recordTransition(sql, evidenceId, state === 'unsubscribed' ? 'unsubscribed' : 'suppressed', source);
+  } else {
+    if ((source === 'campaign-feedback_test' || source === 'campaign-ses_simulator' || source === 'campaign-listmonk_test' || source === 'campaign-listmonk_ses' || source === 'customer-provider-feedback' || source === 'customer-captured-feedback') &&
+        (state === 'hard_bounced' || state === 'complained')) {
+      // A verified negative event is evidence of suppression, never evidence of original consent.
+      await sql.query(`INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain)
+        SELECT workspace_id,brand_id,$2,id,'suppressed','brand_marketing','campaign-feedback-v1',$3,$4,''
+        FROM subscribers WHERE id=$1`,[subscriberId,randomUUID(),hash('Provider reported '+state+' for the reviewed address.'),source]);
+      return;
+    }
+    // Preserve a factual opt-out for a legacy contact whose signup evidence is unavailable.
+    if (state !== 'unsubscribed' || !['workspace-owner', 'marketing-unsubscribe-link'].includes(source)) {
+      throw new Error('A source consent event is required.');
+    }
+    const ownerAction = source === 'workspace-owner';
+    await sql.query(
+      `INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain)
+      SELECT workspace_id,brand_id,$2,id,'unsubscribed','brand_marketing',$3,$4,$5,''
+      FROM subscribers WHERE id=$1`,
+      [subscriberId, randomUUID(), ownerAction ? 'owner-opt-out-v1' : 'marketing-opt-out-v1',
+        hash(ownerAction ? 'Stop marketing to this contact for this brand.' : 'Unsubscribe from marketing email from this brand.'), source],
+    );
+  }
 }
 
 export class SubscriberIntake {
@@ -95,6 +129,14 @@ export class SubscriberIntake {
     return this.binding?.workspaceId === workspace && this.binding.brandId === brand
       ? this.binding
       : undefined;
+  }
+  async probe(actor: Actor, brand: string, sourceDomain: string | undefined) {
+    authorizeIntake(actor, brand);
+    const binding = this.forBrand(actor.workspaceId, brand);
+    if (!binding || binding.sourceDomain !== sourceDomain) throw unavailable();
+    const settings = await this.db.brand(actor.workspaceId, brand, sql => gate(sql));
+    if (!settings?.enabled || !ready(settings, binding)) throw unavailable();
+    return binding.mode;
   }
   async status(sql: Sql, actor: Actor, brand: string): Promise<IntakeStatus> {
     await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand]);
@@ -150,9 +192,9 @@ export class SubscriberIntake {
       if (!g?.enabled || !ready(g, binding)) throw unavailable();
       const w = actor.workspaceId,
         credential = current.rows[0]!.id;
-      const c = await bump(sql, w, brand, 'credential:' + credential, 'minute', 30);
-      const b = await bump(sql, w, brand, 'brand-minute', 'minute', 60);
-      const d = await bump(sql, w, brand, 'brand-day', 'day', 1000);
+      const c = await bump(sql, w, brand, 'credential:' + credential, '1 minute', 30);
+      const b = await bump(sql, w, brand, 'brand-minute', '1 minute', 60);
+      const d = await bump(sql, w, brand, 'brand-day', '24 hours', 1000);
       if (!c || !b || !d) {
         await sql.query('UPDATE subscriber_intake_settings SET throttled=throttled+1');
         return 'limited';

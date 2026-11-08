@@ -1,0 +1,73 @@
+# Customer billing and usage
+
+This implements FL-BIL-001/002/003/004/005/007/008, FL-USG-001/002/003, the billing portions of FL-ONB-003/004 and FL-API-001, and the environment separation in FL-OPS-004. It is implementation evidence, not acceptance of real charges or public commercial operation.
+
+## One reusable lifecycle
+
+`CustomerBilling` owns subscription facts, a deduplicated provider-event inbox, durable external-operation intents and a subscription-wide recipient reservation ledger. The normal UI, API and MCP use `customerBilling.*`. An authenticated workspace owner is required; a delegated mailing credential cannot manage billing. Preparation, trialing, active, past-due, suspended, canceled and closed states all use one eligibility calculation. The existing isolated Checkout rehearsal is preserved separately.
+
+The accepted server catalogue remains Starter $15 / Growth $25 / Pro $39, stored in integer USD cents, with 2/5/20 campaigns, 2,500/5,000/10,000 active contacts and recipients per campaign, and 5,000/25,000/100,000 total recipient emails. Companies, brands and users follow that catalogue. A platform-recorded complimentary grant bypasses Stripe and card collection; a company name or claimed email domain cannot create the exception.
+
+The staging defaults authorized in `COMPLETE_WORKFLOWS.md` are a 14-day captured card-confirmed trial with two campaigns, 250 active contacts, 500 total recipient messages, one company, one brand and one user. Failure retains its first timestamp, allows five days of grace, suspends on day six and closes on day thirty. Cancellation takes effect at the current trial/period end. An upgrade raises limits immediately in the captured exercise; a downgrade waits for renewal. Usage is never reset by changing plans or replaying a request. Paid allowance periods currently use UTC calendar months with no rollover, including the captured exercise. Confirm this period policy before enabling commercial billing. These exercise choices do not approve live proration, tax, refunds or commercial terms.
+
+## Owner walkthrough
+
+1. Open Subscription and usage. A preparation workspace can select a plan and explicitly start a simulated card-confirmed trial when exercise is enabled.
+2. Review the saved status, eligibility reasons, remaining campaigns/messages, pending downgrade and service-end dates.
+3. Prepare campaigns through the ordinary workflow. Every test message consumes recipient allowance. Test messages consume no campaign slot. A real campaign consumes a slot once the provider accepts at least one recipient.
+4. Use the labeled captured payment controls to simulate success or failure. Advance the workspace-owned exercise clock across day six, day thirty or cancellation. This never changes the host clock or other workspaces.
+5. Resume a future cancellation before its effective end, or recover a closed captured account within its 90-day recovery window. Recovery does not erase its usage ledger. To exercise due retention, advance past effective service end plus 90 days. Retention uses the same verified exercise clock and service-end facts.
+
+Complimentary workspaces display the assigned plan and have no card or billing-provider actions. A workspace using a real configured Stripe adapter displays hosted Checkout/portal actions instead of captured payment buttons. A return from Stripe triggers a fresh status read; it cannot authorize sending.
+
+## Adapter activation
+
+The default is `FLOCKLETTER_CUSTOMER_BILLING=off`. Staging can explicitly use `exercise`. `stripe_test` and `stripe_live` require a dedicated Flockletter account/environment binding and all of:
+
+- `FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT`
+- `FLOCKLETTER_CUSTOMER_STRIPE_KEY`
+- `FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK`
+- `FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG`
+- `FLOCKLETTER_CUSTOMER_STARTER_PRICE`
+- `FLOCKLETTER_CUSTOMER_GROWTH_PRICE`
+- `FLOCKLETTER_CUSTOMER_PRO_PRICE`
+
+Live activation additionally requires production environment and `FLOCKLETTER_LIVE_BILLING_APPROVED=true`. There is no fallback to FFA or Cadence credentials. The card configuration must expose the supported card method. Configure the dedicated Stripe customer portal for the accepted catalogue and approved upgrade/downgrade behavior before activating it. Resolve tax registrations, tax behavior, refund/proration terms and price-change policy before paid public operation. No raw card data or hosted bearer URL is persisted or audited.
+
+`stripeCustomerProvider(origin,env)` validates complete configuration, exact HTTPS return origin, account, key mode and unique prices. Before a provider action it verifies the configured Stripe account. The current subscription graph must have one quantity-one, per-unit, monthly USD catalogue price with exact integer amount and mode. Trial eligibility requires an actual provider-held card; active eligibility requires a paid latest invoice. The account/environment-checked raw webhook signature establishes trust. Handle it on its own raw-body endpoint and keep it separate from the pre-existing rehearsal endpoint.
+
+`customerBillingConfiguration(env)` exposes only mode, missing setting names and unverified readiness. The presence of configuration is never reported as a completed provider verification.
+
+## Concurrency and partial failure
+
+Every external action starts with a durable workspace/actor intent and stable provider key. A lost Checkout reply causes lookup and reconciliation of that same intent, never another create request. An incomplete search remains unresolved. A session reported expired offers an explicit Restart paid checkout action. The first hosted Checkout intent durably reserves the workspace’s single trial opportunity before the provider request. A replacement, including one after an abandoned expired first session, has zero trial days and requires normal payment. The intent binds that server-owned decision; unknown outcomes retain the original trial snapshot and never create a fresh trial. That separate operation retrieves the exact old session again under the workspace lock, verifies its terminal expiry, records the old result, and creates one new durable intent. A lost reply from the replacement is reconciled with that new stable key rather than creating another session. A portal retry retains the same provider key during the safe idempotency window and never stores the portal URL. Provider identifiers are bound to the exact locally recorded intent and account, not to customer-supplied metadata. Routing hints select a tenant transaction only; they cannot establish the mapping.
+
+Verified event application and a fresh current-provider retrieval are serialized with the workspace lock. This avoids applying an older snapshot that waited behind another event handler. Duplicate event IDs with conflicting content fail; duplicate identical finished events do not reapply usage or state. Refund, dispute and early-fraud signals latch a risk hold which a later successful-payment event cannot clear. Clearing a real risk hold requires a separately reviewed operator procedure.
+
+`reserve`, `settle` and `release` accept the caller's existing tenant SQL transaction. The workspace advisory lock prevents parallel cap bypass across brands and transports. A reservation binds operation key, campaign, brand, period and recipient count. Accepted and definitively excluded totals are cumulative, monotonic and settled exactly once. Unknown recipients keep the full unresolved reservation. Later bounces do not refund an accepted message. No campaign can reserve outside its workspace/brand. Trial cancellation/end and scheduled downgrade caps are checked before scheduled work is accepted, and the delivery dispatcher must revalidate at dispatch.
+
+All dedicated billing tables have forced workspace row-level security. Runtime grants are SELECT/INSERT/UPDATE only and are recorded in the shared runtime manifest. No billing runtime deletion privilege is granted. A retained erasure receipt makes billing eligibility ineligible and rejects direct hosted billing actions, even when a restored copy still contains old active subscription rows. Reconciliation may retain already-observed facts without creating new provider work. The legacy company, brand and team readers/mutations accept explicit billing options and apply the same eligible limits. Disabled, ended and suspended ordinary subscriptions retain preparation caps, while existing records remain available for review. The capacity reader restores the caller's original brand context and counts unique normalized confirmed emails across brands.
+
+## Tests and remaining external checks
+
+`tests/customer-billing.test.ts` uses disposable PostgreSQL to cover lifecycle transitions, cancellation/recovery, no trial refresh, idempotent retries, concurrent quotas, cross-workspace denial, test-message accounting, pending downgrade limits, unknown provider outcome reconciliation and latched risk holds. `tests/customer-billing-provider.test.ts` drives the installed Stripe SDK through an intercepted HTTP client and real signature verifier to test exact account/catalogue/card fields, malformed configuration and event object resolution. They do not contact Stripe or charge a card.
+
+Cross-workspace owner/card trial-abuse controls remain an explicit public-activation gate; this workspace-level reservation does not claim to prevent those attacks. Real dedicated Stripe sandbox Checkout, portal configuration, current-card proof, signed invoice events, plan-change timing, a failed-payment sequence and recovery remain external acceptance checks. No live charge, production deployment or real customer-data erasure is authorized by these tests.
+
+## Model contributions
+
+Chat implemented the money/security state machine, provider binding, concurrency controls and reviewed UI. The first local Qwen UI draft was stopped after approximately 17 minutes with no usable output; no local-authored lines from that attempt were applied. After the primary agent repaired the local mechanical mode, Qwen drafted the SubscriptionUsage display in 20 seconds and the focused static-render test scaffold in 35 seconds. Chat corrected the display’s monthly-email cap (the draft mistakenly used the per-campaign recipient cap) and normalized the synthetic test fixture; a further 43-second local display draft added remaining/reset labels, with chat correcting null-date handling, rejecting malformed years and clarifying that trial expiry is not an automatic allowance reset; those local-authored modules were then typechecked, linted and tested. No authorship or token percentage is claimed because full-project model usage was not measured.
+
+The shared `tests/customer-runtime.test.ts` additionally exercises ten real-PostgreSQL integration scenarios through the ordinary command dispatcher: activation, company/brand capacity, captured signup/confirmation and campaign processing, current authentication/ownership, fixed scheduler privileges, process restart, tenant isolation, support/retention and erasure receipts. Qwen drafted its bounded setup and first two cases in 101 seconds (5,759 characters); chat corrected module imports, an invented command and typed result handling, then implemented/reviewed the remaining integration and security cases. The queued restored-delivery erasure regression first reproduced an unwanted capture, then passed after the receipt gate was added.
+
+## Paid rejoin after service end
+
+An ordinary workspace with verified ended Stripe service can select a current plan and use `customerBilling.rejoin`. The owner supplies only the plan, current revision and operation key. The server verifies the existing mapped subscription is actually canceled at the provider, ended within the recovery window and free of an unresolved risk hold. A future cancellation while provider service remains active cannot open another subscription. An erasure receipt rejects rejoin.
+
+The saved rejoin intent binds the exact previous account, customer, subscription and revision. It reuses the verified customer in Stripe Checkout and always records zero trial days. Concurrent requests share one pending intent. An unknown result causes a lookup of that same operation; it never causes a second creation request. The old mapping remains authoritative until a verified paid subscription and its exact completed Checkout agree with the saved customer, intent metadata, prior binding and expected revision. A delayed invoice event retrieves the exact Checkout to finish verification. A changed prior revision stops replacement for support review and does not open another checkout.
+
+Application is a workspace-locked, row-locked, revision-checked database update. The previous row is archived in append-only `customer_subscription_history` before replacement. Signed events for a retired provider subscription are recorded as ignored and cannot replace or resurrect the current mapping. Identical webhook replay has no additional effect. A payment return URL remains insufficient evidence. Captured exercise controls are unchanged; the rejoin UI appears only for ended ordinary subscriptions and explicitly says paid service without a new free trial.
+
+The paid rejoin tests use injected provider snapshots and the installed SDK with an intercepted transport. They cover a two-operation race, a lost create reply and application restart, existing-customer fields and paid-only body, delayed invoice mapping, stale-revision denial, history immutability, old invoice/cancellation events and webhook replay. Real Stripe sandbox acceptance is still required before activation.
+
+`tests/customer-provisioning-budget.test.ts` separately exercises the fixed global capacity function with real disposable PostgreSQL: shared cap and stable replay, concurrent claims from two workspaces, scope mismatch, malformed limits and denied direct ledger access. Qwen drafted this scaffold in 341 seconds (9,491 characters). Chat removed unrelated identity/configuration code and reasoning comments, corrected strict UUID-array typing, and reviewed the assertions against the global function. The billing and rejoin money/security implementation remains chat-owned.

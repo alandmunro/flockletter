@@ -1,0 +1,28 @@
+name: Self-host restore drill
+
+on:
+  pull_request:
+  push:
+    branches: [main, codex/foundation-workflow]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selfhost-restore-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  logical-restore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Verify the synthetic PostgreSQL restore and opt-out recovery
+        run: node selfhost/restore-drill.mjs

@@ -6,14 +6,50 @@ import { Database } from './db.js';
 import { digest } from './content.js';
 import { AppError, requireCondition } from './errors.js';
 import type { Actor } from './service.js';
+import {memberPermissions,type ClerkTeam} from './team.js';
+import type { PendingInvitation } from '../shared/team.js';
+import {clerkInvitationPilot} from './team-invitation-provider.js';
+
+type ClerkOrganizations = ReturnType<typeof createClerkClient>['organizations'];
+export async function pendingClerkInvitations(directory: Pick<ClerkOrganizations,'getOrganizationInvitationList'>, workspace: string, offset: number, limit: number) {
+  const page = await directory.getOrganizationInvitationList({ organizationId: workspace, status: ['pending'], offset, limit });
+  if (page.data.length > limit) throw Error('Invalid invitation page.');
+  const invitations: PendingInvitation[] = page.data.map((row) => {
+    if (row.organizationId !== workspace || row.status !== 'pending' || !row.id || !row.emailAddress ||
+        !Number.isSafeInteger(row.expiresAt) || row.expiresAt <= 0)
+      throw Error('Invalid invitation in the workspace directory.');
+    return { id: row.id, email: row.emailAddress, expiresAt: new Date(row.expiresAt).toISOString() };
+  });
+  return { total: page.totalCount, invitations };
+}
 
 export type IdentityProvider = {
   session(request: ExpressRequest): Promise<{ userId: string; workspaceId: string }>;
   isOwner(userId: string, workspaceId: string): Promise<boolean>;
+  team?:ClerkTeam;
 };
 export function clerkIdentity(config: Config): IdentityProvider {
   const clerk = createClerkClient({ secretKey: config.clerkSecretKey, publishableKey: config.clerkPublishableKey });
+  const team:ClerkTeam={
+    invitePilot:config.invitationBinding && config.clerkSecretKey ? clerkInvitationPilot(clerk.organizations, config.invitationBinding,config.clerkSecretKey) : undefined,
+    async membership(userId,workspaceId){
+      const page=await clerk.organizations.getOrganizationMembershipList({organizationId:workspaceId,userId:[userId],limit:2});
+      const member=page.data.find(row=>row.publicUserData?.userId===userId);
+      return member?.role==='org:admin'?'owner':member?.role==='org:member'?'member':null;
+    },
+    async members(workspaceId,offset,limit){
+      const page=await clerk.organizations.getOrganizationMembershipList({organizationId:workspaceId,offset,limit,orderBy:'+created_at'});
+      return {total:page.totalCount,members:page.data.flatMap(row=>{
+        const user=row.publicUserData;
+        if(!user?.userId || !['org:admin','org:member'].includes(row.role))return [];
+        return [{userId:user.userId,name:[user.firstName,user.lastName].filter(Boolean).join(' ')||'Workspace member',
+          membership:row.role==='org:admin'?'owner' as const:'member' as const}];
+      })};
+    },
+    invitations: (workspace,offset,limit) => pendingClerkInvitations(clerk.organizations,workspace,offset,limit),
+  };
   return {
+    team,
     async session(request) {
       const headers = new Headers();
       // The browser supplies an explicit Clerk bearer token. Never accept ambient cookies as API authority.
@@ -29,13 +65,15 @@ export function clerkIdentity(config: Config): IdentityProvider {
       return { userId: auth.userId, workspaceId: auth.orgId };
     },
     async isOwner(userId, workspaceId) {
-      const memberships = await clerk.organizations.getOrganizationMembershipList({ organizationId: workspaceId, userId: [userId], limit: 2 });
-      return memberships.data.some(m => m.publicUserData?.userId === userId && m.role === 'org:admin');
+      return (await team.membership(userId,workspaceId))==='owner';
     },
   };
 }
 export function localIdentity(): IdentityProvider {
   return {
+    team:{async membership(user,w){return user==='local_owner'&&w==='org_local_sample'?'owner':null;},
+      async members(w,offset){return {total:w==='org_local_sample'?1:0,members:w==='org_local_sample'&&offset===0?[{userId:'local_owner',name:'Local owner',membership:'owner'}]:[]};},
+      async invitations(){return {total:0,invitations:[]};}},
     async session(request) {
       requireCondition(['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(request.socket.remoteAddress ?? ''), 403, 'loopback_required', 'Local identity requires loopback access.');
       requireCondition(request.get('authorization') === 'Bearer local-development-only', 401, 'sign_in_required', 'The local development session is required.');
@@ -45,7 +83,7 @@ export function localIdentity(): IdentityProvider {
   };
 }
 export class Authenticator {
-  constructor(readonly db: Database, readonly identity: IdentityProvider) {}
+  constructor(readonly db: Database, readonly identity: IdentityProvider,readonly billingOptions?:import('./customer-billing/service.js').BillingOptions) {}
   async authenticate(request: ExpressRequest): Promise<Actor> {
     const authorization = request.get('authorization') ?? '';
     requireCondition(authorization.startsWith('Bearer ') && authorization.length < 8192, 401, 'sign_in_required', 'A valid bearer credential is required.');
@@ -64,10 +102,14 @@ export class Authenticator {
       return { workspaceId, userId: row.issuer_id, actorId: `connection:${row.id}`, kind: 'connection', owner: true, scopes: row.scopes, brandIds: row.brand_ids };
     }
     const identity = await this.identity.session(request);
-    let owner: boolean;
-    try { owner = await this.identity.isOwner(identity.userId, identity.workspaceId); }
+    let role:'owner'|'member'|null;
+    try {role=this.identity.team?await this.identity.team.membership(identity.userId,identity.workspaceId):await this.identity.isOwner(identity.userId,identity.workspaceId)?'owner':null;}
     catch { throw new AppError(503, 'membership_unavailable', 'Current workspace membership could not be verified. Retry shortly.'); }
-    requireCondition(owner, 403, 'owner_required', 'This foundation is available to workspace owners. Member roles will be added with explicit brand permissions.');
-    return { ...identity, actorId: `user:${identity.userId}`, owner, kind: 'session', scopes: ['read', 'draft:write', 'assets:write'], brandIds: null };
+    requireCondition(role,403,'membership_required','Current Clerk workspace membership is required.');
+    if(role==='member'){
+      const access=await this.db.tenant(identity.workspaceId,sql=>memberPermissions(sql,identity.workspaceId,identity.userId,this.identity.team!,this.billingOptions));
+      return {...identity,actorId:'user:'+identity.userId,owner:false,kind:'session',...access};
+    }
+    return { ...identity, actorId: `user:${identity.userId}`, owner:true, kind: 'session', scopes: ['read', 'draft:write', 'assets:write', 'audience:summary','campaign:rehearse','campaign:simulate'], brandIds: null };
   }
 }
