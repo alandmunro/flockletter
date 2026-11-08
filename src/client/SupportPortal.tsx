@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CommandName } from '../shared/contracts.js';
-import type { SupportDirectory, SupportTicket } from '../shared/customer-support.js';
+import type { SupportDirectory, SupportTicket, SupportAutomationStatus } from '../shared/customer-support.js';
 import { supportTopics, type SupportTopic } from '../shared/support.js';
 import { operationKey, type Api } from './api.js';
+import { SupportAutomationSummary } from './SupportAutomationSummary.js';
 import { SupportHistory } from './SupportHistory.js';
 
 export function SupportPortal({ api }: { api: Api }) {
   const [directory, setDirectory] = useState<SupportDirectory>();
+  const [automation,setAutomation] = useState<SupportAutomationStatus>();
   const [ticket, setTicket] = useState<SupportTicket>();
   const [subject, setSubject] = useState(''),
     [text, setText] = useState('');
@@ -21,8 +23,10 @@ export function SupportPortal({ api }: { api: Api }) {
     async (offset = 0) => setDirectory(await api.call<SupportDirectory>('support.list', { offset })),
     [api],
   );
+  const refreshAutomation=useCallback(async () => setAutomation(await api.call<SupportAutomationStatus>('support.automationStatus',{})),[api]);
   useEffect(() => {
     let active = true;
+    void refreshAutomation().catch((e) => {if(active)setError(e.message);});
     api
       .call<SupportDirectory>('support.list', { offset: 0 })
       .then((value) => {
@@ -34,7 +38,7 @@ export function SupportPortal({ api }: { api: Api }) {
     return () => {
       active = false;
     };
-  }, [api]);
+  }, [api,refreshAutomation]);
   async function select(id: string) {
     setBusy(true);
     setError('');
@@ -73,6 +77,7 @@ export function SupportPortal({ api }: { api: Api }) {
         setText('');
       }
       await load(directory?.offset ?? 0);
+      await refreshAutomation();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not update this conversation.');
     } finally {
@@ -94,6 +99,7 @@ export function SupportPortal({ api }: { api: Api }) {
           exercise the operator review steps below.
         </p>
       )}
+      {automation && <SupportAutomationSummary status={automation} busy={busy} onRefresh={() => void refreshAutomation().catch((e) => setError(e.message))} />}
       {error && <p role="alert">{error}</p>}
       <form
         onSubmit={(event) => {
@@ -194,6 +200,11 @@ export function SupportPortal({ api }: { api: Api }) {
             </button>
           </p>
           <SupportHistory ticket={ticket} />
+          {directory?.replyRoutingConfigured && ticket.replyTo && !ticket.replyAddress && <button className="btn secondary" disabled={busy} onClick={() => void act('support.prepareReplyAddress')}>Prepare verified email reply address</button>}
+          {ticket.replyAddress && <p>Verified email replies can use <code>{ticket.replyAddress}</code>. This expiring address is specific to this conversation.</p>}
+          {capture && ticket.state === 'open' && <button className="btn secondary" disabled={busy} onClick={() => void act('support.exerciseAutomation')}>Exercise automatic reply without sending email</button>}
+          {capture && <p>The automatic exercise answers only recognized public-guidance questions. Uncertain questions are handed to a human.</p>}
+
           {capture && reviewable && (
             <>
               <h4>Review a reply</h4>

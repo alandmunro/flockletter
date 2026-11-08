@@ -26,6 +26,35 @@ export const customerBillingCommands = {
     true,
     { operationKey: z.uuid(), plan: customerPlan },
   ),
+  'customerBilling.trialReview': commandDefinition(
+    'Verify the completed card-only setup and review the exact 14-day trial and recurring price. Does not start a subscription.',
+    'owner',
+    true,
+    { operationKey: z.uuid(), setupId: z.uuid() },
+  ),
+  'customerBilling.activateTrial': commandDefinition(
+    'Accept the current trial review and activate the version-bound recurring agreement after private eligibility checks.',
+    'owner',
+    true,
+    {
+      operationKey: z.uuid(),
+      setupId: z.uuid(),
+      expectedRevision: z.number().int().positive(),
+      reviewHash: z.string().regex(/^[a-f0-9]{64}$/),
+      accepted: z.literal(true),
+    },
+  ),
+  'customerBilling.paidCheckout': commandDefinition(
+    'Explicitly accept the selected normal monthly plan without a free trial. Payment still requires verified provider eligibility.',
+    'owner',
+    true,
+    {
+      operationKey: z.uuid(),
+      plan: customerPlan,
+      accepted: z.literal(true),
+      priceMinor: z.number().int().positive(),
+    },
+  ),
   'customerBilling.portal': commandDefinition(
     'Open the billing provider’s customer portal for this workspace.',
     'owner',
@@ -52,6 +81,10 @@ export const customerBillingCommands = {
       operationKey: z.uuid(),
       plan: customerPlan,
       simulatedCardConfirmed: z.literal(true),
+      simulatedCardReference: z
+        .string()
+        .regex(/^[a-zA-Z0-9_-]{1,100}$/)
+        .optional(),
     },
   ),
   'customerBilling.changePlan': commandDefinition(
@@ -120,4 +153,26 @@ export type CustomerBillingStatus = {
     reservedEmails: number;
   };
   exerciseEnabled: boolean;
+  trialSetup?: {
+    id: string;
+    state: string;
+    plan: CustomerPlan;
+    revision: number;
+    review: TrialReview | null;
+    activationKey?: string | null;
+  };
+  trialProtectionReady?: boolean;
+  legacyCheckout?: boolean;
+};
+export type TrialReview = {
+  version: 1;
+  setupId: string;
+  revision: number;
+  plan: CustomerPlan;
+  priceMinor: number;
+  currency: 'USD';
+  trialDays: 14;
+  firstChargeAt: string;
+  expiresAt: string;
+  hash: string;
 };

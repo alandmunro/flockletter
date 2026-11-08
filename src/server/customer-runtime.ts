@@ -1,3 +1,4 @@
+import { trialRegistryFromEnvironment } from './customer-abuse/registry.js';
 import { setTimeout as pause } from 'node:timers/promises';
 import type { Config } from './config.js';
 import type { Database } from './db.js';
@@ -13,6 +14,7 @@ import { CustomerAudience,createCustomerOptOut,productionConsentEligible } from 
 import { CustomerConfirmationProvider } from './customer-audience/resend.js';
 import { CustomerTeamLifecycle } from './customer-team/service.js';
 import { customerTeamClerkPort } from './customer-team/clerk.js';
+import { configuredSupportWriter } from './customer-support/writer.js';
 import { CustomerSupport } from './customer-support/index.js';
 import { ResendSupportProvider } from './customer-support/provider.js';
 import { CustomerRetention } from './customer-retention/index.js';
@@ -42,26 +44,28 @@ export class CustomerWorkflows {
   readonly engine?:CustomerEnginePool;
   readonly ses?:ReturnType<typeof customerSesRuntime>;
   readonly feedback?:SesFeedbackRouter;
+  observe?: (value:{workspaceId:string;status:CustomerOperationsStatus})=>Promise<void>;
   private running=false;
   private closing=false;
   private active=new Map<string,Promise<void>>();
   constructor(readonly db:Database,readonly config:Config,readonly identity:IdentityProvider,readonly env:NodeJS.ProcessEnv=process.env) {
     const settings=this.settings=customerSettings(config,env);
+    const gateway=stripeCustomerProvider(config.origin,env);
     this.billing=new CustomerBilling(db,{environment:config.environment,exerciseEnabled:settings.billing==='exercise',
-      gateway:stripeCustomerProvider(config.origin,env),checkOwner:identity.isOwner});
+      gateway,trialRegistry:trialRegistryFromEnvironment(env,settings.billing==='exercise'?'exercise':gateway?.live?'stripe_live':'stripe_test',settings.billing==='exercise'?'captured':gateway?.account??'unconfigured'),checkOwner:identity.isOwner});
     this.audience=new CustomerAudience(db,{mode:settings.audience,origin:config.origin,checkOwner:identity.isOwner,
       contactLimit:(sql,w)=>customerContactLimit(sql,w,this.billing.options),
       ...(settings.audience==='live'?{confirmationKey:this.confirmationKey(),provider:new CustomerConfirmationProvider(
         env.FLOCKLETTER_CUSTOMER_CONFIRMATION_KEY??'',env.FLOCKLETTER_CUSTOMER_CONFIRMATION_FROM??'',config.origin)}:{})});
     this.team=new CustomerTeamLifecycle(db,{mode:settings.team,checkOwner:identity.isOwner,seatLimit:(sql,w)=>customerSeatLimit(sql,w,this.billing.options),
       ...(settings.team==='clerk'?{port:customerTeamClerkPort({secretKey:config.clerkSecretKey!,publishableKey:config.clerkPublishableKey!})}:{})});
-    const operators=new Set((env.FLOCKLETTER_SUPPORT_OPERATOR_IDS??'').split(',').map(v=>v.trim()).filter(Boolean));
     const inbound=env.FLOCKLETTER_SUPPORT_INBOUND_WORKSPACE&&env.FLOCKLETTER_SUPPORT_INBOUND_ADDRESS&&env.FLOCKLETTER_SUPPORT_INBOUND_SECRET?
       {workspaceId:env.FLOCKLETTER_SUPPORT_INBOUND_WORKSPACE,address:env.FLOCKLETTER_SUPPORT_INBOUND_ADDRESS,webhookSecret:env.FLOCKLETTER_SUPPORT_INBOUND_SECRET}:undefined;
-    if(settings.support==='live'&&(!operators.size||!env.FLOCKLETTER_SUPPORT_RESEND_KEY||!env.FLOCKLETTER_SUPPORT_SENDER))
+    if(settings.support==='live'&&(!env.FLOCKLETTER_SUPPORT_RESEND_KEY||!env.FLOCKLETTER_SUPPORT_SENDER))
       throw Error('External support needs dedicated transport, sender and operator bindings.');
     this.support=new CustomerSupport(db,{mode:settings.support,isOwner:identity.isOwner,
-      isOperator:async user=>operators.has(user),sender:env.FLOCKLETTER_SUPPORT_SENDER,
+      isOperator:async()=>false,writer:configuredSupportWriter({enabled:env.FLOCKLETTER_SUPPORT_WRITER_ENABLED==='true',origin:env.FLOCKLETTER_SUPPORT_WRITER_ORIGIN??'',allowedOrigins:(env.FLOCKLETTER_SUPPORT_WRITER_ALLOWED_ORIGINS??'').split(',').filter(Boolean),model:env.FLOCKLETTER_SUPPORT_WRITER_MODEL??'',apiKey:env.FLOCKLETTER_SUPPORT_WRITER_KEY}),automationLiveApproved:env.FLOCKLETTER_SUPPORT_AUTOMATION_APPROVED==='true',sender:env.FLOCKLETTER_SUPPORT_SENDER,
+      ...(env.FLOCKLETTER_SUPPORT_NATIVE_WEBHOOK_SECRET&&env.FLOCKLETTER_SUPPORT_RESEND_KEY?{nativeInbound:{webhookSecret:env.FLOCKLETTER_SUPPORT_NATIVE_WEBHOOK_SECRET,apiKey:env.FLOCKLETTER_SUPPORT_RESEND_KEY,bindings:JSON.parse(env.FLOCKLETTER_SUPPORT_NATIVE_BINDINGS??'[]'),platformAddress:env.FLOCKLETTER_SUPPORT_NATIVE_ADDRESS,replyDomain:env.FLOCKLETTER_SUPPORT_REPLY_DOMAIN,threadSecret:env.FLOCKLETTER_SUPPORT_THREAD_KEY}}:{}),
       ...(settings.support==='live'?{provider:new ResendSupportProvider(env.FLOCKLETTER_SUPPORT_RESEND_KEY!),inbound}:{})});
     this.retention=new CustomerRetention(db,{mode:settings.retention,isOwner:identity.isOwner,
       serviceEnd:w=>this.billing.retentionServiceEnd(w),serviceEndSql:(sql,w)=>retentionServiceEndSql(sql,w,this.billing.options),
@@ -230,6 +234,7 @@ export class CustomerWorkflows {
       catch{failure='delivery_job_requires_review';break;}
     }
     await this.db.tenant(workspace,sql=>sql.query('SELECT flockletter_customer_jobs.record_pass($1,$2)',[workspace,failure]));
+    if(this.observe)await this.observe({workspaceId:workspace,status:await this.status(workspace)});
   }
   async run(signal:AbortSignal) {
     this.running=true;
@@ -252,9 +257,10 @@ export class CustomerWorkflows {
       'SELECT * FROM flockletter_customer_jobs.scope_status($1)',[workspace])).rows[0]);
     const queue=await this.db.tenant(workspace,async sql=>{
       const count=async(text:string)=>(await sql.query<{count:number}>(text)).rows[0]!.count;
-      let confirmations=0;
+      let confirmations=0,confirmationUnknown=0;
       for(const brand of (await sql.query<{id:string}>('SELECT id FROM brands')).rows) {
         await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[brand.id]);
+        confirmationUnknown+=await count("SELECT count(*)::int count FROM customer_audience_confirmations WHERE state='uncertain'");
         confirmations+=await count("SELECT count(*)::int count FROM customer_audience_confirmations WHERE state IN ('queued','submitting','uncertain')");
       }
       return {
@@ -264,7 +270,7 @@ export class CustomerWorkflows {
         support:await count("SELECT count(*)::int count FROM customer_support_dispatches WHERE state IN ('queued','submitting')"),
         retention:await count("SELECT count(*)::int count FROM customer_retention_jobs WHERE state IN ('awaiting_operator','authorized')"),
         infrastructure:await count("SELECT count(*)::int count FROM customer_infrastructure_intents WHERE state IN ('queued','provisioning','awaiting_dns','uncertain')"),
-        unknown:await count("SELECT ((SELECT count(*) FROM customer_delivery_recipients WHERE state='uncertain')+(SELECT count(*) FROM customer_support_dispatches WHERE state='uncertain'))::int count"),
+        unknown:confirmationUnknown+await count("SELECT ((SELECT count(*) FROM customer_delivery_recipients WHERE state='uncertain')+(SELECT count(*) FROM customer_support_dispatches WHERE state='uncertain')+(SELECT count(*) FROM customer_team_intents WHERE state='uncertain')+(SELECT count(*) FROM customer_infrastructure_intents WHERE state='uncertain')+(SELECT count(*) FROM customer_trial_setups WHERE state='activation_pending'))::int count"),
       };
     });
     const modes=this.settings,gaps:CustomerOperationsStatus['gaps']=[];

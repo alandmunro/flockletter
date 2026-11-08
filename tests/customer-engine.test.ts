@@ -38,3 +38,12 @@ it.skipIf(process.env.FLOCKLETTER_TEST_PRIVATE_ENGINE !== '1')(
   },
   180000,
 );
+
+it('quiesces one exact renderer scope and reports only process-local evidence',async()=>{
+ const pool=new CustomerEnginePool(1),workspace='org_quiesced';
+ try{expect(await pool.quiesce(workspace)).toMatchObject({workspaceId:workspace,quiesced:true,processLocalOnly:true});
+ expect(pool.inspect(workspace).quiesced).toBe(true);expect(pool.inspect('org_neighbor').quiesced).toBe(false);
+ await expect(pool.render({workspaceId:workspace} as DeliveryEnvelope)).rejects.toThrow('quiesced');
+ await expect(pool.quiesce('arbitrary/path')).rejects.toThrow('exact workspace');
+ }finally{await pool.close();}
+});

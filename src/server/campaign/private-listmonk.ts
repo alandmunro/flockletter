@@ -1,3 +1,4 @@
+import {lockWorkspace} from '../workspace-lock.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { AppError } from '../errors.js';
@@ -72,7 +73,7 @@ export class PrivateListmonk {
   }
   private locked<T>(run: (sql: Sql) => Promise<T>) {
     return this.db.brand(this.scope.workspace, this.scope.brand, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [this.scope.workspace]);
+      await lockWorkspace(sql,this.scope.workspace);
       return run(sql);
     });
   }

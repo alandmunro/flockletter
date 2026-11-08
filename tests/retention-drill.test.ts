@@ -151,6 +151,29 @@ async function seed(db: pg.Client, workspace: string) {
         VALUES(w,b,delivery,recipient,'{"to":"same@example.test"}',digest);
       INSERT INTO customer_delivery_events(workspace_id,brand_id,delivery_id,recipient_id,event_id,kind,evidence)
         VALUES(w,b,delivery,recipient,'fixture-delivery','delivered','fixture');
+INSERT INTO customer_trial_setups (workspace_id, id, actor_id, operation_key, plan, source, provider_account, registry_namespace, registry_workspace_digest, owner_digest, card_digest, state, revision)
+VALUES (w, gen_random_uuid(), 'example.test', gen_random_uuid(), 'starter', 'exercise', 'example.test', digest, digest, digest, NULL, 'pending', 1);
+
+INSERT INTO customer_support_policies (workspace_id, version, enabled, mode, responses, guidance_digest, review_code, approved_by, authority_ref, valid_until)
+VALUES (w, 1, true, 'capture', '{}'::jsonb, digest, digest, 'example.test', 'example.test', now() + interval '30 days');
+
+INSERT INTO customer_support_policy_previews (workspace_id, id, parent_version, enabled, mode, responses, guidance_digest, review_code, valid_until, expires_at, created_by, authority_ref)
+VALUES (w, gen_random_uuid(), 1, true, 'capture', '{}'::jsonb, digest, digest, now() + interval '30 days', now() + interval '1 hour', 'example.test', 'example.test');
+
+INSERT INTO customer_support_automation_runs (workspace_id, id, ticket_id, input_version, policy_version, state, reason, mode, created_by)
+VALUES (w, gen_random_uuid(), support, 1, 1, 'held', 'example.test', 'capture', 'example.test');
+
+INSERT INTO customer_support_threads (workspace_id, ticket_id, nonce, participant_digest, token_hash, expires_at)
+VALUES (w, support, gen_random_uuid(), digest, digest, now() + interval '1 hour');
+
+INSERT INTO customer_support_native_receipts (workspace_id, provider_email_id, event_id, digest, state)
+VALUES (w, gen_random_uuid(), 'example.test', digest, 'pending');
+
+INSERT INTO customer_support_operator_audit (workspace_id, id, authority_ref, user_id, action, reason, operation_key)
+VALUES (w, gen_random_uuid(), 'example.test', 'example.test', 'create', 'example.test', gen_random_uuid());
+
+INSERT INTO platform_exercise_records (workspace_id, kind, id, body)
+VALUES (w, 'case', 'example.test', '{}'::jsonb);
     END $$;`);
     await db.query('COMMIT');
   } catch (error) {

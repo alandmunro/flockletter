@@ -1,3 +1,4 @@
+import {lockWorkspace} from '../workspace-lock.js';
 import { randomUUID,createHash } from 'node:crypto';
 import type { Database,Sql } from '../db.js';
 import { requireCondition } from '../errors.js';
@@ -9,7 +10,7 @@ import { permittedBrand } from './types.js';
 
 export async function locked<T>(db:Database,workspace:string,run:(sql:Sql)=>Promise<T>):Promise<T> {
   return db.tenant(workspace,async sql=>{
-    await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[workspace]);
+    await lockWorkspace(sql,workspace);
     return run(sql);
   });
 }

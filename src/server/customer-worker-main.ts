@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs';
 import { loadEnvFile } from 'node:process';
 import { loadConfig,configurationGaps } from './config.js';
 import { Database } from './db.js';
-import { clerkIdentity,localIdentity } from './auth.js';
+import { platformRuntime } from './platform/runtime.js';
+import { Authenticator,clerkIdentity,localIdentity } from './auth.js';
 import { CustomerWorkflows } from './customer-runtime.js';
 
 if(existsSync('.env'))loadEnvFile('.env');
@@ -10,8 +11,11 @@ const config=loadConfig();
 if(configurationGaps(config).length)throw Error('Configure the dedicated Flockletter worker before starting it.');
 const db=new Database(config.databaseUrl!);
 await db.verifyBoundary();
-const runtime=new CustomerWorkflows(db,config,config.localIdentity?localIdentity():clerkIdentity(config));
+if((await db.pool.query('SELECT public.flockletter_restore_blocked() blocked')).rows[0]?.blocked)throw Error('Restore quarantine blocks the worker.');
+const identity=config.localIdentity?localIdentity():clerkIdentity(config);
+const runtime=new CustomerWorkflows(db,config,identity);
+const platform=await platformRuntime(config,db,new Authenticator(db,identity,runtime.billing.options),runtime);
 const stop=new AbortController();
 for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>{stop.abort();void runtime.close();});
 try{await runtime.run(stop.signal);}
-finally{await runtime.close();await db.close();}
+finally{await runtime.close();await platform?.close();await db.close();}

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { digest } from '../src/server/content.js';
+import type { CustomerPlan } from '../src/shared/customer-billing.js';
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 import { beforeAll, afterAll, expect, it } from 'vitest';
@@ -94,8 +96,56 @@ async function shop() {
     actor,
   )) as { id: string };
   const call = (name: string, input: object = {}) =>
-    billing.execute(name, { operationKey: randomUUID(), ...input }, actor) as Promise<CustomerBillingStatus>;
+    billing.execute(
+      name,
+      { operationKey: randomUUID(), ...input },
+      actor,
+    ) as Promise<CustomerBillingStatus>;
   return { workspaceId, brandId, actor, campaign, call };
+}
+// Simulate an already-recorded pre-upgrade agreement and provider request. New trials use
+// the protected two-stage tests; these fixtures verify legacy reconciliation/rejoin only.
+async function seedLegacyCheckout(
+  actor: Actor,
+  plan: CustomerPlan,
+  gateway: CustomerBillingProvider,
+  operationKey: string,
+) {
+  const intent = {
+    id: randomUUID(),
+    workspace: actor.workspaceId,
+    plan,
+    createdAt: base,
+    reference: null,
+    trialDays: 14 as const,
+  };
+  await db.tenant(actor.workspaceId, (sql) =>
+    sql.query(
+      `INSERT INTO customer_billing_intents(workspace_id,id,actor_id,operation_key,command,request_hash,state,provider_account,created_at,result)
+    VALUES($1,$2,$3,$4,'customerBilling.checkout',$5,'unknown',$6,$7,$8)`,
+      [
+        actor.workspaceId,
+        intent.id,
+        actor.actorId,
+        operationKey,
+        digest(JSON.stringify([plan, actor.actorId, 14])),
+        gateway.account,
+        base,
+        JSON.stringify({ plan, trialDays: 14 }),
+      ],
+    ),
+  );
+  try {
+    const observed = await gateway.checkout(intent);
+    await db.tenant(actor.workspaceId, (sql) =>
+      sql.query('UPDATE customer_billing_intents SET provider_reference=$2 WHERE id=$1', [
+        intent.id,
+        observed.id,
+      ]),
+    );
+  } catch {
+    /* An uncertain legacy POST is reconciled by lookup, never replayed. */
+  }
 }
 const start = (s: Awaited<ReturnType<typeof shop>>) =>
   s.call('customerBilling.startTrial', {
@@ -121,7 +171,11 @@ it('starts one captured card-confirmed trial, replays a lost reply and cannot re
   });
   await expect(start(s)).rejects.toMatchObject({ code: 'trial_already_used' });
   await expect(
-    billing.execute('customerBilling.cancel', { operationKey: randomUUID() }, { ...s.actor, owner: false }),
+    billing.execute(
+      'customerBilling.cancel',
+      { operationKey: randomUUID() },
+      { ...s.actor, owner: false },
+    ),
   ).rejects.toMatchObject({ code: 'owner_required' });
   expect((await billing.status(s.workspaceId)).trialEnd).toBe('2026-11-22T15:00:00.000Z');
 });
@@ -344,7 +398,7 @@ it('counts test messages without consuming a campaign and checks the scheduled d
   expect((await billing.status(s.workspaceId)).usage.reservedEmails).toBe(3000);
 });
 
-it('reconciles an uncertain checkout without a second POST and activates only from a verified bound event', async () => {
+it('reconciles an uncertain legacy checkout without a second POST and activates only from a verified bound event', async () => {
   const s = await shop();
   let sends = 0,
     known = false,
@@ -407,6 +461,7 @@ it('reconciles an uncertain checkout without a second POST and activates only fr
     gateway,
   });
   const args = { plan: 'growth', operationKey: randomUUID() };
+  await seedLegacyCheckout(s.actor, 'growth', gateway, args.operationKey);
   expect(await provider.execute('customerBilling.checkout', args, s.actor)).toMatchObject({
     state: 'awaiting_reconciliation',
   });
@@ -487,7 +542,7 @@ it('rechecks current ownership after waiting for the workspace lock and before r
   });
 });
 
-it('restarts only a verified expired checkout and reconciles the new intent after a lost reply', async () => {
+it('restarts only a verified expired legacy checkout and reconciles the new intent after a lost reply', async () => {
   const s = await shop();
   let posts = 0;
   const createdTrials: (0 | 14 | undefined)[] = [],
@@ -525,6 +580,7 @@ it('restarts only a verified expired checkout and reconciles the new intent afte
   };
   const real = new CustomerBilling(db, { ...options, exerciseEnabled: false, gateway });
   const first = { operationKey: randomUUID(), plan: 'starter' };
+  await seedLegacyCheckout(s.actor, 'starter', gateway, first.operationKey);
   await real.execute('customerBilling.checkout', first, s.actor);
   const restart = { operationKey: randomUUID(), plan: 'starter' };
   await expect(real.execute('customerBilling.restartCheckout', restart, s.actor)).rejects.toMatchObject({
@@ -596,7 +652,10 @@ async function rejoinFixture() {
   const s = await shop();
   let posts = 0,
     last: import('../src/server/customer-billing/provider.js').ProviderIntent | undefined;
-  const sessions = new Map<string, import('../src/server/customer-billing/provider.js').ProviderCheckout>();
+  const sessions = new Map<
+    string,
+    import('../src/server/customer-billing/provider.js').ProviderCheckout
+  >();
   const old: ProviderSubscription = {
     id: 'sub_old',
     customer: 'cus_owned',
@@ -701,7 +760,9 @@ async function rejoinFixture() {
     events.set(id, { subscription, checkoutId, kind });
     await real.webhook(Buffer.from(id), 'valid');
   };
-  await real.execute('customerBilling.checkout', { operationKey: randomUUID(), plan: 'starter' }, s.actor);
+  const legacyKey = randomUUID();
+  await seedLegacyCheckout(s.actor, 'starter', gateway, legacyKey);
+  await real.execute('customerBilling.checkout', { operationKey: legacyKey, plan: 'starter' }, s.actor);
   await emit('evt_initial', old, 'cs_old', 'checkout.session.completed');
   old.state = 'canceled';
   old.endedAt = new Date(base.getTime() - 3600000);

@@ -1,3 +1,4 @@
+import {lockWorkspace} from './workspace-lock.js';
 import { studioProblem } from '../shared/studio.js';
 import { withStudio } from '../shared/studio-legacy.js';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -153,7 +154,7 @@ export class CommandService {
       let requestHash = '';
       let operationKey = '';
       if (definition.mutation) {
-        await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [actor.workspaceId]);
+        await lockWorkspace(sql,actor.workspaceId);
         if(actor.kind==='session'&&!actor.owner){
           // Recheck after the workspace lock: a brand grant or seat could have changed while this write waited.
           requireCondition(await this.team.membership(actor.userId,actor.workspaceId)==='member',403,'membership_required','Current workspace membership is required.');

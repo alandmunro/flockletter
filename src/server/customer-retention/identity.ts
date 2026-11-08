@@ -1,0 +1,20 @@
+import pg from 'pg';
+import tables from '../../shared/runtime-tables.json' with {type:'json'};
+import {requireRetention} from './approval.js';
+export async function verifyRetentionIdentity(db:pg.Client,databaseName:string,expectedRole:string,kind:'planner'|'executor'){
+ requireRetention(/^flockletter_[a-z0-9_]+$/.test(databaseName)&&/^flockletter_[a-z0-9_]+$/.test(expectedRole),'operator_identity_configuration');
+ const info=(await db.query(`SELECT current_database() db,current_user name,r.rolsuper,r.rolbypassrls,r.rolcreaterole,r.rolcreatedb,r.rolreplication,has_database_privilege(current_user,current_database(),'CREATE') db_create,EXISTS(SELECT 1 FROM pg_auth_members WHERE member=r.oid) memberships,EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND has_schema_privilege(current_user,n.oid,'CREATE')) schema_create FROM pg_roles r WHERE r.rolname=current_user`)).rows[0];
+ requireRetention(info?.db===databaseName&&info.name===expectedRole&&!info.rolsuper&&!info.rolbypassrls&&!info.rolcreaterole&&!info.rolcreatedb&&!info.rolreplication&&!info.db_create&&!info.schema_create&&!info.memberships,'operator_identity_excess_authority');
+ const allowed=new Map<string,Set<string>>();for(const table of tables)allowed.set('public.'+table.name,new Set(kind==='planner'?['SELECT']:['subscribers','customer_retention_jobs','customer_retention_cases'].includes(table.name)?['SELECT','DELETE','UPDATE']:['SELECT','DELETE']));
+ for(const name of ['scopes','support_reply_routes'])allowed.set('flockletter_customer_jobs.'+name,new Set(kind==='planner'?['SELECT']:['SELECT','DELETE']));
+ allowed.set('flockletter_retention_control.platform_records',new Set(kind==='planner'?['SELECT']:['SELECT','DELETE']));
+ if(kind==='executor')for(const name of ['authorizations','receipts','operations','approvals','restore_quarantines'])allowed.set('flockletter_retention_control.'+name,new Set(['SELECT','INSERT','UPDATE']));
+ if(kind==='executor')allowed.set('flockletter_retention_control.approval_history',new Set(['SELECT','INSERT']));
+ const privileges=(await db.query<{name:string;permission:string;owns:boolean}>(`SELECT n.nspname||'.'||c.relname name,p.permission,c.relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) owns FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p(permission) WHERE c.relkind IN ('r','p','v','m','f') AND n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND has_table_privilege(current_user,c.oid,p.permission)`)).rows;
+ requireRetention(privileges.every(row=>!row.owns&&allowed.get(row.name)?.has(row.permission)),'operator_table_grants_drift');
+ const columnDrift=(await db.query(`SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid CROSS JOIN LATERAL aclexplode(a.attacl) acl WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND acl.grantee IN (0,(SELECT oid FROM pg_roles WHERE rolname=current_user)) LIMIT 1`)).rowCount;requireRetention(!columnDrift,'operator_column_grants_drift');
+ const sequences=(await db.query(`SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='S' AND n.nspname !~ '^pg_' AND (has_sequence_privilege(current_user,c.oid,'USAGE') OR has_sequence_privilege(current_user,c.oid,'UPDATE')) LIMIT 1`)).rowCount;requireRetention(!sequences,'operator_sequence_grants_drift');
+ const functions=(await db.query<{name:string}>(`SELECT n.nspname||'.'||p.proname||'('||oidvectortypes(p.proargtypes)||')' name FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND has_schema_privilege(current_user,n.oid,'USAGE') AND has_function_privilege(current_user,p.oid,'EXECUTE')`)).rows;
+ const permitted=new Set(['flockletter_customer_jobs.trial_retention_inventory(text, text)',...(kind==='executor'?['flockletter_customer_jobs.trial_expire_claims(text, text)']:[])]);
+ requireRetention(functions.every(row=>permitted.has(row.name)),'operator_function_grants_drift');
+}

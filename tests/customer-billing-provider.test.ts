@@ -72,7 +72,11 @@ function fixture(respond: (url: URL, body: URLSearchParams) => object) {
       });
     }),
   });
-  const provider = stripeCustomerProvider('https://flockletter.example.test', environment, () => stripe)!;
+  const provider = stripeCustomerProvider(
+    'https://flockletter.example.test',
+    environment,
+    () => stripe,
+  )!;
   return { stripe, provider, calls };
 }
 it('requires complete isolated settings and explicit production activation for live billing', () => {
@@ -152,7 +156,9 @@ it('creates one provider-held card trial with exact account and catalogue fields
     });
     const paid = site.calls.filter((call) => call.url.pathname === '/v1/checkout/sessions').at(-1)!.body;
     expect(paid.has('subscription_data[trial_period_days]')).toBe(false);
-    expect(paid.has('subscription_data[trial_settings][end_behavior][missing_payment_method]')).toBe(false);
+    expect(paid.has('subscription_data[trial_settings][end_behavior][missing_payment_method]')).toBe(
+      false,
+    );
     expect(paid.get('payment_method_collection')).toBe('always');
     expect(paid.get('line_items[0][price]')).toBe('price_growth');
   }
@@ -278,4 +284,130 @@ it('resolves a dispute through its charge, invoice payment and subscription inst
       .find((c) => c.url.pathname === '/v1/invoice_payments')
       ?.url.searchParams.get('payment[payment_intent]'),
   ).toBe('pi_fixture');
+});
+it('collects a card in setup-only Checkout and obtains its fingerprint only from authenticated provider facts', async () => {
+  const id = randomUUID(),
+    workspace = 'org_fixture';
+  let fingerprint = 'synthetic_fingerprint',
+    methodCustomer = 'cus_fixture';
+  const site = fixture((url, body) => {
+    if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
+    if (url.pathname === '/v1/checkout/sessions')
+      return {
+        id: 'cs_setup',
+        mode: 'setup',
+        livemode: false,
+        status: 'open',
+        client_reference_id: workspace,
+        metadata: { fl_workspace: workspace, fl_intent: body.get('metadata[fl_intent]') },
+        url: 'https://checkout.stripe.com/setup',
+      };
+    if (url.pathname === '/v1/checkout/sessions/cs_setup')
+      return {
+        id: 'cs_setup',
+        mode: 'setup',
+        livemode: false,
+        status: 'complete',
+        client_reference_id: workspace,
+        metadata: { fl_workspace: workspace, fl_intent: id },
+        setup_intent: 'seti_fixture',
+        customer: 'cus_fixture',
+      };
+    if (url.pathname === '/v1/setup_intents/seti_fixture')
+      return {
+        id: 'seti_fixture',
+        status: 'succeeded',
+        livemode: false,
+        usage: 'off_session',
+        customer: 'cus_fixture',
+        metadata: { fl_workspace: workspace, fl_intent: id },
+        payment_method: {
+          id: 'pm_fixture',
+          type: 'card',
+          livemode: false,
+          customer: methodCustomer,
+          card: { fingerprint },
+        },
+      };
+    throw Error('Unexpected request');
+  });
+  const intent = { id, workspace, plan: 'starter' as const, createdAt: new Date(), reference: null };
+  const beforeSetup = Date.now();
+  await site.provider.setupCheckout!(intent);
+  const afterSetup = Date.now();
+  const posted = site.calls.find((c) => c.url.pathname === '/v1/checkout/sessions')!.body;
+  expect(posted.get('mode')).toBe('setup');
+  expect(posted.get('currency')).toBe('usd');
+  expect(Number(posted.get('expires_at'))).toBeGreaterThanOrEqual(
+    Math.floor(beforeSetup / 1000) + 31 * 60,
+  );
+  expect(Number(posted.get('expires_at'))).toBeLessThanOrEqual(Math.floor(afterSetup / 1000) + 31 * 60);
+  const postedCount = site.calls.filter((c) => c.url.pathname === '/v1/checkout/sessions').length;
+  await expect(
+    site.provider.setupCheckout!({
+      ...intent,
+      id: randomUUID(),
+      createdAt: new Date(Date.now() - 121000),
+    }),
+  ).rejects.toThrow('could not be verified');
+  expect(site.calls.filter((c) => c.url.pathname === '/v1/checkout/sessions')).toHaveLength(postedCount);
+  expect(posted.has('line_items[0][price]')).toBe(false);
+  expect(posted.has('subscription_data[trial_period_days]')).toBe(false);
+  expect(await site.provider.inspectSetup!({ ...intent, reference: 'cs_setup' })).toMatchObject({
+    fingerprint: 'synthetic_fingerprint',
+    customer: 'cus_fixture',
+    paymentMethod: 'pm_fixture',
+  });
+  fingerprint = '';
+  await expect(site.provider.inspectSetup!({ ...intent, reference: 'cs_setup' })).rejects.toThrow(
+    'could not be verified',
+  );
+  fingerprint = 'synthetic';
+  methodCustomer = 'cus_wrong';
+  await expect(site.provider.inspectSetup!({ ...intent, reference: 'cs_setup' })).rejects.toThrow(
+    'could not be verified',
+  );
+});
+it('creates only the approved trial end under an activation idempotency key and reconciles authoritative subscriptions', async () => {
+  const id = randomUUID(),
+    activationKey = randomUUID(),
+    end = new Date((base + 14 * 86400) * 1000);
+  const current = {
+    ...subscription(),
+    status: 'trialing',
+    trial_start: base,
+    trial_end: base + 14 * 86400,
+    metadata: { fl_workspace: 'org_fixture', fl_intent: id, fl_trial_activation: activationKey },
+  };
+  const site = fixture((url, body) => {
+    if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
+    if (url.pathname === '/v1/prices/price_growth')
+      return { ...current.items.data[0]!.price, active: true };
+    if (url.pathname === '/v1/subscriptions' && body.has('customer')) return { id: 'sub_fixture' };
+    if (url.pathname === '/v1/subscriptions') return { data: [current], has_more: false };
+    if (url.pathname === '/v1/subscriptions/sub_fixture') return current;
+    throw Error('Unexpected request');
+  });
+  const intent = {
+    id,
+    workspace: 'org_fixture',
+    plan: 'growth' as const,
+    createdAt: new Date(),
+    reference: null,
+    customer: 'cus_fixture',
+    paymentMethod: 'pm_fixture',
+    activationKey,
+    trialEnd: end,
+  };
+  expect(await site.provider.createTrial!(intent)).toMatchObject({ state: 'trialing', trialEnd: end });
+  const posted = site.calls.find(
+    (c) => c.url.pathname === '/v1/subscriptions' && c.body.has('customer'),
+  )!.body;
+  expect(posted.get('trial_end')).toBe(String(base + 14 * 86400));
+  expect(posted.has('trial_period_days')).toBe(false);
+  expect(posted.get('default_payment_method')).toBe('pm_fixture');
+  expect(await site.provider.lookupTrial!(intent)).toMatchObject({ id: 'sub_fixture' });
+  await expect(
+    site.provider.lookupTrial!({ ...intent, trialEnd: new Date(end.getTime() + 1000) }),
+  ).rejects.toThrow('could not be verified');
 });

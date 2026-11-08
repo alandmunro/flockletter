@@ -1,3 +1,4 @@
+import { lockWorkspace } from '../workspace-lock.js';
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { digest } from '../content.js';
@@ -19,12 +20,16 @@ import {
   utcMonth,
 } from './policy.js';
 import type { CustomerBillingProvider, ProviderIntent } from './provider.js';
+import { TrialEnrollment, trialSetupStatus, trialEligibility } from './trial-enrollment.js';
+import type { TrialRegistry } from '../customer-abuse/registry.js';
+import { plans } from '../../shared/contracts.js';
 
 export type BillingOptions = {
   environment: 'local' | 'test' | 'staging' | 'production';
   exerciseEnabled: boolean;
   now?: () => Date;
   gateway?: CustomerBillingProvider;
+  trialRegistry?: TrialRegistry;
   checkOwner?: (userId: string, workspace: string) => Promise<boolean>;
 };
 type Subscription = {
@@ -73,8 +78,9 @@ const emptyUsage = (period: string) => ({
 });
 const iso = (date: Date | null | undefined) => date?.toISOString() ?? null;
 async function row(sql: Sql, lock = false) {
-  return (await sql.query<Subscription>('SELECT * FROM customer_subscriptions' + (lock ? ' FOR UPDATE' : '')))
-    .rows[0];
+  return (
+    await sql.query<Subscription>('SELECT * FROM customer_subscriptions' + (lock ? ' FOR UPDATE' : ''))
+  ).rows[0];
 }
 async function requireScope(sql: Sql, workspace: string) {
   requireCondition(
@@ -187,12 +193,20 @@ export async function customerEligibility(
   if (!complimentary && s?.source === 'stripe' && !options?.gateway)
     reasons.push('This environment’s dedicated billing provider is disabled.');
   if (s?.risk_hold) reasons.push('A billing risk signal requires operator review.');
+  if (
+    (await sql.query<{ held: boolean }>('SELECT public.flockletter_platform_hold($1) held', [workspace]))
+      .rows[0]?.held
+  )
+    reasons.push('This workspace requires a platform review.');
+  if (!complimentary && trial && !(await trialEligibility(sql, workspace, options?.trialRegistry)))
+    reasons.push('The trial’s protected eligibility requires review.');
   const limits = plan ? (trial ? trialAllowance : planAllowance(plan)) : null;
   if (limits) {
     const capacity = await customerCapacity(sql);
     if (capacity.companies > limits.companies)
       reasons.push('This workspace exceeds the plan’s company allowance.');
-    if (capacity.brands > limits.brands) reasons.push('This workspace exceeds the plan’s brand allowance.');
+    if (capacity.brands > limits.brands)
+      reasons.push('This workspace exceeds the plan’s brand allowance.');
     if (capacity.contacts > limits.contacts)
       reasons.push('This workspace exceeds the plan’s active contact allowance.');
   }
@@ -214,12 +228,19 @@ export async function customerEligibility(
     limits,
     usage: await usage(sql, period),
     exerciseEnabled,
+    trialSetup: await trialSetupStatus(sql),
+    trialProtectionReady: !!options?.trialRegistry,
+    legacyCheckout: !!(
+      await sql.query(
+        "SELECT FROM customer_billing_intents WHERE command='customerBilling.checkout' LIMIT 1",
+      )
+    ).rowCount,
   };
 }
 export async function customerCapacity(sql: Sql) {
   const selected =
-    (await sql.query<{ brand: string }>("SELECT current_setting('app.intake_brand_id',true) brand")).rows[0]
-      ?.brand ?? '';
+    (await sql.query<{ brand: string }>("SELECT current_setting('app.intake_brand_id',true) brand"))
+      .rows[0]?.brand ?? '';
   const brands = (await sql.query<{ id: string }>('SELECT id FROM brands')).rows;
   const contacts = new Set<string>();
   try {
@@ -242,7 +263,11 @@ export async function customerCapacity(sql: Sql) {
     contacts: contacts.size,
   };
 }
-export async function customerContactLimit(sql: Sql, workspace: string, options?: Partial<BillingOptions>) {
+export async function customerContactLimit(
+  sql: Sql,
+  workspace: string,
+  options?: Partial<BillingOptions>,
+) {
   const status = await customerEligibility(sql, workspace, options);
   return status.eligible ? status.limits!.contacts : trialAllowance.contacts;
 }
@@ -250,13 +275,38 @@ export async function customerSeatLimit(sql: Sql, workspace: string, options?: P
   const status = await customerEligibility(sql, workspace, options);
   return status.eligible ? status.limits!.users : trialAllowance.users;
 }
+// Retention planning needs authoritative lifecycle facts, not sending authorization.
+// Keep this projection SELECT-only so the independent planner can remain read-only;
+// customerEligibility continues to enforce every hold, quota and trial registry check.
+async function retentionLifecycle(sql: Sql, workspace: string, at: Date) {
+  await requireScope(sql, workspace);
+  const grant = (
+    await sql.query<{ plan: CustomerPlan | null; revision: number }>(
+      'SELECT plan,revision FROM workspace_access_events ORDER BY revision DESC LIMIT 1',
+    )
+  ).rows[0];
+  const stored = await row(sql);
+  const complimentary = !!grant?.plan;
+  const now =
+    !complimentary && stored?.source === 'exercise'
+      ? new Date(at.getTime() + stored.clock_offset_days * millisecondsPerDay)
+      : at;
+  const current = stored && effective(stored, now);
+  return {
+    now,
+    current,
+    source: complimentary ? ('complimentary' as const) : (current?.source ?? ('preparation' as const)),
+    state: complimentary ? ('active' as const) : (current?.state ?? ('preparation' as const)),
+    revision: complimentary ? grant!.revision : (current?.revision ?? 0),
+  };
+}
 export async function retentionClockSql(
   sql: Sql,
   workspace: string,
   options?: Partial<BillingOptions>,
   at = options?.now?.() ?? new Date(),
 ) {
-  return new Date((await customerEligibility(sql, workspace, options, at)).now);
+  return (await retentionLifecycle(sql, workspace, at)).now;
 }
 export async function retentionServiceEndSql(
   sql: Sql,
@@ -264,20 +314,18 @@ export async function retentionServiceEndSql(
   options?: Partial<BillingOptions>,
   at = options?.now?.() ?? new Date(),
 ) {
-  const status = await customerEligibility(sql, workspace, options, at);
-  const stored = await row(sql);
-  const current = stored && effective(stored, new Date(status.now));
+  const { source, state, current, revision } = await retentionLifecycle(sql, workspace, at);
   return {
-    source: status.source === 'preparation' ? ('exercise' as const) : status.source,
-    status: status.state,
-    effectiveEnd: ['canceled', 'closed'].includes(status.state)
+    source: source === 'preparation' ? ('exercise' as const) : source,
+    status: state,
+    effectiveEnd: ['canceled', 'closed'].includes(state)
       ? (iso(current?.effective_end_at) ??
-        status.cancelAt ??
-        (status.failedSince
-          ? new Date(Date.parse(status.failedSince) + 30 * millisecondsPerDay).toISOString()
+        iso(current?.cancel_at) ??
+        (current?.failed_since
+          ? new Date(current.failed_since.getTime() + 30 * millisecondsPerDay).toISOString()
           : null))
       : null,
-    version: String(status.revision),
+    version: String(revision),
   };
 }
 export class CustomerBilling {
@@ -305,7 +353,7 @@ export class CustomerBilling {
   }
   private async locked<T>(workspace: string, run: (sql: Sql) => Promise<T>) {
     return this.db.tenant(workspace, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+      await lockWorkspace(sql, workspace);
       return run(sql);
     });
   }
@@ -323,7 +371,9 @@ export class CustomerBilling {
     );
   }
   async retentionClock(workspace: string) {
-    return this.db.tenant(workspace, (sql) => retentionClockSql(sql, workspace, this.options, this.clock()));
+    return this.db.tenant(workspace, (sql) =>
+      retentionClockSql(sql, workspace, this.options, this.clock()),
+    );
   }
   async execute(name: string, raw: unknown, actor: Actor) {
     requireCondition(
@@ -342,10 +392,64 @@ export class CustomerBilling {
     const input = customerBillingCommands[command].schema.parse(raw);
     await this.requireOwner(actor);
     if (command === 'customerBilling.status') return this.status(actor.workspaceId);
-    if (command === 'customerBilling.checkout')
-      return this.checkout(actor, customerBillingCommands[command].schema.parse(raw));
-    if (command === 'customerBilling.restartCheckout')
-      return this.checkout(actor, customerBillingCommands[command].schema.parse(raw), true);
+    if (command === 'customerBilling.trialReview')
+      return this.trials().review(actor, customerBillingCommands[command].schema.parse(raw).setupId);
+    if (command === 'customerBilling.activateTrial')
+      return this.trials().activate(actor, customerBillingCommands[command].schema.parse(raw));
+    if (command === 'customerBilling.paidCheckout') {
+      const accepted = customerBillingCommands[command].schema.parse(raw);
+      requireCondition(
+        plans.find((p) => p.id === accepted.plan)?.priceMinor === accepted.priceMinor,
+        409,
+        'price_changed',
+        'Review the current recurring plan price.',
+      );
+      await this.db.tenant(actor.workspaceId, async (sql) => {
+        requireCondition(
+          !(
+            await sql.query(
+              "SELECT FROM customer_trial_setups WHERE state NOT IN ('denied','expired') LIMIT 1",
+            )
+          ).rowCount,
+          409,
+          'trial_setup_pending',
+          'Resolve the existing card setup or approved trial before choosing paid checkout.',
+        );
+      });
+      return this.checkout(actor, accepted, false, {
+        priceMinor: accepted.priceMinor,
+        currency: 'USD',
+        acceptedAt: this.clock().toISOString(),
+      });
+    }
+    if (command === 'customerBilling.checkout') {
+      const legacy = await this.db.tenant(
+        actor.workspaceId,
+        async (sql) =>
+          (
+            await sql.query(
+              "SELECT FROM customer_billing_intents WHERE command='customerBilling.checkout' LIMIT 1",
+            )
+          ).rowCount,
+      );
+      return legacy
+        ? this.checkout(actor, customerBillingCommands[command].schema.parse(raw))
+        : this.trials().checkout(actor, customerBillingCommands[command].schema.parse(raw));
+    }
+    if (command === 'customerBilling.restartCheckout') {
+      const legacy = await this.db.tenant(
+        actor.workspaceId,
+        async (sql) =>
+          (
+            await sql.query(
+              "SELECT FROM customer_billing_intents WHERE command='customerBilling.checkout' LIMIT 1",
+            )
+          ).rowCount,
+      );
+      return legacy
+        ? this.checkout(actor, customerBillingCommands[command].schema.parse(raw), true)
+        : this.trials().checkout(actor, customerBillingCommands[command].schema.parse(raw));
+    }
     if (command === 'customerBilling.rejoin')
       return this.rejoin(actor, customerBillingCommands[command].schema.parse(raw));
     if (command === 'customerBilling.portal')
@@ -402,6 +506,16 @@ export class CustomerBilling {
       );
       if (command === 'customerBilling.startTrial') {
         requireCondition(
+          !(
+            await sql.query<{ held: boolean }>('SELECT public.flockletter_platform_hold($1) held', [
+              actor.workspaceId,
+            ])
+          ).rows[0]?.held,
+          409,
+          'platform_review_required',
+          'This workspace requires a platform review.',
+        );
+        requireCondition(
           !before,
           409,
           'trial_already_used',
@@ -409,6 +523,43 @@ export class CustomerBilling {
         );
         const request = customerBillingCommands[command].schema.parse(raw),
           end = new Date(now.getTime() + 14 * millisecondsPerDay);
+        if (this.options.trialRegistry) {
+          const registry = this.options.trialRegistry;
+          requireCondition(
+            registry.config.source === 'exercise',
+            503,
+            'exercise_registry_required',
+            'Use the separate synthetic eligibility registry.',
+          );
+          const identity = registry.identity(actor.workspaceId, actor.userId),
+            id = randomUUID();
+          const card = registry.card('synthetic:' + (request.simulatedCardReference ?? actor.userId));
+          requireCondition(
+            (await registry.claim(sql, actor.workspaceId, identity, id, 'reserve')) === 'allowed' &&
+              (await registry.claim(sql, actor.workspaceId, identity, id, 'consume', card)) ===
+                'allowed',
+            409,
+            'trial_unavailable',
+            'This synthetic setup is not eligible for another captured trial.',
+          );
+          await sql.query(
+            `INSERT INTO customer_trial_setups(workspace_id,id,actor_id,operation_key,plan,source,provider_account,registry_namespace,registry_workspace_digest,owner_digest,card_digest,state,created_at)
+            VALUES($1,$2,$3,$4,$5,'exercise',$6,$7,$8,$9,$10,'active',$11)`,
+            [
+              actor.workspaceId,
+              id,
+              actor.actorId,
+              key,
+              request.plan,
+              registry.config.account,
+              identity.namespace,
+              identity.workspaceDigest,
+              identity.ownerDigest,
+              card,
+              now,
+            ],
+          );
+        }
         await sql.query(
           `INSERT INTO customer_subscriptions(workspace_id,id,source,state,plan,trial_started_at,trial_end_at,period_start_at,period_end_at,observed_at)
           VALUES($1,$2,'exercise','trialing',$3,$4,$5,$4,$5,$4)`,
@@ -447,7 +598,8 @@ export class CustomerBilling {
             'subscription_ended',
             'This subscription has already ended.',
           );
-          current.cancel_at = current.state === 'trialing' ? current.trial_end_at : current.period_end_at;
+          current.cancel_at =
+            current.state === 'trialing' ? current.trial_end_at : current.period_end_at;
         }
         if (command === 'customerBilling.resume') {
           requireCondition(
@@ -541,10 +693,19 @@ export class CustomerBilling {
     );
     return this.options.gateway;
   }
+  private trials() {
+    return new TrialEnrollment(this.db, {
+      registry: this.options.trialRegistry,
+      gateway: this.provider(),
+      now: () => this.clock(),
+      requireOwner: (actor, sql) => this.requireOwner(actor, sql),
+    });
+  }
   private async checkout(
     actor: Actor,
     input: { operationKey: string; plan: CustomerPlan },
     restartExpired = false,
+    paidAcceptance?: { priceMinor: number; currency: 'USD'; acceptedAt: string },
   ) {
     const gateway = this.provider(),
       workspace = actor.workspaceId;
@@ -558,6 +719,26 @@ export class CustomerBilling {
         409,
         'complimentary_account',
         'Complimentary access bypasses card billing.',
+      );
+      requireCondition(
+        !(
+          await sql.query<{ held: boolean }>('SELECT public.flockletter_platform_hold($1) held', [
+            workspace,
+          ])
+        ).rows[0]?.held,
+        409,
+        'platform_review_required',
+        'This workspace requires a platform review.',
+      );
+      requireCondition(
+        !(
+          await sql.query(
+            "SELECT FROM customer_trial_setups WHERE state NOT IN ('denied','expired') LIMIT 1",
+          )
+        ).rowCount,
+        409,
+        'trial_setup_pending',
+        'Resolve the existing trial setup before opening paid checkout.',
       );
       const subscription = await row(sql);
       requireCondition(
@@ -602,7 +783,8 @@ export class CustomerBilling {
           'An existing checkout must be resolved before creating another.',
         );
         requireCondition(
-          prior.result.plan === input.plan || (restartExpired && prior.operation_key !== input.operationKey),
+          prior.result.plan === input.plan ||
+            (restartExpired && prior.operation_key !== input.operationKey),
           409,
           'checkout_exists',
           'Resume the existing ' + prior.result.plan + ' checkout before selecting a different plan.',
@@ -615,7 +797,8 @@ export class CustomerBilling {
           reference: prior.provider_reference,
           trialDays,
         } satisfies ProviderIntent;
-        if (!restartExpired || prior.operation_key === input.operationKey) return { fresh: false, intent };
+        if (!restartExpired || prior.operation_key === input.operationKey)
+          return { fresh: false, intent };
         const observed = await gateway.lookupCheckout(intent);
         requireCondition(
           observed?.state === 'expired' &&
@@ -638,23 +821,15 @@ export class CustomerBilling {
         'checkout_missing',
         'Start the initial checkout first.',
       );
-      const trialUsed =
-        !!prior ||
-        (
-          await sql.query<{ used: boolean }>(`SELECT
-        EXISTS(SELECT FROM customer_subscription_history) OR
-        EXISTS(SELECT FROM customer_billing_events WHERE source='stripe') OR
-        EXISTS(SELECT FROM customer_billing_intents WHERE command='customerBilling.rejoin') AS used`)
-        ).rows[0]!.used;
       const intent: ProviderIntent = {
         id: randomUUID(),
         workspace,
         plan: input.plan,
         createdAt: this.clock(),
         reference: null,
-        // Reserving the first hosted intent consumes this workspace's trial opportunity,
-        // including an abandoned/expired attempt. A replacement is normal paid Checkout.
-        trialDays: trialUsed ? 0 : 14,
+        // Only pre-existing legacy intents may retain their saved trial agreement.
+        // Every new ordinary Checkout is explicitly selected paid service.
+        trialDays: 0,
       };
       const requestHash = digest(JSON.stringify([input.plan, actor.actorId, intent.trialDays]));
       await sql.query(
@@ -668,7 +843,11 @@ export class CustomerBilling {
           requestHash,
           gateway.account,
           intent.createdAt,
-          JSON.stringify({ plan: input.plan, trialDays: intent.trialDays }),
+          JSON.stringify({
+            plan: input.plan,
+            trialDays: intent.trialDays,
+            ...(paidAcceptance ? { paidAcceptance } : {}),
+          }),
         ],
       );
       await sql.query(
@@ -694,8 +873,8 @@ export class CustomerBilling {
     const prepared = await this.locked(workspace, async (sql) => {
       await this.requireOwner(actor, sql);
       requireCondition(
-        !(await sql.query('SELECT plan FROM workspace_access_events ORDER BY revision DESC LIMIT 1')).rows[0]
-          ?.plan,
+        !(await sql.query('SELECT plan FROM workspace_access_events ORDER BY revision DESC LIMIT 1'))
+          .rows[0]?.plan,
         409,
         'complimentary_account',
         'Complimentary access bypasses card billing.',
@@ -918,12 +1097,48 @@ export class CustomerBilling {
       workspace = actor.workspaceId;
     const intent = await this.locked(workspace, async (sql) => {
       await this.requireOwner(actor, sql);
-      const subscription = (
+      let subscription = (
         await sql.query<{
           provider_customer: string;
           provider_account: string;
         }>("SELECT provider_customer,provider_account FROM customer_subscriptions WHERE source='stripe'")
       ).rows[0];
+      if (!subscription) {
+        const setup = (
+          await sql.query<{
+            id: string;
+            plan: CustomerPlan;
+            customer_id: string;
+            subscription_id: string;
+            trial_end_at: Date;
+          }>(
+            `SELECT id,plan,customer_id,subscription_id,trial_end_at FROM customer_trial_setups
+          WHERE state='active' AND approved_at IS NOT NULL AND review_hash IS NOT NULL AND subscription_id IS NOT NULL
+          AND provider_account=$1 AND source=$2 ORDER BY created_at DESC LIMIT 1`,
+            [gateway.account, gateway.live ? 'stripe_live' : 'stripe_test'],
+          )
+        ).rows[0];
+        requireCondition(
+          setup && gateway.inspectSubscription,
+          409,
+          'subscription_required',
+          'The pending agreement must be verified before opening billing management.',
+        );
+        const verified = await gateway.inspectSubscription(setup.subscription_id);
+        requireCondition(
+          verified.id === setup.subscription_id &&
+            verified.customer === setup.customer_id &&
+            verified.workspaceHint === workspace &&
+            verified.intentHint === setup.id &&
+            verified.plan === setup.plan &&
+            verified.trialEnd?.getTime() === setup.trial_end_at?.getTime(),
+          409,
+          'pending_agreement_unverified',
+          'The pending billing agreement requires support review.',
+        );
+        await this.requireOwner(actor, sql);
+        subscription = { provider_customer: verified.customer, provider_account: gateway.account };
+      }
       requireCondition(
         subscription?.provider_account === gateway.account,
         409,
@@ -1073,7 +1288,7 @@ export class CustomerBilling {
           rejoin: RejoinBinding | null;
         }>(
           `SELECT id,command,provider_reference,created_at,result->>'plan' AS plan,result->>'trialDays' AS trial_days,result->'rejoin' AS rejoin
-        FROM customer_billing_intents WHERE command IN ('customerBilling.checkout','customerBilling.rejoin') AND provider_account=$1 AND id=$2`,
+        FROM customer_billing_intents WHERE command IN ('customerBilling.checkout','customerBilling.rejoin','customerBilling.activateTrial') AND provider_account=$1 AND id=$2`,
           [gateway.account, resolved.intentId ?? snapshot.intentHint],
         )
       ).rows[0];
@@ -1091,7 +1306,33 @@ export class CustomerBilling {
           (binding.trial_days === '0' && snapshot.trialStart !== null)
         )
           return;
-        if (binding.command === 'customerBilling.rejoin') {
+        if (binding.command === 'customerBilling.activateTrial') {
+          const setup = (
+            await sql.query<{
+              state: string;
+              customer_id: string;
+              trial_end_at: Date;
+              subscription_id: string | null;
+              approved_at: Date | null;
+              review_hash: string | null;
+            }>(
+              'SELECT state,customer_id,trial_end_at,subscription_id,approved_at,review_hash FROM customer_trial_setups WHERE id=$1',
+              [binding.id],
+            )
+          ).rows[0];
+          if (
+            current ||
+            !setup ||
+            !['activation_pending', 'active'].includes(setup.state) ||
+            !setup.approved_at ||
+            !setup.review_hash ||
+            setup.customer_id !== snapshot.customer ||
+            setup.trial_end_at?.getTime() !== snapshot.trialEnd?.getTime() ||
+            (setup.subscription_id && setup.subscription_id !== snapshot.id) ||
+            !(await trialEligibility(sql, workspace, this.options.trialRegistry))
+          )
+            return;
+        } else if (binding.command === 'customerBilling.rejoin') {
           const previous = binding.rejoin;
           requireCondition(
             previous &&
@@ -1247,7 +1488,7 @@ export class CustomerBilling {
   ) {
     await requireScope(sql, workspace);
     await requireNotErased(sql);
-    await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+    await lockWorkspace(sql, workspace);
     requireCondition(
       Number.isSafeInteger(input.recipients) && input.recipients > 0 && input.recipients <= 10000,
       422,
@@ -1332,13 +1573,27 @@ export class CustomerBilling {
     const inserted = await sql.query<Reservation>(
       `INSERT INTO customer_usage_reservations(workspace_id,operation_key,campaign_id,brand_id,period,recipients,request_hash,slots)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [workspace, input.operationKey, input.campaignId, input.brandId, period, input.recipients, hash, slots],
+      [
+        workspace,
+        input.operationKey,
+        input.campaignId,
+        input.brandId,
+        period,
+        input.recipients,
+        hash,
+        slots,
+      ],
     );
     return inserted.rows[0]!;
   }
-  async settle(sql: Sql, workspace: string, key: string, totals: { accepted: number; excluded: number }) {
+  async settle(
+    sql: Sql,
+    workspace: string,
+    key: string,
+    totals: { accepted: number; excluded: number },
+  ) {
     await requireScope(sql, workspace);
-    await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+    await lockWorkspace(sql, workspace);
     const old = (
       await sql.query<Reservation>(
         'SELECT * FROM customer_usage_reservations WHERE operation_key=$1 FOR UPDATE',
@@ -1376,9 +1631,11 @@ export class CustomerBilling {
   }
   async release(sql: Sql, workspace: string, key: string) {
     await requireScope(sql, workspace);
-    await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+    await lockWorkspace(sql, workspace);
     const current = (
-      await sql.query<Reservation>('SELECT * FROM customer_usage_reservations WHERE operation_key=$1', [key])
+      await sql.query<Reservation>('SELECT * FROM customer_usage_reservations WHERE operation_key=$1', [
+        key,
+      ])
     ).rows[0];
     requireCondition(current, 404, 'reservation_missing', 'This recipient reservation is unavailable.');
     requireCondition(

@@ -1,3 +1,4 @@
+import {lockWorkspace} from '../workspace-lock.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Webhook } from 'standardwebhooks';
@@ -7,19 +8,26 @@ import { AppError, requireCondition } from '../errors.js';
 import { supportDraft, type LocalWriter } from '../support-draft.js';
 import { supportAnswer, type SupportTopic } from '../../shared/support.js';
 import {
-  customerSupportCommands,
+  customerSupportCommands, supportOperatorCommands,
+  type SupportAutomationStatus, type SupportPolicyReview,
   type SupportDirectory,
   type SupportTicket,
   type SupportMessage,
   type SupportState,
 } from '../../shared/customer-support.js';
 import type { SupportProvider, SupportSubmission } from './provider.js';
+import { ResendSupportInbox, supportDigest, type NativeSupportOptions, type NativeMessage } from './inbound.js';
+export type { NativeSupportOptions, UnassignedSupportEmail } from './inbound.js';
 
 type Mode = 'off' | 'capture' | 'live';
-type Options = {
+export type SupportOperatorGrant = { workspaceId: string; userId: string; actorId: string; reason: string; reference: string; check: () => Promise<boolean> };
+export type SupportOptions = {
   mode: Mode;
   isOwner?: (user: string, workspace: string) => Promise<boolean>;
   isOperator?: (user: string, workspace: string) => Promise<boolean>;
+  operatorAuthorized?: (user: string, workspace: string, reference: string) => Promise<boolean>;
+  automationLiveApproved?: boolean;
+  nativeInbound?: NativeSupportOptions;
   writer?: LocalWriter;
   provider?: SupportProvider;
   sender?: string;
@@ -43,12 +51,16 @@ type Dispatch = {
   ticket_id: string;
   ticket_version: number;
   body: string;
+  body_digest: string;
   state: string;
   mode: 'capture' | 'live';
   attempts: number;
   provider_id: string | null;
   reason: string | null;
   created_by: string;
+  authority_kind: 'owner'|'operator'|'automation';
+  authority_ref: string | null;
+  policy_version: number | null;
 };
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const sensitive =
@@ -57,12 +69,24 @@ const clean = (value: string) => !/[\p{Cc}\p{Cf}]/u.test(value.replace(/[\n\r\t]
 const reviewCode = (row: TicketRow) =>
   row.draft ? hash(JSON.stringify([row.id, row.version, row.draft, row.draft_provenance])) : null;
 
+type PolicyRow = { version: number; enabled: boolean; mode: 'capture'|'live'; responses: Record<string,string>; guidance_digest: string; valid_until: Date };
+const safeTopics = ['plans','trial','audience','campaigns'] as const;
+const publicGuidanceDigest = () => hash(JSON.stringify(safeTopics.map((topic) => supportAnswer(topic))));
+
 export class CustomerSupport {
+  private readonly grants = new WeakMap<Actor, SupportOperatorGrant>();
   constructor(
     readonly db: Database,
-    readonly options: Options = { mode: 'off' },
+    readonly options: SupportOptions = { mode: 'off' },
   ) {}
   private async owner(actor: Actor) {
+    const grant = this.grants.get(actor);
+    if (grant) {
+      requireCondition(await grant.check(), 403, 'support_operator_required', 'The independently verified support authority expired.');
+      await this.db.tenant(actor.workspaceId, (sql) => this.retained(sql));
+      requireCondition(this.options.mode !== 'off',503,'support_unavailable','Support is not configured.');
+      return;
+    }
     requireCondition(
       actor.kind === 'session' && actor.owner,
       403,
@@ -92,6 +116,8 @@ export class CustomerSupport {
     );
   }
   private async reviewer(actor: Actor) {
+    const grant = this.grants.get(actor);
+    if (grant) { requireCondition(await grant.check(),403,'support_operator_required','Verify current support authority.'); return; }
     if (this.options.mode === 'capture') return;
     requireCondition(
       await this.options.isOperator?.(actor.userId, actor.workspaceId),
@@ -102,7 +128,7 @@ export class CustomerSupport {
   }
   private async locked<T>(workspace: string, run: (sql: Sql) => Promise<T>) {
     return this.db.tenant(workspace, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+      await lockWorkspace(sql,workspace);
       return run(sql);
     });
   }
@@ -130,7 +156,12 @@ export class CustomerSupport {
         );
         return before.result;
       }
+      await this.retained(sql);
+      const grant = this.grants.get(actor);
+      if (grant) requireCondition(await grant.check(),403,'support_operator_required','The support authority expired before this change.');
+      else requireCondition(await this.options.isOwner?.(actor.userId,actor.workspaceId),403,'owner_required','Verify current workspace ownership.');
       const result = await run(sql);
+      if (grant) await sql.query('INSERT INTO customer_support_operator_audit(workspace_id,id,authority_ref,user_id,action,ticket_id,reason,operation_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8)', [actor.workspaceId,randomUUID(),grant.reference,grant.userId,name,'id' in input ? input.id : null,grant.reason,input.operationKey]);
       await sql.query(
         'INSERT INTO operations(workspace_id,actor_id,operation_key,request_hash,result) VALUES($1,$2,$3,$4,$5)',
         [actor.workspaceId, actorId, input.operationKey, digest, JSON.stringify(result)],
@@ -178,7 +209,7 @@ export class CustomerSupport {
           [id],
         )
       ).rows[0];
-      return this.view(
+      const result = this.view(
         row,
         messages.map((m) => ({
           id: m.id,
@@ -189,6 +220,8 @@ export class CustomerSupport {
         })),
         delivery,
       );
+      result.replyAddress = await this.replyAddress(sql,workspace,id);
+      return result;
     });
   }
   private view(row: TicketRow, messages: SupportMessage[], delivery?: Dispatch): SupportTicket {
@@ -211,7 +244,7 @@ export class CustomerSupport {
     };
   }
   private async visible(actor: Actor, ticket: SupportTicket): Promise<SupportTicket> {
-    if (this.options.mode === 'capture' || (await this.options.isOperator?.(actor.userId, actor.workspaceId)))
+    if (this.grants.has(actor) || this.options.mode === 'capture' || (await this.options.isOperator?.(actor.userId, actor.workspaceId)))
       return ticket;
     return {
       ...ticket,
@@ -221,10 +254,55 @@ export class CustomerSupport {
       messages: ticket.messages.filter((message) => message.kind !== 'draft'),
     };
   }
+  /** Server-only port. HTTP/MCP bodies must never supply this grant; platform authentication mints it. */
+  async executeForOperator(name: string, raw: unknown, grant: SupportOperatorGrant): Promise<unknown> {
+    requireCondition(grant.workspaceId.length > 0 && grant.workspaceId.length <= 200 && grant.userId.length > 0 && grant.actorId.length > 0 && grant.reference.length > 0 && grant.reference.length <= 200 && grant.reason.trim().length > 0 && grant.reason.length <= 500 && typeof grant.check === 'function' && await grant.check(),403,'support_operator_required','Verify an exact support review case.');
+    requireCondition(['support.get','support.draft','support.editDraft','support.approve','support.process','support.escalate','support.close',...Object.keys(supportOperatorCommands)].includes(name),403,'support_operator_scope','The operator case does not allow this action.');
+    const actor: Actor = { workspaceId:grant.workspaceId,userId:grant.userId,actorId:grant.actorId,kind:'session',owner:false,scopes:['read'],brandIds:null };
+    this.grants.set(actor,grant);
+    try { return await this.execute(name,raw,actor); } finally { this.grants.delete(actor); }
+  }
   async execute(name: string, raw: unknown, actor: Actor): Promise<unknown> {
     await this.owner(actor);
-    requireCondition(name in customerSupportCommands, 404, 'unknown_command', 'Unknown support action.');
+    if (name in supportOperatorCommands && name !== 'support.reauthorize') return this.policyCommand(name,raw,actor);
+    requireCondition(name in customerSupportCommands || name === 'support.reauthorize', 404, 'unknown_command', 'Unknown support action.');
     switch (name) {
+      case 'support.reauthorize': {
+        const grant=this.grants.get(actor);
+        requireCondition(grant,403,'support_operator_required','Only a freshly verified support operator can renew reply authority.');
+        const input=supportOperatorCommands[name].schema.parse(raw);
+        await this.mutate(actor,name,input,async(sql) => {
+          const row=await this.ticket(sql,input.id,input.expectedVersion);
+          requireCondition(row.state === 'queued' && row.draft && reviewCode(row) === input.reviewCode,409,'support_review_changed','Read and approve the exact current queued reply.');
+          const jobs=(await sql.query<Dispatch>("SELECT * FROM customer_support_dispatches WHERE ticket_id=$1 AND state IN ('queued','submitting','uncertain') ORDER BY created_at FOR UPDATE",[row.id])).rows;
+          const job=jobs[0];
+          requireCondition(jobs.length === 1 && job && job.state === 'queued' && job.attempts === 0,409,'support_already_attempted','Only an unattempted queued reply can receive fresh authority. Reconcile uncertain attempts without resending.');
+          requireCondition(job.body === row.draft && job.body_digest === hash(row.draft) && job.mode === row.mode && job.mode === this.options.mode,409,'support_review_changed','The frozen reply or transport changed after review.');
+          await sql.query("UPDATE customer_support_dispatches SET created_by=$2,authority_kind='operator',authority_ref=$3,policy_version=NULL,reason=NULL,updated_at=now() WHERE id=$1",[job.id,grant.userId,grant.reference]);
+          return {id:row.id};
+        });
+        return this.get(actor.workspaceId,input.id);
+      }
+      case 'support.automationStatus':
+        customerSupportCommands[name].schema.parse(raw);
+        return this.automationStatus(actor.workspaceId);
+      case 'support.exerciseAutomation': {
+        const input = customerSupportCommands[name].schema.parse(raw);
+        requireCondition(this.options.mode === 'capture',409,'capture_only','This exercise is available only with captured transport.');
+        await this.mutate(actor,name,input,async (sql) => {
+          await this.queueAutomation(sql,actor.workspaceId,input.id,input.expectedVersion,actor.userId,true);
+          return {id:input.id};
+        });
+        return this.processAuthorized(actor.workspaceId,input.id);
+      }
+      case 'support.prepareReplyAddress': {
+        const input = customerSupportCommands[name].schema.parse(raw);
+        await this.mutate(actor,name,input,async (sql) => {
+          const row = await this.ticket(sql,input.id,input.expectedVersion);
+          await this.prepareThread(sql,actor.workspaceId,row); return {id:row.id};
+        });
+        return this.get(actor.workspaceId,input.id);
+      }
       case 'support.list': {
         const { offset } = customerSupportCommands[name].schema.parse(raw);
         return this.db.tenant(actor.workspaceId, async (sql) => {
@@ -239,6 +317,7 @@ export class CustomerSupport {
           );
           return {
             mode: this.options.mode,
+            replyRoutingConfigured:!!this.options.nativeInbound?.replyDomain,
             tickets: await Promise.all(rows.map((row) => this.visible(actor, this.view(row, [])))),
             total,
             offset,
@@ -254,7 +333,7 @@ export class CustomerSupport {
       case 'support.create': {
         const input = customerSupportCommands[name].schema.parse(raw);
         requireCondition(
-          clean(input.subject) && clean(input.text),
+          !/[\p{Cc}\p{Cf}]/u.test(input.subject) && clean(input.text),
           422,
           'invalid_support_text',
           'Use printable plain text for the support request.',
@@ -410,7 +489,7 @@ export class CustomerSupport {
             'This conversation needs an operator review before more replies.',
           );
           await sql.query(
-            'INSERT INTO customer_support_dispatches(workspace_id,id,ticket_id,ticket_version,operation_key,body,body_digest,state,mode,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+            'INSERT INTO customer_support_dispatches(workspace_id,id,ticket_id,ticket_version,operation_key,body,body_digest,state,mode,created_by,authority_kind,authority_ref) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
             [
               actor.workspaceId,
               randomUUID(),
@@ -422,8 +501,11 @@ export class CustomerSupport {
               'queued',
               row.mode,
               actor.userId,
+              this.grants.has(actor) ? 'operator' : 'owner',
+              this.grants.get(actor)?.reference ?? null,
             ],
           );
+          await this.prepareThread(sql,actor.workspaceId,row);
           await sql.query(
             "UPDATE customer_support_tickets SET state='queued',version=version+1,updated_at=now() WHERE id=$1",
             [row.id],
@@ -501,19 +583,9 @@ export class CustomerSupport {
         )
       ).rows[0];
       if (!job) return null;
-      requireCondition(
-        await this.options.isOwner?.(job.created_by, workspace),
-        403,
-        'owner_required',
-        'The original reply approver no longer has workspace authority.',
-      );
-      if (job.mode === 'live')
-        requireCondition(
-          await this.options.isOperator?.(job.created_by, workspace),
-          403,
-          'support_operator_required',
-          'The original reviewer no longer has support authority.',
-        );
+      if (job.authority_kind === 'owner' || job.state === 'queued') {
+        requireCondition(await this.dispatchAuthorized(sql,workspace,job),403,'support_authority_expired','The original support approval is no longer valid for a new submission.');
+      }
       if (job.state === 'queued') {
         requireCondition(
           row.state === 'queued' && job.mode === this.options.mode,
@@ -535,8 +607,22 @@ export class CustomerSupport {
       await this.finish(workspace, job, { state: 'accepted', id: 'capture-' + job.id });
       return this.get(workspace, id);
     }
+    const thread = await this.db.tenant(workspace, async (sql) => ({replyTo:await this.replyAddress(sql,workspace,id), messageId:(await sql.query<{last_message_id:string|null}>('SELECT last_message_id FROM customer_support_threads WHERE ticket_id=$1',[id])).rows[0]?.last_message_id}));
     let outcome: SupportSubmission = { state: 'unknown' };
     const provider = this.options.provider;
+    if (submit) {
+      const allowed=await this.locked(workspace,async(sql) => {
+        const erased=(await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount;
+        const current=(await sql.query<Dispatch>('SELECT * FROM customer_support_dispatches WHERE id=$1 FOR UPDATE',[job.id])).rows[0];
+        const currentTicket=await this.ticket(sql,id);
+        if (erased || !current || current.state !== 'submitting' || currentTicket.state !== 'queued' || this.options.mode !== job.mode || !(await this.dispatchAuthorized(sql,workspace,job))) {
+          if (current?.state === 'submitting') await sql.query("UPDATE customer_support_dispatches SET state='cancelled',reason='authority_changed_before_handoff',updated_at=now() WHERE id=$1",[job.id]);
+          return false;
+        }
+        return true;
+      });
+      if (!allowed) return this.get(workspace,id);
+    }
     if (provider && this.options.sender && row.reply_to) {
       try {
         outcome = submit
@@ -547,6 +633,9 @@ export class CustomerSupport {
               from: this.options.sender,
               subject: 'Re: ' + row.subject,
               text: job.body,
+              ...(thread.replyTo ? {replyTo:thread.replyTo} : {}),
+              ...(thread.messageId ? {inReplyTo:thread.messageId} : {}),
+              automatic:job.authority_kind === 'automation',
             })
           : await provider.lookup(job.id, job.provider_id);
       } catch {
@@ -565,6 +654,7 @@ export class CustomerSupport {
       ).rows[0];
       if (!current || current.state === 'accepted') return;
       const next = outcome.state === 'unknown' ? 'uncertain' : outcome.state;
+      await sql.query('UPDATE customer_support_automation_runs SET state=$2,reason=$3 WHERE dispatch_id=$1',[job.id,next,next === 'uncertain' ? 'provider_unknown' : null]);
       if (current.state !== next)
         await sql.query('INSERT INTO audit(workspace_id,id,actor_id,action) VALUES($1,$2,$3,$4)', [
           workspace,
@@ -608,6 +698,13 @@ export class CustomerSupport {
   }
   async tickWorkspace(workspace: string) {
     if (this.options.mode === 'off') return { processed: 0 };
+    await this.locked(workspace,async(sql) => {
+      if ((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount) return;
+      const policy=await this.currentPolicy(sql);
+      if (!policy?.enabled || policy.valid_until <= new Date() || policy.mode !== this.options.mode) return;
+      const candidates=(await sql.query<{id:string;version:number}>("SELECT id,version FROM customer_support_tickets WHERE state='open' ORDER BY created_at LIMIT 10")).rows;
+      for (const ticket of candidates) await this.queueAutomation(sql,workspace,ticket.id,ticket.version,'system:support-policy',false);
+    });
     const jobs = await this.db.tenant(
       workspace,
       async (sql) =>
@@ -619,11 +716,9 @@ export class CustomerSupport {
     );
     let processed = 0;
     for (const job of jobs) {
-      if (!(await this.options.isOwner?.(job.created_by, workspace))) continue;
-      if (this.options.mode === 'live' && !(await this.options.isOperator?.(job.created_by, workspace)))
-        continue;
-      await this.processAuthorized(workspace, job.ticket_id);
-      processed++;
+      try { await this.processAuthorized(workspace, job.ticket_id); processed++; } catch (error) {
+        if (!(error instanceof AppError) || !['owner_required','support_operator_required','support_authority_expired','workspace_erased'].includes(error.code)) throw error;
+      }
     }
     return { processed };
   }
@@ -643,6 +738,192 @@ export class CustomerSupport {
     for (const job of jobs) await this.process(actor, job.ticket_id);
     return { processed: jobs.length };
   }
+  private async currentPolicy(sql: Sql): Promise<PolicyRow | undefined> {
+    return (await sql.query<PolicyRow>('SELECT * FROM customer_support_policies ORDER BY version DESC LIMIT 1')).rows[0];
+  }
+  private async dispatchAuthorized(sql: Sql, workspace: string, job: Dispatch) {
+    if (job.authority_kind === 'operator') return !!job.authority_ref && !!(await this.options.operatorAuthorized?.(job.created_by,workspace,job.authority_ref));
+    if (job.authority_kind === 'automation') {
+      if (job.mode === 'capture' && job.policy_version === 0) return !!(await this.options.isOwner?.(job.created_by,workspace));
+      const policy = await this.currentPolicy(sql);
+      return !!policy?.enabled && policy.version === job.policy_version && policy.mode === job.mode &&
+        policy.valid_until > new Date() && policy.guidance_digest === publicGuidanceDigest() &&
+        (job.mode === 'capture' || this.options.automationLiveApproved === true);
+    }
+    return !!(await this.options.isOwner?.(job.created_by,workspace)) &&
+      (job.mode === 'capture' || !!(await this.options.isOperator?.(job.created_by,workspace)));
+  }
+  private async automationStatus(workspace: string): Promise<SupportAutomationStatus> {
+    return this.db.tenant(workspace,async (sql) => {
+      const policy = await this.currentPolicy(sql);
+      const counts = (await sql.query("SELECT count(*) FILTER(WHERE state='queued') pending,count(*) FILTER(WHERE state='accepted' AND mode='capture') captured,count(*) FILTER(WHERE state='uncertain') uncertain FROM customer_support_automation_runs")).rows[0];
+      const last = (await sql.query<{reason:string|null}>('SELECT reason FROM customer_support_automation_runs ORDER BY created_at DESC,id DESC LIMIT 1')).rows[0];
+      return {mode:this.options.mode,policyVersion:policy?.version ?? null,
+        enabledTopics:policy?.enabled && policy.valid_until > new Date() ? Object.keys(policy.responses) : [],
+        pending:Number(counts.pending),captured:Number(counts.captured),uncertain:Number(counts.uncertain),lastReason:last?.reason ?? null,writerConfigured:!!this.options.writer};
+    });
+  }
+  private async policyCommand(name: string, raw: unknown, actor: Actor) {
+    const grant = this.grants.get(actor);
+    requireCondition(grant,403,'support_operator_required','Only independently verified support operators may approve automation policies.');
+    if (name === 'support.policyHistory') {
+      supportOperatorCommands[name].schema.parse(raw);
+      return this.db.tenant(actor.workspaceId,async (sql) => ({policies:(await sql.query('SELECT version,enabled,mode,responses,guidance_digest,review_code,approved_by,authority_ref,valid_until,created_at FROM customer_support_policies ORDER BY version DESC LIMIT 30')).rows}));
+    }
+    if (name === 'support.policyPreview') {
+      const input = supportOperatorCommands[name].schema.parse(raw);
+      requireCondition(input.mode === this.options.mode && (input.mode !== 'live' || this.options.automationLiveApproved === true),409,'support_automation_disabled','Live automatic support requires separate explicit activation.');
+      requireCondition(!input.useWriter || this.options.writer,503,'support_writer_unavailable','The public-guidance writer is not configured.');
+      const replay=await this.db.tenant(actor.workspaceId,async(sql) => {
+        const prior=(await sql.query<{request_hash:string;result:SupportPolicyReview}>('SELECT request_hash,result FROM operations WHERE actor_id=$1 AND operation_key=$2',['customer-support:'+actor.actorId,input.operationKey])).rows[0];
+        if (prior) requireCondition(prior.request_hash === hash(JSON.stringify([name,input])),409,'operation_conflict','Retry the original policy preview request.');
+        return prior?.result;
+      });
+      if (replay) return replay;
+      const responses:Record<string,string> = {};
+      for (const topic of input.topics) {
+        if (input.useWriter) {
+          const drafted = await supportDraft(topic,this.options.writer!);
+          requireCondition(drafted.kind === 'draft' && drafted.draft,409,'human_handoff','Review the public guidance manually.');
+          responses[topic] = drafted.draft;
+        } else responses[topic] = supportAnswer(topic)!.text;
+      }
+      return this.mutate(actor,name,input,async (sql) => {
+        const policy = await this.currentPolicy(sql);
+        requireCondition((policy?.version ?? 0) === input.expectedVersion,409,'version_conflict','Reload the current automation policy.');
+        const id=randomUUID(),validUntil=new Date(Date.now()+input.validForDays*86400000),expiresAt=new Date(Date.now()+3600000),guidanceDigest=publicGuidanceDigest();
+        const code=hash(JSON.stringify([id,input.expectedVersion,input.enabled,input.mode,responses,guidanceDigest,validUntil.toISOString(),expiresAt.toISOString()]));
+        await sql.query('INSERT INTO customer_support_policy_previews(workspace_id,id,parent_version,enabled,mode,responses,guidance_digest,review_code,valid_until,expires_at,created_by,authority_ref) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',[actor.workspaceId,id,input.expectedVersion,input.enabled,input.mode,JSON.stringify(responses),guidanceDigest,code,validUntil,expiresAt,actor.userId,grant.reference]);
+        return {id,parentVersion:input.expectedVersion,enabled:input.enabled,mode:input.mode,responses,reviewCode:code,validUntil:validUntil.toISOString(),expiresAt:expiresAt.toISOString()} satisfies SupportPolicyReview;
+      });
+    }
+    requireCondition(name === 'support.publishPolicy',404,'unknown_command','Unknown support policy action.');
+    const input=supportOperatorCommands['support.publishPolicy'].schema.parse(raw);
+    return this.mutate(actor,name,input,async (sql) => {
+      const preview=(await sql.query<PolicyRow & {parent_version:number;review_code:string;expires_at:Date}>('SELECT * FROM customer_support_policy_previews WHERE id=$1',[input.previewId])).rows[0];
+      requireCondition(preview && preview.review_code === input.reviewCode && preview.expires_at > new Date() && preview.valid_until > new Date() && preview.guidance_digest === publicGuidanceDigest(),409,'support_policy_review_changed','Read and approve a fresh exact policy preview.');
+      const current=await this.currentPolicy(sql);
+      requireCondition((current?.version ?? 0) === preview.parent_version,409,'version_conflict','The automation policy changed after review.');
+      requireCondition(preview.mode === this.options.mode && (preview.mode !== 'live' || this.options.automationLiveApproved === true),409,'support_automation_disabled','The reviewed automation transport is not enabled.');
+      const version=preview.parent_version+1;
+      await sql.query('INSERT INTO customer_support_policies(workspace_id,version,enabled,mode,responses,guidance_digest,review_code,approved_by,authority_ref,valid_until) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[actor.workspaceId,version,preview.enabled,preview.mode,JSON.stringify(preview.responses),preview.guidance_digest,preview.review_code,actor.userId,grant.reference,preview.valid_until]);
+      return {version,enabled:preview.enabled,mode:preview.mode,responses:preview.responses};
+    });
+  }
+  private async queueAutomation(sql: Sql, workspace: string, id: string, version: number, user: string, exercise: boolean) {
+    const row=await this.ticket(sql,id,version),policy=await this.currentPolicy(sql);
+    const fallback=exercise && this.options.mode === 'capture' && (!policy || !policy.enabled);
+    const policyVersion=fallback ? 0 : policy?.version ?? 0;
+    const prior=(await sql.query('SELECT FROM customer_support_automation_runs WHERE ticket_id=$1 AND input_version=$2 AND policy_version=$3',[id,version,policyVersion])).rowCount;
+    if (prior) return;
+    let reason:string|null=null;
+    const latest=(await sql.query<{text:string;provenance:string}>("SELECT text,provenance FROM customer_support_messages WHERE ticket_id=$1 AND kind='incoming' ORDER BY created_at DESC,id DESC LIMIT 1",[id])).rows[0];
+    const guidance=supportAnswer(row.topic);
+    const counts=(await sql.query("SELECT count(*) total,count(*) FILTER(WHERE authority_kind='automation') automatic FROM customer_support_dispatches WHERE ticket_id=$1",[id])).rows[0];
+    if (!fallback && (!policy?.enabled || policy.valid_until <= new Date() || policy.guidance_digest !== publicGuidanceDigest() || policy.mode !== this.options.mode || (policy.mode === 'live' && this.options.automationLiveApproved !== true))) reason='policy_unavailable';
+    else if (row.state !== 'open') reason='human_handoff';
+    else if (!latest || !guidance || sensitive.test(row.subject+' '+latest.text)) reason='sensitive_or_unknown_question';
+    else if (!['workspace-owner','verified-thread'].includes(latest.provenance)) reason='sender_unverified';
+    else if (latest.text.trim().toLowerCase().replace(/[?!.]+$/,'') !== guidance.title.toLowerCase().replace(/[?!.]+$/,'')) reason='uncertain_question';
+    else if (Number(counts.total) >= 5) reason='support_reply_limit';
+    else if (Number(counts.automatic) >= 1) reason='automatic_reply_limit';
+    const response=fallback ? guidance?.text : policy?.responses[row.topic];
+    if (!reason && !response) reason='topic_not_approved';
+    if (!reason && row.mode === 'live' && (!row.reply_to || !this.options.provider || !this.options.sender)) reason='provider_unavailable';
+    const runId=randomUUID(),dispatchId=reason ? null : randomUUID();
+    await sql.query('INSERT INTO customer_support_automation_runs(workspace_id,id,ticket_id,input_version,policy_version,state,reason,dispatch_id,mode,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[workspace,runId,id,version,policyVersion,reason ? 'held' : 'queued',reason,dispatchId,this.options.mode,user]);
+    if (reason) {
+      if (row.state === 'open') await sql.query("UPDATE customer_support_tickets SET state='escalated',escalation_reason=$2,version=version+1,updated_at=now() WHERE id=$1",[id,reason]);
+      return;
+    }
+    const body=response+'\n\nAutomated reply using approved public guidance. Reply to request a human.';
+    await this.prepareThread(sql,workspace,row);
+    await sql.query("INSERT INTO customer_support_dispatches(workspace_id,id,ticket_id,ticket_version,operation_key,body,body_digest,state,mode,created_by,authority_kind,policy_version) VALUES($1,$2,$3,$4,$5,$6,$7,'queued',$8,$9,'automation',$10)",[workspace,dispatchId,id,row.version,runId,body,hash(body),row.mode,user,policyVersion]);
+    await sql.query("UPDATE customer_support_tickets SET state='queued',version=version+1,updated_at=now() WHERE id=$1",[id]);
+  }
+  private inbox() {
+    const options=this.options.nativeInbound;
+    requireCondition(options,503,'support_inbound_unavailable','Native support intake is not configured.');
+    return new ResendSupportInbox(options,{
+      resolve:async (tokenHash) => {
+        const route=(await this.db.pool.query<{workspace_id:string;ticket_id:string;participant_digest:string}>('SELECT * FROM flockletter_customer_jobs.resolve_support_reply_route($1)',[tokenHash])).rows[0];
+        return route ? {workspaceId:route.workspace_id,ticketId:route.ticket_id,participantDigest:route.participant_digest} : null;
+      },
+      reserve:async (route,providerId,eventId,digest) => this.locked(route.workspaceId,async(sql) => {
+        await this.retained(sql);
+        requireCondition((await sql.query('SELECT FROM workspaces LIMIT 1')).rowCount,422,'support_destination_unbound','The support workspace is not initialized.');
+        const prior=(await sql.query<{digest:string;state:string;ticket_id:string|null;attempts:number}>('SELECT digest,state,ticket_id,attempts FROM customer_support_native_receipts WHERE provider_email_id=$1 FOR UPDATE',[providerId])).rows[0];
+        if (prior) {
+          requireCondition(prior.digest === digest,409,'support_event_conflict','The email identifier was reused with different metadata.');
+          if (prior.state !== 'pending') return {id:prior.ticket_id};
+          requireCondition(prior.attempts<5,503,'support_inbound_review_required','Provider retrieval needs operator review.');
+          await sql.query('UPDATE customer_support_native_receipts SET attempts=attempts+1,updated_at=now() WHERE provider_email_id=$1',[providerId]);
+        } else {
+          const total=Number((await sql.query('SELECT count(*) FROM customer_support_native_receipts')).rows[0].count);
+          requireCondition(total<5000,429,'support_limit','The support inbox needs operator review.');
+          await sql.query("INSERT INTO customer_support_native_receipts(workspace_id,provider_email_id,event_id,digest,state,attempts) VALUES($1,$2,$3,$4,'pending',1)",[route.workspaceId,providerId,eventId,digest]);
+        }
+        return null;
+      }),
+      quarantine:async (route,providerId) => this.locked(route.workspaceId,async(sql) => { await this.retained(sql); await sql.query("UPDATE customer_support_native_receipts SET state='blocked',reason='unverified_thread_sender',updated_at=now() WHERE provider_email_id=$1 AND state='pending'",[providerId]); }),
+      ingest:(message) => this.ingestNative(message),
+    });
+  }
+  async receiveResend(body: Buffer, headers: Record<string,string>) {
+    requireCondition(this.options.mode === 'live',503,'support_inbound_unavailable','Native support intake is not enabled.');
+    return this.inbox().receive(body,headers);
+  }
+  private async prepareThread(sql: Sql, workspace: string, row: TicketRow) {
+    if (!this.options.nativeInbound?.replyDomain || !row.reply_to) return;
+    const inbox=this.inbox(),old=(await sql.query<{expires_at:Date}>('SELECT expires_at FROM customer_support_threads WHERE ticket_id=$1',[row.id])).rows[0];
+    if (old && old.expires_at > new Date()) return;
+    const nonce=randomUUID(),participant=inbox.participant(row.reply_to),token=inbox.token(workspace,row.id,participant,nonce),expires=new Date(Date.now()+29*86400000);
+    await sql.query('INSERT INTO customer_support_threads(workspace_id,ticket_id,nonce,participant_digest,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id,ticket_id) DO UPDATE SET nonce=EXCLUDED.nonce,participant_digest=EXCLUDED.participant_digest,token_hash=EXCLUDED.token_hash,expires_at=EXCLUDED.expires_at',[workspace,row.id,nonce,participant,supportDigest(token),expires]);
+    await sql.query('SELECT flockletter_customer_jobs.register_support_reply_route($1,$2,$3,$4,$5)',[workspace,row.id,supportDigest(token),participant,expires]);
+  }
+  private async replyAddress(sql: Sql, workspace: string, id: string) {
+    if (!this.options.nativeInbound?.replyDomain) return null;
+    const thread=(await sql.query<{nonce:string;participant_digest:string;token_hash:string;expires_at:Date}>('SELECT nonce,participant_digest,token_hash,expires_at FROM customer_support_threads WHERE ticket_id=$1',[id])).rows[0];
+    if (!thread || thread.expires_at <= new Date()) return null;
+    const token=this.inbox().token(workspace,id,thread.participant_digest,thread.nonce);
+    if (supportDigest(token) !== thread.token_hash) return null;
+    return 'r+'+token+'@'+this.options.nativeInbound.replyDomain;
+  }
+  private async ingestNative(message: NativeMessage) {
+    const workspace=message.route.workspaceId;
+    return this.locked(workspace,async (sql) => {
+      await this.retained(sql);
+      requireCondition((await sql.query('SELECT FROM workspaces LIMIT 1')).rowCount,422,'support_destination_unbound','The support workspace is not initialized.');
+      const old=(await sql.query<{digest:string;ticket_id:string|null;state:string}>('SELECT digest,ticket_id,state FROM customer_support_native_receipts WHERE provider_email_id=$1',[message.providerEmailId])).rows[0];
+      if (old) {
+        requireCondition(old.digest === message.receiptDigest,409,'support_event_conflict','The provider email identifier was reused.');
+        if (old.state !== 'pending') return {id:old.ticket_id};
+      }
+      const totals=(await sql.query('SELECT (SELECT count(*) FROM customer_support_native_receipts) receipts,(SELECT count(*) FROM customer_support_tickets) tickets')).rows[0];
+      requireCondition(Number(totals.receipts)<=5000 && (message.autoSubmitted || message.route.ticketId || Number(totals.tickets)<500),429,'support_limit','The support inbox needs operator review.');
+      let id:string|null=null;
+      if (!message.autoSubmitted) {
+        if (message.route.ticketId) {
+          const ticket=await this.ticket(sql,message.route.ticketId);
+          // Recheck participant and retained route inside the workspace transaction.
+          const thread=(await sql.query<{participant_digest:string;expires_at:Date}>('SELECT participant_digest,expires_at FROM customer_support_threads WHERE ticket_id=$1',[ticket.id])).rows[0];
+          requireCondition(thread && thread.expires_at > new Date() && thread.participant_digest === this.inbox().participant(message.from) && message.authentication === 'pass',422,'support_thread_mismatch','The support reply route is no longer valid.');
+          id=ticket.id;
+          await sql.query("UPDATE customer_support_dispatches SET state='cancelled',reason='new_customer_message',updated_at=now() WHERE ticket_id=$1 AND state='queued' AND attempts=0",[id]);
+          const safe=message.attachmentCount === 0 && !sensitive.test(message.subject+' '+message.text) && supportAnswer(ticket.topic);
+          await sql.query("UPDATE customer_support_tickets SET state=$2,draft=NULL,draft_provenance=NULL,version=version+1,updated_at=now() WHERE id=$1",[id,safe ? 'open' : 'escalated']);
+          await sql.query('UPDATE customer_support_threads SET last_message_id=$2 WHERE ticket_id=$1',[id,message.messageId]);
+        } else {
+          id=randomUUID();
+          await sql.query("INSERT INTO customer_support_tickets(workspace_id,id,subject,topic,state,reply_to,requester_id,mode) VALUES($1,$2,$3,'other','escalated',$4,'native-unverified','live')",[workspace,id,message.subject,message.from]);
+        }
+        await this.message(sql,workspace,id,'incoming',message.text,message.route.ticketId && message.authentication === 'pass' && message.attachmentCount === 0 ? 'verified-thread' : 'untrusted-native-email');
+      }
+      await sql.query('UPDATE customer_support_native_receipts SET state=$2,ticket_id=$3,updated_at=now() WHERE provider_email_id=$1',[message.providerEmailId,id ? 'accepted' : 'ignored',id]);
+      return {id};
+    });
+  }
+
   async receiveSigned(body: Buffer, headers: Record<string, string>) {
     requireCondition(
       body.length <= 16384,
@@ -675,7 +956,7 @@ export class CustomerSupport {
       .strict()
       .parse(verified);
     requireCondition(
-      envelope.to[0] === binding.address && clean(envelope.subject) && clean(envelope.text),
+      envelope.to[0] === binding.address && !/[\p{Cc}\p{Cf}]/u.test(envelope.subject) && clean(envelope.text),
       422,
       'invalid_support_email',
       'The support email does not match its configured destination.',

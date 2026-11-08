@@ -217,7 +217,7 @@ it('executes only with separate restricted authority and replays the durable era
     );
     await admin.query('GRANT USAGE ON SCHEMA flockletter_customer_jobs TO ' + pg.escapeIdentifier(role));
     await admin.query(
-      'GRANT SELECT,DELETE ON flockletter_customer_jobs.scopes TO ' + pg.escapeIdentifier(role),
+      'GRANT SELECT,DELETE ON flockletter_customer_jobs.scopes,flockletter_customer_jobs.support_reply_routes,flockletter_retention_control.platform_records TO ' + pg.escapeIdentifier(role),
     );
     await admin.query('GRANT INSERT ON customer_retention_receipts TO ' + pg.escapeIdentifier(role));
     await admin.query(
@@ -259,7 +259,7 @@ it('executes only with separate restricted authority and replays the durable era
       erased: true,
       replayed: true,
     });
-    expect(await new CommandService(db).execute('workspace.get', {}, actor)).toBeNull();
+    await expect(new CommandService(db).execute('workspace.get', {}, actor)).rejects.toMatchObject({code:'workspace_retention_blocked'});
     expect(await new CommandService(db).execute('workspace.get', {}, other)).toHaveProperty(
       'name',
       'Retention test',

@@ -1,3 +1,4 @@
+import {lockWorkspace} from '../workspace-lock.js';
 import { z } from 'zod';
 import { digest } from '../content.js';
 import { AppError } from '../errors.js';
@@ -56,7 +57,7 @@ export async function recordCampaignFeedback(sql: Sql, input: FeedbackInput) {
     throw unmapped();
   const local = input.transport === 'feedback_test' || input.transport === 'listmonk_test';
   if (local && input.messageId !== 'local-' + input.operation) throw unmapped();
-  await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [input.workspace]);
+  await lockWorkspace(sql,input.workspace);
   await sql.query('SELECT enabled FROM subscriber_intake_settings FOR UPDATE');
   const p = (
     await sql.query<{

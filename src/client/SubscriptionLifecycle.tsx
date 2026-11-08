@@ -21,6 +21,11 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [checkoutExpired, setCheckoutExpired] = useState(false);
+  const [trialAccepted, setTrialAccepted] = useState(false);
+  const [paidAccepted, setPaidAccepted] = useState(false);
+  const review = status?.trialSetup?.review;
+  useEffect(() => setTrialAccepted(false), [review?.hash]);
+  useEffect(() => setPaidAccepted(false), [plan]);
   const keys = useRef(new Map<string, string>());
   const sequence = useRef(0);
   const refresh = useCallback(async () => {
@@ -40,7 +45,10 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
   async function run(name: CustomerBillingCommandName, input: Record<string, unknown> = {}) {
     if (busy) return;
     const signature = JSON.stringify([name, input]);
-    const operationKey = keys.current.get(signature) ?? crypto.randomUUID();
+    const operationKey =
+      typeof input.operationKey === 'string'
+        ? input.operationKey
+        : (keys.current.get(signature) ?? crypto.randomUUID());
     keys.current.set(signature, operationKey);
     setBusy(true);
     setError('');
@@ -53,12 +61,34 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
       if (result.url) {
         const target = new URL(result.url);
         const host = name === 'customerBilling.portal' ? 'billing.stripe.com' : 'checkout.stripe.com';
-        if (target.protocol !== 'https:' || target.hostname !== host || target.username || target.password)
+        if (
+          target.protocol !== 'https:' ||
+          target.hostname !== host ||
+          target.username ||
+          target.password
+        )
           throw Error('The billing provider returned an unexpected link.');
         window.location.assign(target.href);
         return;
       }
-      if (result.state === 'checkout_expired') {
+      if (result.state === 'trial_unavailable') {
+        keys.current.delete(signature);
+        setNotice(
+          'A free trial is unavailable for this setup. No paid subscription was created. You may explicitly choose the normal paid plan below, or contact support.',
+        );
+      } else if (result.state === 'trial_setup_expired') {
+        keys.current.delete(signature);
+        setNotice(
+          'The card-only setup expired. You can start a new setup after its short reservation ends. No trial or paid subscription was started.',
+        );
+      } else if (result.state === 'card_setup_complete') {
+        setNotice(
+          'Your card-only setup is complete. Review the trial terms below before starting the subscription.',
+        );
+      } else if (result.state === 'trial_review_ready') {
+        keys.current.delete(signature);
+        setNotice('Review the first-charge date and monthly price, then accept to start the trial.');
+      } else if (result.state === 'checkout_expired') {
         keys.current.delete(signature);
         setCheckoutExpired(true);
         setNotice(
@@ -108,8 +138,8 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
         </button>
       </div>
       <p>
-        Your companies and brands share one subscription allowance. Accepted messages count once, including
-        messages that later bounce. Pending delivery outcomes remain reserved.
+        Your companies and brands share one subscription allowance. Accepted messages count once,
+        including messages that later bounce. Pending delivery outcomes remain reserved.
       </p>
       {error && (
         <p className="notice error" role="alert">
@@ -131,8 +161,8 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
             </p>
           ) : exercise ? (
             <p className="notice">
-              Staging exercise: every payment and card confirmation here is simulated. No charge is made. The
-              exercise uses a saved subscription and its own clock.
+              Staging exercise: every payment and card confirmation here is simulated. No charge is made.
+              The exercise uses a saved subscription and its own clock.
             </p>
           ) : status.mode === 'off' ? (
             <p className="notice">
@@ -140,8 +170,8 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
             </p>
           ) : (
             <p>
-              Card details and subscription changes are handled on Stripe’s hosted pages. Returning here does
-              not establish payment success.
+              Card details and subscription changes are handled on Stripe’s hosted pages. Returning here
+              does not establish payment success.
             </p>
           )}
           <dl className="plan-details">
@@ -249,7 +279,9 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
                           type="button"
                           disabled={busy || ['closed', 'canceled'].includes(status.state)}
                           onClick={() =>
-                            void run(status.cancelAt ? 'customerBilling.resume' : 'customerBilling.cancel')
+                            void run(
+                              status.cancelAt ? 'customerBilling.resume' : 'customerBilling.cancel',
+                            )
                           }
                         >
                           {status.cancelAt ? 'Keep subscription' : 'Cancel at period end'}
@@ -280,9 +312,9 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
                         </button>
                       </div>
                       <p>
-                        Upgrades apply immediately. Downgrades start at renewal. Usage stays recorded when you
-                        change plans. Sending pauses on day six of unsuccessful payment; the account closes on
-                        day thirty.
+                        Upgrades apply immediately. Downgrades start at renewal. Usage stays recorded
+                        when you change plans. Sending pauses on day six of unsuccessful payment; the
+                        account closes on day thirty.
                       </p>
                       <label>
                         Advance only this workspace’s exercise clock
@@ -319,7 +351,12 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
                     <button
                       className="btn"
                       type="button"
-                      disabled={busy}
+                      disabled={
+                        busy ||
+                        (status.source === 'preparation' &&
+                          ((!status.trialProtectionReady && !status.legacyCheckout) ||
+                            ['activation_pending', 'active'].includes(status.trialSetup?.state ?? '')))
+                      }
                       onClick={() =>
                         void run(
                           status.source === 'stripe'
@@ -335,21 +372,162 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
                         ? 'Manage billing with Stripe'
                         : checkoutExpired
                           ? 'Restart paid checkout'
-                          : 'Start trial with Stripe'}
+                          : status.legacyCheckout
+                            ? 'Resume Stripe checkout'
+                            : 'Verify card with Stripe'}
                     </button>
+                    {status.source === 'preparation' && (
+                      <>
+                        <p>
+                          Card setup alone starts no subscription and collects no payment. After setup,
+                          review and explicitly accept your 14-day trial and recurring monthly price.
+                        </p>
+                        {!status.trialProtectionReady && !status.legacyCheckout && (
+                          <p className="notice">
+                            New free trials are waiting for approved eligibility and retention
+                            configuration. You can prepare your workspace.
+                          </p>
+                        )}
+                        {status.trialSetup &&
+                          ['pending', 'card_verified', 'reviewed'].includes(status.trialSetup.state) && (
+                            <button
+                              className="btn secondary"
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void run('customerBilling.trialReview', {
+                                  setupId: status.trialSetup!.id,
+                                })
+                              }
+                            >
+                              Review trial terms after card setup
+                            </button>
+                          )}
+                        {review && status.trialSetup?.state === 'reviewed' && (
+                          <div className="notice">
+                            <p>
+                              {plans.find((p) => p.id === review.plan)?.name}: 14 days from acceptance,
+                              then ${(review.priceMinor / 100).toFixed(2)} USD per month. First charge
+                              date: {review.firstChargeAt.slice(0, 10)} (UTC). Cancel before that date to
+                              avoid renewal charges. This review expires at {date(review.expiresAt)}.
+                            </p>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={trialAccepted}
+                                disabled={busy}
+                                onChange={(event) => setTrialAccepted(event.target.checked)}
+                              />
+                              I accept this 14-day trial and the displayed recurring monthly
+                              subscription.
+                            </label>
+                            <button
+                              className="btn"
+                              type="button"
+                              disabled={busy || !trialAccepted}
+                              onClick={() =>
+                                void run('customerBilling.activateTrial', {
+                                  setupId: review.setupId,
+                                  expectedRevision: review.revision,
+                                  reviewHash: review.hash,
+                                  accepted: true,
+                                })
+                              }
+                            >
+                              Accept and start 14-day trial
+                            </button>
+                          </div>
+                        )}
+                        {status.trialSetup?.state === 'activation_pending' && (
+                          <p className="notice">
+                            Your approved activation is being reconciled. Check the original activation
+                            before starting another agreement. If no provider result can be found,
+                            contact support; a second subscription will not be created automatically.
+                          </p>
+                        )}
+                        {review && status.trialSetup?.state === 'activation_pending' && (
+                          <button
+                            className="btn secondary"
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              void run('customerBilling.activateTrial', {
+                                operationKey: status.trialSetup?.activationKey,
+                                setupId: review.setupId,
+                                expectedRevision: review.revision,
+                                reviewHash: review.hash,
+                                accepted: true,
+                              })
+                            }
+                          >
+                            Check approved trial activation
+                          </button>
+                        )}
+                        {status.trialSetup?.state === 'active' && (
+                          <>
+                            <p>
+                              Your approved agreement is waiting for its verified subscription event. You
+                              can manage or cancel it on Stripe after an independent provider check.
+                              Opening billing management does not activate sending.
+                            </p>
+                            <button
+                              className="btn secondary"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void run('customerBilling.portal')}
+                            >
+                              Manage pending agreement with Stripe
+                            </button>
+                          </>
+                        )}
+                        {(!status.trialSetup ||
+                          ['denied', 'expired'].includes(status.trialSetup.state)) && (
+                          <>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={paidAccepted}
+                                disabled={busy}
+                                onChange={(event) => setPaidAccepted(event.target.checked)}
+                              />
+                              I choose {plans.find((p) => p.id === plan)?.name} at $
+                              {((plans.find((p) => p.id === plan)?.priceMinor ?? 0) / 100).toFixed(2)}{' '}
+                              USD per month, with no free trial.
+                            </label>
+                            <button
+                              className="btn secondary"
+                              type="button"
+                              disabled={busy || !paidAccepted}
+                              onClick={() =>
+                                void run('customerBilling.paidCheckout', {
+                                  plan,
+                                  accepted: true,
+                                  priceMinor: plans.find((p) => p.id === plan)!.priceMinor,
+                                })
+                              }
+                            >
+                              Continue with normal paid plan
+                            </button>
+                          </>
+                        )}
+                      </>
+                    )}
                     {status.source === 'stripe' && ['canceled', 'closed'].includes(status.state) && (
                       <>
                         <p>
                           Rejoin with the selected monthly plan after the provider confirms your previous
-                          service ended. This opens normal paid checkout using your existing billing account,
-                          with no free trial.
+                          service ended. This opens normal paid checkout using your existing billing
+                          account, with no free trial.
                         </p>
                         <button
                           className="btn"
                           type="button"
                           disabled={busy}
                           onClick={() =>
-                            void run('customerBilling.rejoin', { plan, expectedRevision: status.revision })
+                            void run('customerBilling.rejoin', {
+                              plan,
+                              expectedRevision: status.revision,
+                            })
                           }
                         >
                           Rejoin with paid plan

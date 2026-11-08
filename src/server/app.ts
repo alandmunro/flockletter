@@ -13,8 +13,10 @@ import { sesScopes } from './campaign/ses-runtime.js';
 import { subscriberRoutes } from './subscribers/routes.js';
 import { marketingUnsubscribeRoutes } from './subscribers/marketing-routes.js';
 import { customerAudienceRoutes } from './customer-audience/routes.js';
+import { platformRoutes } from './platform/routes.js';
+import type { PlatformService } from './platform/service.js';
 
-export function createApp(config: Config, service?: CommandService, auth?: Authenticator) {
+export function createApp(config: Config, service?: CommandService, auth?: Authenticator, platform?:PlatformService) {
   const app = express();
   let activeUploads = 0;
   app.disable('x-powered-by');
@@ -50,11 +52,12 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     if (service) { try { await service.db.verifyBoundary(); } catch { gaps.push('database_unavailable'); } }
     res.status(gaps.length ? 503 : 200).json({ ready: gaps.length === 0, gaps, sendingEnabled: service?.customer?.settings.delivery==='ses' });
   });
-  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), plans, sendingEnabled: service?.customer?.settings.delivery==='ses',
+  platformRoutes(app,config,platform);
+  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), platformMode:platform?.options.mode??'off', plans, sendingEnabled: service?.customer?.settings.delivery==='ses',
     customerWorkflows:service?.customer?{billing:service.customer.settings.billing,delivery:service.customer.settings.delivery,audience:service.customer.settings.audience,team:service.customer.settings.team,support:service.customer.settings.support,retention:service.customer.settings.retention}:null }));
   app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false,
     skip: req => (['HEAD','POST'].includes(req.method) && /^\/brands\/[^/]+\/subscriber-signups\/?$/i.test(req.path)) ||
-      (req.method==='POST' && /^\/(confirmation-feedback|billing\/stripe-events|customer-billing\/stripe-events|support\/inbound|customer-delivery\/ses-events)\/?$/i.test(req.path)),
+      (req.method==='POST' && /^\/(confirmation-feedback|billing\/stripe-events|customer-billing\/stripe-events|support\/(inbound|resend-inbound)|customer-delivery\/ses-events)\/?$/i.test(req.path)),
     message: { error: { code: 'rate_limited', message: 'Too many requests. Retry in a minute.' } } }));
   app.use('/api/v1', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -84,6 +87,11 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     if(!service?.customer)throw new AppError(503,'customer_workflow_unavailable','Support intake is not configured.');
     if(!Buffer.isBuffer(req.body))throw new AppError(415,'json_required','Send the raw signed provider event.');
     await service.customer.support.receiveSigned(req.body,Object.fromEntries(['webhook-id','webhook-timestamp','webhook-signature'].map(name=>[name,req.get(name)??''])));
+    res.sendStatus(204);
+  });
+  app.post('/api/v1/support/resend-inbound',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'16kb'}),async(req,res)=>{
+    if(!service?.customer||!Buffer.isBuffer(req.body))throw new AppError(503,'support_intake_unavailable','Native support intake is not configured.');
+    await service.customer.support.receiveResend(req.body,Object.fromEntries(['svix-id','svix-timestamp','svix-signature'].map(name=>[name,req.get(name)??''])));
     res.sendStatus(204);
   });
   app.post('/api/v1/customer-delivery/ses-events',rateLimit({windowMs:60000,limit:240,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:['text/plain','application/json'],limit:'256kb'}),async(req,res)=>{

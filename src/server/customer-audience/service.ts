@@ -1,3 +1,4 @@
+import {lockWorkspace} from '../workspace-lock.js';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import type { Actor } from '../service.js';
@@ -248,7 +249,7 @@ export class CustomerAudience {
     >;
     return this.db.brand(actor.workspaceId, input.brandId, async (sql) => {
       if (definition.mutation || delegable)
-        await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [actor.workspaceId]);
+        await lockWorkspace(sql,actor.workspaceId);
       await this.authority(sql, actor, input.brandId, delegable);
       const brandName = await assertBrand(sql, actor, input.brandId);
       if (!definition.mutation) {
@@ -678,7 +679,7 @@ export class CustomerAudience {
       'Enter your email and affirm the displayed consent.',
     );
     return this.db.brand(workspace, brand, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+      await lockWorkspace(sql,workspace);
       const row = await settings(sql);
       if (!row?.enabled || row.form_token !== form || this.options.mode === 'off') throw invalidLink();
       requireCondition(
@@ -712,7 +713,7 @@ export class CustomerAudience {
       id = token.split('.')[0] ?? '';
     if (!uuidPattern.test(id) || token.length !== 80) throw invalidLink();
     return this.db.brand(workspace, brand, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+      await lockWorkspace(sql,workspace);
       const row = await settings(sql);
       if (!row || row.form_token !== form) throw invalidLink();
       return this.confirmInTransaction(sql, workspace, brand, id, token);
@@ -723,7 +724,7 @@ export class CustomerAudience {
       id = token.split('.')[0] ?? '';
     if (!uuidPattern.test(id) || token.length !== 80) return;
     await this.db.brand(workspace, brand, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+      await lockWorkspace(sql,workspace);
       const row = await settings(sql);
       if (!row || row.form_token !== form) return;
       const message = (
@@ -740,7 +741,7 @@ export class CustomerAudience {
   async tick(workspace: string, brand: string) {
     if (this.options.mode !== 'live' || !this.options.provider) return { processed: false };
     const claim = await this.db.brand(workspace, brand, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+      await lockWorkspace(sql,workspace);
       const row = await settings(sql);
       if (!row) return;
       const job = (
@@ -800,7 +801,7 @@ export class CustomerAudience {
     try {
       result = claim.submit
         ? await this.db.brand(workspace, brand, async (sql) => {
-            await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+            await lockWorkspace(sql,workspace);
             if ((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount) {
               await sql.query(
                 "UPDATE customer_audience_confirmations SET state='cancelled',attempts=greatest(attempts-1,0) WHERE id=$1 AND state='submitting'",
@@ -815,7 +816,7 @@ export class CustomerAudience {
       /* Reconcile the committed attempt. */
     }
     await this.db.brand(workspace, brand, async (sql) => {
-      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+      await lockWorkspace(sql,workspace);
       await sql.query(
         `UPDATE customer_audience_confirmations SET state=$2,provider_id=coalesce($3,provider_id),
         next_check_at=now()+interval '1 minute' WHERE id=$1 AND state IN ('submitting','uncertain')`,
@@ -877,7 +878,7 @@ export async function redeemCustomerOptOut(db: Database, token: string) {
     return;
   const [workspace, brand, id] = fields as string[];
   await db.brand(workspace!, brand!, async (sql) => {
-    await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [workspace]);
+    await lockWorkspace(sql,workspace!);
     const row = (
       await sql.query<{ subscriber_id: string; token_hash: string }>(
         'SELECT subscriber_id,token_hash FROM customer_audience_optouts WHERE id=$1 FOR UPDATE',

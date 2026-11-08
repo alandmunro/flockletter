@@ -89,3 +89,8 @@ The owner-only `audience.previewImport` command accepts `brandId`, a base64-enco
 `audience.applyPracticeImport` is an owner-session mutation on staging and local instances. Send the preview input, a UUID `operationKey`, and the explicit `fictional-contact-permission-v1` declaration. Its receipt identifies the brand, declaration and outcome for every data row. The UI uses the same command. MCP connections have no import authority. [Practice import](AUDIENCE.md#apply-a-practice-csv)
 
 The `sender_deliveryReadiness` tool uses a simulator-scoped connection to report this brand’s setup gaps. A confirmed-address provider rehearsal can request `includeUnsubscribe: true` through `rehearsal_review` when `rehearsal_methods` reports `unsubscribeAvailable`. An approval report discloses the selected option and never returns a redeemable link. [Delivery readiness](DELIVERY_READINESS.md)
+
+
+## Separate operator bridge
+
+Platform operations use `/api/operator/v1/commands/*` and canonical `platformCommands`, also rendered by `/operator`. Configure a separate MCP process with `node /absolute/path/to/flockletter/dist/server/mcp/operator.js`, `FLOCKLETTER_API_ORIGIN` and a short-lived `FLOCKLETTER_OPERATOR_SESSION_TOKEN` kept in the host's secure settings. The server independently checks the current operator Clerk organization, named membership, enrolled MFA, both recent factor ages and exact case/action. Ordinary `flk_` customer tokens are rejected. Expired credentials require attended refresh; no long-lived elevated customer token is created. Capture exercises remain owner/workspace-only and cannot sign erasure. [Controls and playbook](PLATFORM_COMPLETION.md)

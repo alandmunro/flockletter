@@ -61,5 +61,13 @@
   {"name":"customer_infrastructure_intents","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"customer_provider_routes","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"customer_infrastructure_events","scope":"workspace","permissions":["SELECT","INSERT"]},
-  {"name":"customer_subscription_history","scope":"workspace","permissions":["SELECT","INSERT"]}
+  {"name":"customer_subscription_history","scope":"workspace","permissions":["SELECT","INSERT"]},
+  {"name":"customer_trial_setups","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
+  {"name":"customer_support_policies","scope":"workspace","permissions":["SELECT","INSERT"]},
+  {"name":"customer_support_policy_previews","scope":"workspace","permissions":["SELECT","INSERT"]},
+  {"name":"customer_support_automation_runs","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
+  {"name":"customer_support_threads","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
+  {"name":"customer_support_native_receipts","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
+  {"name":"customer_support_operator_audit","scope":"workspace","permissions":["SELECT","INSERT"]},
+  {"name":"platform_exercise_records","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]}
 ]
