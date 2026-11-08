@@ -27,12 +27,12 @@ try{
  const actor:Actor={workspaceId:'org_local_sample',userId:'local_owner',actorId:'user:local_owner',kind:'session',owner:true,scopes:['read'],brandIds:null};
  await service.execute('workspace.initialize',{operationKey:randomUUID(),name:'Platform exercise',brandName:'Trail Notes'},actor);
  const ticket=await customer.support.execute('support.create',{operationKey:randomUUID(),subject:'Plan question',topic:'plans',text:'Which plans are available?'},actor) as SupportTicket;
- await customer.processWorkspace(actor.workspaceId);
  server.on('request',createApp(config,service,auth,platform));
  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
- await page.goto(origin+'/operator');await page.getByRole('heading',{name:'Platform control room',exact:true}).waitFor();
- await page.getByLabel('Workspace ID',{exact:true}).fill(actor.workspaceId);
- await page.getByLabel('Exact conversation, delivery or retention job ID',{exact:true}).fill(ticket.id);
+ await page.goto(origin+'/operator?ticket='+encodeURIComponent(ticket.id));await page.getByRole('heading',{name:'Platform control room',exact:true}).waitFor();
+ await page.waitForFunction(expected=>(document.querySelector('input[pattern="org_[A-Za-z0-9_-]+"]') as HTMLInputElement|null)?.value===expected,actor.workspaceId);
+ assert.equal(await page.getByLabel('Workspace ID',{exact:true}).inputValue(),actor.workspaceId);
+ assert.equal(await page.getByLabel('Exact conversation, delivery or retention job ID',{exact:true}).inputValue(),ticket.id);
  await page.getByLabel('Reason for access',{exact:true}).fill('Review the exact captured customer support conversation.');
  await page.getByRole('button',{name:'Open five-minute audited case',exact:true}).click();
  await page.getByRole('heading',{name:'Conversation review',exact:true}).waitFor();
@@ -41,6 +41,8 @@ try{
  await page.getByRole('button',{name:'Approve and capture saved reply',exact:true}).click();
  await page.getByText(/captured reply ·/).waitFor();
  const root=globalThis.process.env.FLOCKLETTER_PLATFORM_SCREENSHOTS??path.join(tmpdir(),'flockletter-platform-proof');await mkdir(root,{recursive:true});
+ await page.evaluate(()=>window.scrollTo(0,0));
+ await page.screenshot({path:path.join(root,'flockletter-operator-preview.png'),fullPage:false});
  await page.screenshot({path:path.join(root,'flockletter-operator-support.png'),fullPage:true});
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(root,'flockletter-operator-mobile.png'),fullPage:true});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Mobile control room fits screen');

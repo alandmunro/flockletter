@@ -193,6 +193,8 @@ export function SupportPortal({ api }: { api: Api }) {
       {ticket && (
         <article className="card" aria-labelledby="support-conversation-title">
           <h3 id="support-conversation-title">{ticket.subject}</h3>
+          <p className="preserve-whitespace">Conversation reference: <code>{ticket.id}</code></p>
+          {capture && <p><a className="btn secondary" href={`/operator?ticket=${encodeURIComponent(ticket.id)}`}>Review in control room</a></p>}
           <p>
             Status: {ticket.state.replaceAll('_', ' ')} ·{' '}
             <button className="btn secondary" disabled={busy} onClick={() => void select(ticket.id)}>
