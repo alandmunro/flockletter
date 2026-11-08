@@ -27,7 +27,7 @@ async function open(kind:PlatformCase['kind']='support',resourceId:string|null=n
 it('isolates exercise health, cases and inbox from other workspaces',async()=>{
  const status={worker:{lastPass:new Date().toISOString(),lastFailure:null,dedicated:false},queue:{unknown:1,delivery:1,confirmations:0,team:0,support:0,retention:0}} as CustomerOperationsStatus;
  await platform.observe(owner.workspaceId,status);await platform.observe(other.workspaceId,status);
- const result=await platform.execute('platform.overview',{},session) as PlatformOverview;expect(result.health.map(h=>h.workspaceId)).toEqual([owner.workspaceId]);expect(result.alerts.every(a=>a.workspaceId===owner.workspaceId)).toBe(true);
+ const result=await platform.execute('platform.overview',{},session) as PlatformOverview;expect(result.workspaceId).toBe(owner.workspaceId);expect(result.health.map(h=>h.workspaceId)).toEqual([owner.workspaceId]);expect(result.alerts.every(a=>a.workspaceId===owner.workspaceId)).toBe(true);
  await expect(platform.execute('platform.openCase',{operationKey:randomUUID(),workspaceId:other.workspaceId,kind:'support',resourceId:null,reason:'Attempt an unrelated workspace access.'},session)).rejects.toMatchObject({code:'exercise_workspace_only'});
  await expect(platform.execute('platform.inbox',{},session)).rejects.toMatchObject({code:'operator_required'});
 });

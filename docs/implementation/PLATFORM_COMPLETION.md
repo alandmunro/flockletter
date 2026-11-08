@@ -28,8 +28,8 @@ The planner reads protected files configured by `FLOCKLETTER_RETENTION_PLANNER_C
 
 ## Owner exercise
 
-1. Sign in, choose a test workspace, and initialize it if needed. In Support, create a question about plans. Copy its conversation ID. Run one queue pass in Operations to produce health metadata.
-2. Open `/operator`. Confirm **Workspace-only staging exercise**. Select that workspace, Support, the exact conversation ID and a specific reason; open the case.
+1. Sign in, choose a test workspace, and initialize it if needed. In Support, create a question about plans. Use **Review in control room** to open that exact conversation, or copy its displayed reference. Run one queue pass in Operations to produce health metadata.
+2. Open `/operator`. Confirm **Workspace-only staging exercise**. The current workspace is selected automatically in capture mode. The conversation link fills its exact reference. Select Support and enter a specific reason; open the case.
 3. Draft public guidance, review/save edits and approve the exact reply. Capture mode records the reply without email. Inspect delivery state and history. Refresh/reconcile after a lost response. Open a new case and use exact reauthorization only for a queued reply with zero attempts.
 4. For automation, open a Support case with no conversation ID. Review an enabled policy, read its exact answers, then approve. Use the customer Support capture exercise to check a public question and a sensitive question. Review disabling the policy as well.
 5. Review health and acknowledge an alert. Confirm its risk remains active until the underlying condition resolves. Open an Abuse case to apply and release a reversible review hold; trial claims remain unchanged.
