@@ -35,7 +35,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # Generate both parts using the same Flockletter renderer used by the reviewed capture.
-FLOCKLETTER_STUDIO_FIXTURE="$(node --import tsx "$fixture_dir/studio-fixture.ts")"
+FLOCKLETTER_STUDIO_FIXTURE="$(node --import tsx "$fixture_dir/studio-fixture.ts" --column-images)"
 export FLOCKLETTER_STUDIO_FIXTURE
 network_id="$(docker network create --internal --label "flockletter.fixture=$prefix" "$prefix")"
 [[ "$(docker network inspect --format '{{.Internal}}' "$network_id")" = true ]]

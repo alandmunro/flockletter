@@ -48,8 +48,16 @@ function leafText(block: StudioLeaf): string {
 }
 const table = 'role="presentation" border="0" cellspacing="0" cellpadding="0"';
 const align = 'align="left" valign="top"';
+const emailWidth = 600;
+const bodyPadding = 24;
+const columnPadding = 8;
 type Picture = { src: string; name: string };
-function blockHtml(block: StudioBlock, images: Map<string, Picture>, accent: string): string {
+function blockHtml(
+  block: StudioBlock,
+  images: Map<string, Picture>,
+  accent: string,
+  availableWidth: number,
+): string {
   switch (block.type) {
     case 'heading': {
       const tag = 'h' + block.level;
@@ -96,7 +104,7 @@ function blockHtml(block: StudioBlock, images: Map<string, Picture>, accent: str
         html(asset.src) +
         '" alt="' +
         html(block.alt) +
-        '" width="552" style="display:block;width:100%;max-width:100%;height:auto;border:0">'
+        `" width="${availableWidth}" style="display:block;width:100%;max-width:100%;height:auto;border:0">`
       );
     }
     case 'divider':
@@ -119,7 +127,8 @@ function blockHtml(block: StudioBlock, images: Map<string, Picture>, accent: str
         'px">&nbsp;</td></tr></table>'
       );
     }
-    case 'columns':
+    case 'columns': {
+      const columnWidth = Math.floor(availableWidth / block.columns.length) - columnPadding;
       return (
         '<table ' +
         table +
@@ -131,16 +140,17 @@ function blockHtml(block: StudioBlock, images: Map<string, Picture>, accent: str
               align +
               ' class="fl-column" width="50%" style="width:50%;padding-' +
               (index === 0 ? 'right' : 'left') +
-              ':8px">' +
-              rows(items, images, accent) +
+              `:${columnPadding}px">` +
+              rows(items, images, accent, columnWidth) +
               '</td>',
           )
           .join('') +
         '</tr></table>'
       );
+    }
   }
 }
-function rows(blocks: StudioBlock[], images: Map<string, Picture>, accent: string) {
+function rows(blocks: StudioBlock[], images: Map<string, Picture>, accent: string, availableWidth: number) {
   return (
     '<table ' +
     table +
@@ -153,7 +163,7 @@ function rows(blocks: StudioBlock[], images: Map<string, Picture>, accent: strin
           ' style="padding:0 0 ' +
           (b.type === 'spacer' ? '0' : '12px') +
           '">' +
-          blockHtml(b, images, accent) +
+          blockHtml(b, images, accent, availableWidth) +
           '</td></tr>',
       )
       .join('') +
@@ -214,7 +224,7 @@ export function renderStudio(campaign: Campaign, doc: StudioDocument, images: Ma
     .map(leafText)
     .filter((s) => s.trim())
     .join('\n\n');
-  const body = rows(doc.blocks, images, accent);
+  const body = rows(doc.blocks, images, accent, emailWidth - bodyPadding * 2);
   const markup =
     '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<title>' +
@@ -226,12 +236,12 @@ export function renderStudio(campaign: Campaign, doc: StudioDocument, images: Ma
     '<table ' +
     table +
     ' width="100%" bgcolor="#f7f4f5"><tr><td align="center">' +
-    '<!--[if mso]><table role="presentation" width="600" align="center"><tr><td><![endif]-->' +
+    `<!--[if mso]><table role="presentation" width="${emailWidth}" align="center"><tr><td><![endif]-->` +
     '<table ' +
     table +
-    ' width="100%" align="center" bgcolor="#ffffff" style="width:100%;max-width:600px;border-top:4px solid ' +
+    ` width="100%" align="center" bgcolor="#ffffff" style="width:100%;max-width:${emailWidth}px;border-top:4px solid ` +
     accent +
-    '"><tr><td class="fl-padding" style="padding:24px">' +
+    `"><tr><td class="fl-padding" style="padding:${bodyPadding}px">` +
     (content.fromName
       ? '<p style="margin:0 0 16px;color:#67545a;font:14px Arial,sans-serif">' +
         html(content.fromName) +
