@@ -26,3 +26,7 @@ If the renderer stops, its temporary database can be rebuilt. Opening staging wa
 To disable private rendering, switch `FLOCKLETTER_PRIVATE_ENGINE` to `off`. Keep the original workspace/brand binding and signed SNS feedback route while draining. Pending work that has not reached the provider is blocked and its reservation is released. For an uncertain SES submission, the worker preserves the reservation and checks the original operation for a receipt.
 
 The isolated engine and SDK test uses synthetic recipients. A real AWS simulator receipt and a separately authorized customer inbox check provide different evidence. [Isolated engine exercise](LISTMONK_CAPTURE.md)
+
+## Hosted staging evidence
+
+On November 7, 2026, the owner dashboard ran version 2 of the existing Alpine Field Notes staging draft through the private Listmonk method on Render Free. One synthetic mailbox reached the local test provider in one attempt. The dashboard displayed acceptance and a separate delivery confirmation. Render sampled approximately 163 MiB of memory during this single rehearsal on the 512 MiB instance. The pinned Linux engine and restart checks also passed. [Release PR](https://github.com/alandmunro/flockletter/pull/17) · [Verification run](https://github.com/alandmunro/flockletter/actions/runs/42442244333)

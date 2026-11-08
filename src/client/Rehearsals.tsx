@@ -99,6 +99,8 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
     [error, setError] = useState('');
   const [revision, refresh] = useState(0);
   const [reportRevision, updateReports] = useState(0);
+  const latestPrivateApproval = useRef(0);
+  const [approvalRevision, followPrivateApproval] = useState(0);
   const keys = useRef(new Map<string, string>());
   useEffect(() => {
     setChoice({ brandId: draft.brandId, method: 'capture' });
@@ -157,7 +159,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
           brandId: draft.brandId,
           campaignId: draft.id,
         });
-        if (!current) return;
+        if (!current || approvalRevision !== latestPrivateApproval.current) return;
         setListed({ brandId: draft.brandId, campaignId: draft.id, rows });
         if (follow) updateReports((value) => value + 1);
         if (
@@ -178,7 +180,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
       current = false;
       window.clearTimeout(timer);
     };
-  }, [api, draft.brandId, draft.id, revision]);
+  }, [api, draft.brandId, draft.id, revision, approvalRevision]);
   async function mutate<T>(name: CommandName, input: Record<string, unknown>) {
     const fingerprint = JSON.stringify([name, input]),
       key = keys.current.get(fingerprint) ?? operationKey();
@@ -204,8 +206,20 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
   const context = { brandId: draft.brandId, campaignId: draft.id };
   async function approve(item: Rehearsal) {
     const approved = await mutate<Rehearsal>('rehearsal.approve', { brandId: draft.brandId, id: item.id });
-    if (Date.parse(approved.dueAt) <= Date.now())
-      await mutate('rehearsal.process', { brandId: draft.brandId, id: item.id });
+    const due = Date.parse(approved.dueAt) <= Date.now();
+    if (isListmonkMethod(approved.transport) && approved.id === item.id && approved.campaignId === draft.id) {
+      setListed((current) => {
+        if (current?.brandId !== draft.brandId || current.campaignId !== draft.id) return current;
+        return {
+          ...current,
+          rows: current.rows.map((row) =>
+            row.id === approved.id && row.state === 'reviewed' ? approved : row,
+          ),
+        };
+      });
+      if (due) followPrivateApproval(++latestPrivateApproval.current);
+    }
+    if (due) await mutate('rehearsal.process', { brandId: draft.brandId, id: item.id });
   }
   return (
     <section className="card" aria-labelledby="rehearsal-heading">
