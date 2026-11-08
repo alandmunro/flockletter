@@ -155,7 +155,7 @@ function literal(value, asHtml = false) {
 async function verifyStudio(api, list, layout, contact) {
   const snapshot = JSON.parse(process.env.FLOCKLETTER_STUDIO_FIXTURE);
   assert.ok(snapshot.html.includes('<!--[if mso]'));
-  assert.ok(snapshot.html.includes('cid:' + snapshot.digest));
+  assert.equal(snapshot.html.split('src="cid:' + snapshot.digest + '"').length - 1, 3);
   assert.ok(snapshot.text.includes('{{ .Subscriber.Email }}'));
   for (const [type, body] of [
     ['html', snapshot.html],

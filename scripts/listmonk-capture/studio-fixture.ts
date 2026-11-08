@@ -1,6 +1,7 @@
 import { studioFixtureImage } from '../studio-fixture-image.js';
 import { createHash } from 'node:crypto';
 import { emptyContent, type Campaign } from '../../src/shared/contracts.js';
+import type { StudioLeaf } from '../../src/shared/studio.js';
 import { withStudio } from '../../src/shared/studio-legacy.js';
 import { renderPreview } from '../../src/server/content.js';
 
@@ -8,6 +9,8 @@ import { renderPreview } from '../../src/server/content.js';
 const bytes = await studioFixtureImage('#8b4764');
 const digest = createHash('sha256').update(bytes).digest('hex');
 const id = 'a13388f1-8075-42e5-a18b-c6e94e5105c3';
+const columnPhoto = (alt: string): StudioLeaf[] =>
+  process.argv.includes('--column-images') ? [{ type: 'image', assetId: id, alt }] : [];
 const content = withStudio(
   {
     ...emptyContent(),
@@ -32,8 +35,14 @@ const content = withStudio(
       {
         type: 'columns',
         columns: [
-          [{ type: 'paragraph', runs: [{ text: 'Breck pickup', bold: true }] }],
-          [{ type: 'paragraph', runs: [{ text: 'A literal {{ .Subscriber.Email }} remains text.' }] }],
+          [
+            ...columnPhoto('Breck pickup skyline'),
+            { type: 'paragraph', runs: [{ text: 'Breck pickup', bold: true }] },
+          ],
+          [
+            ...columnPhoto('Trail report skyline'),
+            { type: 'paragraph', runs: [{ text: 'A literal {{ .Subscriber.Email }} remains text.' }] },
+          ],
         ],
       },
       { type: 'button', label: 'Browse the collection', href: 'https://example.org/collection' },

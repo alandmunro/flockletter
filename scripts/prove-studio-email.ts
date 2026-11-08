@@ -9,11 +9,11 @@ import { studioFixtureImage } from './studio-fixture-image.js';
 
 const source = fileURLToPath(new URL('./listmonk-capture/studio-fixture.ts', import.meta.url));
 const result = JSON.parse(
-  execFileSync(process.execPath, ['--import', 'tsx', source], { encoding: 'utf8' }),
+  execFileSync(process.execPath, ['--import', 'tsx', source, '--column-images'], { encoding: 'utf8' }),
 ) as { html: string; text: string; digest: string };
 const bytes = await studioFixtureImage('#8b4764');
 assert.equal(createHash('sha256').update(bytes).digest('hex'), result.digest);
-const html = result.html.replace(
+const html = result.html.replaceAll(
   'src="cid:' + result.digest + '"',
   'src="data:image/png;base64,' + bytes.toString('base64') + '"',
 );
@@ -34,12 +34,19 @@ try {
       await page.getByRole('link', { name: 'Browse the collection' }).getAttribute('href'),
       'https://example.org/collection',
     );
-    assert.equal(
-      await page
-        .getByAltText('Mountain skyline at the trailhead')
-        .evaluate((el) => (el as HTMLImageElement).naturalWidth),
-      480,
+    const images = page.getByRole('img');
+    assert.deepEqual(
+      await images.evaluateAll((els) => els.map((el) => (el as HTMLImageElement).naturalWidth)),
+      [480, 480, 480],
     );
+    assert.deepEqual(await images.evaluateAll((els) => els.map((el) => el.getAttribute('alt'))), [
+      'Mountain skyline at the trailhead',
+      'Breck pickup skyline',
+      'Trail report skyline',
+    ]);
+    const imageWidths = () =>
+      images.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().width)));
+    assert.deepEqual(await imageWidths(), width === 390 ? [358, 358, 358] : [552, 268, 268]);
     assert.equal(await page.locator('script').count(), 0);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     const left = await page.locator('.fl-column').nth(0).boundingBox(),
@@ -53,10 +60,20 @@ try {
         path: path.join(proofs, 'studio-email-' + (width === 390 ? 'mobile' : 'desktop') + '.png'),
         fullPage: true,
       });
+    if (width === 900) {
+      // Some clients ignore image CSS. Exercise the actual numeric HTML fallback.
+      await page.locator('img').evaluateAll((els) => els.forEach((el) => el.removeAttribute('style')));
+      assert.deepEqual(await imageWidths(), [552, 268, 268]);
+      const leftImage = await images.nth(1).boundingBox(),
+        rightImage = await images.nth(2).boundingBox();
+      assert(leftImage && rightImage);
+      assert(leftImage.x >= left.x && leftImage.x + leftImage.width <= left.x + left.width);
+      assert(rightImage.x >= right.x && rightImage.x + rightImage.width <= right.x + right.width);
+    }
     await page.close();
   }
   console.log(
-    'WebKit verified desktop and phone email layouts, original inline image, link destinations and no external requests.',
+    'WebKit verified responsive root and column images, desktop HTML width fallbacks, original inline source, link destinations and no external requests.',
   );
 } finally {
   await browser.close();

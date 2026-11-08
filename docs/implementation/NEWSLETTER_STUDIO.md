@@ -37,3 +37,5 @@ node --import tsx scripts/listmonk-capture/studio-fixture.ts --eml > studio-exam
 ```
 
 Open `studio-example.eml` in a mail client that supports local messages. It contains a plain-text alternative, rendered HTML and an inline PNG. Check column order at narrow width, button text and destination, the inline image, and the plain-text alternative. This command writes a file locally and has no network transport. The sample was parsed for valid MIME structure, matching image content ID and preserved literal template-like text. Representative mailbox results belong in the release evidence when observed. [Engine proof and verification procedure](LISTMONK_CAPTURE.md)
+
+Add `--column-images` to repeat the same original in both columns. At desktop width, the full-width image occupies 552 pixels and each column image occupies 268 pixels. The HTML width attributes support clients that ignore image styles. At a 390-pixel viewport with responsive styles, the columns stack and all three placements use the available 358 pixels. [Client verification](VERIFICATION.md#newsletter-studio)

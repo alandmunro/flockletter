@@ -72,4 +72,10 @@ Workspace tests cover Clerk owner, editor and viewer journeys on real HTTP/Postg
 
 ## Newsletter Studio
 
-FL-AT-017/036 have automated proof for a saved Studio revision across the browser, HTTP, MCP and PostgreSQL. Tests cover two workspaces, scoped original assets, rejected unknown blocks, retained earlier content, recovery from a lost acknowledgment, stale approvals and frozen captures. WebKit checked a 620-pixel-class desktop layout and a phone-width layout with no external fetches. The self-hosted build includes the dependency inventory and notices. Actual Gmail and Outlook inbox rendering remains open. [Studio workflow](NEWSLETTER_STUDIO.md) · [Engine proof](LISTMONK_CAPTURE.md#newsletter-studio-revisions) · [Staging PR](https://github.com/alandmunro/flockletter/pull/11)
+FL-AT-017/036 have automated proof for a saved Studio revision across the browser, HTTP, MCP and PostgreSQL. Tests cover two workspaces, scoped original assets, rejected unknown blocks, retained earlier content, recovery from a lost acknowledgment, stale approvals and frozen captures. The self-hosted build includes the dependency inventory and notices. [Studio workflow](NEWSLETTER_STUDIO.md) · [Engine proof](LISTMONK_CAPTURE.md#newsletter-studio-revisions) · [Staging PR](https://github.com/alandmunro/flockletter/pull/11)
+
+| Client or renderer | Observed result |
+| --- | --- |
+| WebKit, 900 and 390 pixel viewports | One original PNG filled the 552-pixel body and two 268-pixel desktop columns. Ignoring image styles preserved the desktop fit. On the phone-width preview, all three images filled the available 358 pixels and the columns stacked in reading order. The preview made no external requests. |
+| Gmail web, received message | An authorized self-test reached the test inbox. All three placements decoded at the original 480 × 180 resolution, displayed at 552, 268 and 268 pixels, and retained their separate alternative text. The collection button kept its destination. The received plaintext and HTML matched the fixture after line-ending normalization. All three image references used the one original PNG, verified by SHA-256. |
+| Outlook | Actual client rendering is pending access to a signed-in test mailbox. The downloadable synthetic message can be opened there without another delivery. |
