@@ -6,7 +6,7 @@ export async function applyMigrations(client, role) {
   if (!/^flockletter_[a-z0-9_]+$/.test(role)) throw new Error('Use the dedicated Flockletter runtime role.');
   await client.query("SELECT pg_advisory_lock(hashtext('flockletter:migrations'))");
   try {
-    for (const name of ['001_foundation.sql', '002_subscriber_intake.sql','003_campaign_rehearsals.sql','004_sender_domains.sql','005_billing_sandbox.sql','006_companies.sql','007_marketing_unsubscribe.sql','008_team_access.sql','009_audience_segments.sql','010_retention_preview.sql','011_checkout_recovery.sql','012_segment_contact_cleanup.sql','013_staging_delivery_worker.sql']) {
+    for (const name of ['001_foundation.sql', '002_subscriber_intake.sql','003_campaign_rehearsals.sql','004_sender_domains.sql','005_billing_sandbox.sql','006_companies.sql','007_marketing_unsubscribe.sql','008_team_access.sql','009_audience_segments.sql','010_retention_preview.sql','011_checkout_recovery.sql','012_segment_contact_cleanup.sql','013_staging_delivery_worker.sql','014_campaign_feedback.sql']) {
       await client.query(await readFile(new URL('../migrations/' + name, import.meta.url), 'utf8'));
     }
     await client.query('BEGIN');

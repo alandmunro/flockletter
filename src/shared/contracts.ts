@@ -12,7 +12,7 @@ import {segmentAction,segmentEmails,segmentName} from './segments.js';
 import {clerkUserId,teamRole} from './team.js';
 
 export type { IntakeStatus } from './subscriber.js';
-export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse'] as const;
+export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate'] as const;
 export type Capability = typeof capabilities[number];
 export const limits = { fileBytes: 5 * 1024 * 1024, batchBytes: 20 * 1024 * 1024, batchFiles: 10, imagePixels: 25_000_000, campaignImages: 6, workspaceBytes: 100 * 1024 * 1024, assets: 500, drafts: 100, connections: 10, preparationOperations: 2000 } as const;
 export const plans = [
@@ -75,13 +75,14 @@ export const commands = {
   'sender.verify': descriptor('Check the public domain ownership TXT record. This never activates a provider.', 'owner',true,{operationKey:key,brandId:id}),
   'campaign.fromTemplate': descriptor('Create a campaign draft from a newsletter layout.', 'draft:write', true, {operationKey:key,brandId:id,templateId:z.enum(templateIds)}),
   'campaign.fromProduct': descriptor('Prepare a draft from approved product details and existing brand images.', 'draft:write', true, {operationKey:key,brandId:id,...productFields,assetIds:contentSchema.shape.assetIds}),
+  'rehearsal.methods': descriptor('List rehearsal methods available to this brand. Ordinary customer delivery is never enabled.', 'campaign:rehearse', false, {brandId:id}),
   'rehearsal.review': descriptor('Freeze this draft, synthetic recipients and test transport. An omitted transport uses the original capture mailbox.', 'campaign:rehearse', true, {operationKey:key,brandId:audienceId,campaignId:id,expectedVersion:z.number().int().positive(),audience:z.enum(rehearsalAudiences),transport:z.enum(rehearsalTransports).optional(),segmentId:audienceId.optional(),dueAt:z.iso.datetime({offset:true}).optional()}),
-  'rehearsal.approve': descriptor('Queue the exact reviewed capture or synthetic provider test. No external email is sent.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
+  'rehearsal.approve': descriptor('Queue only the reviewed method. Local rehearsals stay inside Flockletter; an explicitly reviewed SES test can reach only AWS simulator addresses.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
   'rehearsal.cancel': descriptor('Stop new submissions. An earlier uncertain attempt retains its reservation until a provider receipt resolves it.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
   'rehearsal.process': descriptor('Process a due capture or request one worker step on the chosen staging provider rehearsal. Uncertain attempts only check provider status.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
   'rehearsal.list': descriptor('List recent brand rehearsal results for a draft.', 'campaign:rehearse',false,{brandId:id,campaignId:id}),
   'rehearsal.report': descriptor('Read counts and outcome for one brand rehearsal.', 'campaign:rehearse',false,{brandId:id,id}),
-  'rehearsal.outcomes': descriptor('Read the state and attempt count of each synthetic recipient. An uncertain result requires provider reconciliation before any new submission.', 'campaign:rehearse',false,{brandId:id,id}),
+  'rehearsal.outcomes': descriptor('Read submission attempts and reported delivery, bounce or complaint for each synthetic recipient. An uncertain result requires provider reconciliation before any new submission.', 'campaign:rehearse',false,{brandId:id,id}),
   'rehearsal.message': descriptor('Read the reviewed email captured inside Flockletter.', 'campaign:rehearse',false,{brandId:id,id}),
   'audience.previewImport': descriptor('Preview a CSV for one brand. Returns counts and row numbers only.', 'owner', false, importPreviewInput.shape),
   'audience.exportPage': descriptor('Read one bounded page for an explicitly requested owner export.', 'owner',false, exportPageInput.shape),
@@ -111,7 +112,7 @@ export const commands = {
   }),
   'audience.unsubscribe': descriptor('Stop marketing for this contact and brand. The contact identity makes retries idempotent. Owner session required.', 'owner', true, { brandId: audienceId, id: audienceId }),
   'intake.configure': descriptor('Enable or pause subscriber intake for one configured brand. Does not enable campaigns.', 'owner', true, { brandId: id, enabled: z.boolean(), operationKey: key }),
-  'connection.create': descriptor('Issue a scoped, expiring connection. Secret is displayed once and omitted from retries. Owner session required.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(80), scopes: z.array(z.enum(capabilities)).min(1).max(5), brandIds: z.array(id).min(1).max(5), expiresInDays: z.number().int().min(1).max(90) }),
+  'connection.create': descriptor('Issue a scoped, expiring connection. Secret is displayed once and omitted from retries. Owner session required.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(80), scopes: z.array(z.enum(capabilities)).min(1).max(6), brandIds: z.array(id).min(1).max(5), expiresInDays: z.number().int().min(1).max(90) }),
   'connection.revoke': descriptor('Revoke a connection immediately. Owner session required.', 'owner', true, { operationKey: key, id }),
 } as const;
 export type CommandName = keyof typeof commands;

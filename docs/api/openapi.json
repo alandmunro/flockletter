@@ -1704,6 +1704,70 @@
         }
       }
     },
+    "/api/v1/commands/rehearsal.methods": {
+      "post": {
+        "operationId": "rehearsal_methods",
+        "summary": "List rehearsal methods available to this brand. Ordinary customer delivery is never enabled.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "campaign:rehearse",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "brandId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
     "/api/v1/commands/rehearsal.review": {
       "post": {
         "operationId": "rehearsal_review",
@@ -1753,7 +1817,9 @@
                     "type": "string",
                     "enum": [
                       "capture",
-                      "provider_test"
+                      "provider_test",
+                      "feedback_test",
+                      "ses_simulator"
                     ]
                   },
                   "segmentId": {
@@ -1813,7 +1879,7 @@
     "/api/v1/commands/rehearsal.approve": {
       "post": {
         "operationId": "rehearsal_approve",
-        "summary": "Queue the exact reviewed capture or synthetic provider test. No external email is sent.",
+        "summary": "Queue only the reviewed method. Local rehearsals stay inside Flockletter; an explicitly reviewed SES test can reach only AWS simulator addresses.",
         "security": [
           {
             "bearerAuth": []
@@ -2178,7 +2244,7 @@
     "/api/v1/commands/rehearsal.outcomes": {
       "post": {
         "operationId": "rehearsal_outcomes",
-        "summary": "Read the state and attempt count of each synthetic recipient. An uncertain result requires provider reconciliation before any new submission.",
+        "summary": "Read submission attempts and reported delivery, bounce or complaint for each synthetic recipient. An uncertain result requires provider reconciliation before any new submission.",
         "security": [
           {
             "bearerAuth": []
@@ -5402,7 +5468,7 @@
                   },
                   "scopes": {
                     "minItems": 1,
-                    "maxItems": 5,
+                    "maxItems": 6,
                     "type": "array",
                     "items": {
                       "type": "string",
@@ -5412,7 +5478,8 @@
                         "assets:write",
                         "subscriber:signup",
                         "audience:summary",
-                        "campaign:rehearse"
+                        "campaign:rehearse",
+                        "campaign:simulate"
                       ]
                     }
                   },

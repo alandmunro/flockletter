@@ -14,6 +14,7 @@ import {
   type RehearsalTransport,
   type RecipientOutcome,
 } from '../../shared/rehearsal.js';
+import { simulatorDestination } from './ses-simulator.js';
 import { reservePractice, utcPeriod, workspaceAccess } from './access.js';
 import { requireSegment } from '../subscribers/segments.js';
 
@@ -42,6 +43,7 @@ type Row = {
   excluded: number;
   access_revision: number;
   reason: string | null;
+  provider_binding: string | null;
   render_html: string;
   render_text: string;
 };
@@ -112,10 +114,13 @@ export async function rehearsalRow(sql: Sql, id: string) {
 export async function recipientOutcomes(sql: Sql, id: string) {
   await rehearsalRow(sql, id);
   const result = await sql.query<RecipientOutcome>(
-    'SELECT id,state,reason,attempts FROM rehearsal_recipients WHERE rehearsal_id=$1 ORDER BY id',
+    `SELECT p.id,p.state,p.reason,p.attempts,(SELECT kind FROM campaign_provider_events e
+       WHERE (e.workspace_id,e.brand_id,e.operation_key)=(p.workspace_id,p.brand_id,p.id)
+       ORDER BY CASE kind WHEN 'complaint' THEN 4 WHEN 'permanent_bounce' THEN 3 WHEN 'delivered' THEN 2 ELSE 1 END DESC LIMIT 1) feedback
+       FROM rehearsal_recipients p WHERE rehearsal_id=$1 ORDER BY p.id`,
     [id],
   );
-  return { recipients: result.rows };
+  return { recipients: result.rows.map(({ feedback, ...row }) => feedback ? { ...row, feedback } : row) };
 }
 export async function listRehearsals(sql: Sql, campaignId: string, includeConfirmed: boolean) {
   const result = await sql.query<ReportRow>(
@@ -136,6 +141,7 @@ export async function reviewRehearsal(
   due?: string,
   segmentId?: string,
   transport: RehearsalTransport = 'capture',
+  providerBinding: string | null = null,
 ) {
   requireCondition(
     !segmentId || audience === 'confirmed',
@@ -206,6 +212,7 @@ export async function reviewRehearsal(
       'practice_audience',
       'A rehearsal needs between 1 and 25 confirmed contacts with reserved test addresses.',
     );
+    if(transport==='ses_simulator') requireCondition(hits.every(p=>simulatorDestination(p.email_normalized)),422,'simulator_audience','Choose a group containing only the fixed SES simulator test aliases.');
     recipients = hits;
     selected = hits.length;
     excluded = hits[0]!.total - selected;
@@ -227,7 +234,7 @@ export async function reviewRehearsal(
   const rendered = renderPreview(draft, images as typeof assets);
   await sql.query(
     `INSERT INTO campaign_rehearsals(workspace_id,brand_id,id,campaign_id,version,content,creator_id,actor_id,
-    audience,access_revision,selected,excluded,due_at,period,render_html,render_text,segment_id,segment_name,transport) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+    audience,access_revision,selected,excluded,due_at,period,render_html,render_text,segment_id,segment_name,transport,provider_binding) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
     [
       actor.workspaceId,
       draft.brandId,
@@ -248,6 +255,7 @@ export async function reviewRehearsal(
       segment?.id ?? null,
       segment?.name ?? null,
       transport,
+      providerBinding,
     ],
   );
   if (audience === 'test') {
@@ -359,7 +367,7 @@ export async function invalidateStudioReviews(
   const { rows } = await sql.query<{ id: string }>(
     `SELECT id FROM campaign_rehearsals
     WHERE campaign_id=$1 AND version<>$2 AND state IN ('reviewed','queued')
-      AND (NOT $3::boolean OR transport='provider_test')`,
+      AND (NOT $3::boolean OR transport<>'capture')`,
     [campaignId, version, providerOnly],
   );
   for (const row of rows) await finish(sql, row.id, 'blocked', 'draft_changed');
@@ -395,8 +403,9 @@ export async function submissionBlock(
         await sql.query(
           `SELECT id FROM connections WHERE id=$1 AND issuer_id=$2
     AND revoked_at IS NULL AND expires_at>now() AND $3::uuid=ANY(brand_ids) AND 'campaign:rehearse'=ANY(scopes) AND 'read'=ANY(scopes)
-    AND ($4::text='test' OR 'audience:summary'=ANY(scopes))`,
-          [row.actor_id.slice(11), row.creator_id, brand, row.audience],
+    AND ($4::text='test' OR 'audience:summary'=ANY(scopes))
+    AND ($5::text NOT IN ('feedback_test','ses_simulator') OR 'campaign:simulate'=ANY(scopes))`,
+          [row.actor_id.slice(11), row.creator_id, brand, row.audience, row.transport],
         )
       ).rowCount
     : true;

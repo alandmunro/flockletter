@@ -16,6 +16,15 @@ import {
   type CheckOwner,
 } from './rehearsal.js';
 
+import {
+  localFeedbackBinding,
+  localFeedbackKind,
+  recordCampaignFeedback,
+  saveProviderReceipt,
+} from './feedback.js';
+import { SesSimulatorProvider } from './ses-simulator.js';
+import { sesScope, type SesRuntime } from './ses-runtime.js';
+
 type Recipient = RecipientOutcome & { subscriber_id: string | null; email_digest: string | null };
 type Work = { id: string; rehearsal: string; attempts: number; submit: boolean };
 const maxAttempts = 3;
@@ -27,6 +36,7 @@ export class DeliveryWorker {
     private db: Database,
     private isOwner: CheckOwner,
     private provider?: DeliveryProvider,
+    private readonly ses?: SesRuntime,
   ) {}
 
   private scoped<T>(workspace: string, brand: string, run: (sql: Sql) => Promise<T>) {
@@ -43,7 +53,7 @@ export class DeliveryWorker {
           `
         SELECT p.id,p.rehearsal_id,p.state,p.attempts FROM rehearsal_recipients p
         JOIN campaign_rehearsals r ON (r.workspace_id,r.brand_id,r.id)=(p.workspace_id,p.brand_id,p.rehearsal_id)
-        WHERE r.transport='provider_test' AND ($1::uuid IS NULL OR r.id=$1)
+        WHERE r.transport IN ('provider_test','feedback_test','ses_simulator') AND ($1::uuid IS NULL OR r.id=$1)
           AND (p.next_check_at IS NULL OR p.next_check_at<=now()) AND
           ((p.state='pending' AND r.state='queued' AND r.due_at<=now()) OR p.state IN ('submitting','uncertain'))
         ORDER BY coalesce(p.next_check_at,r.due_at),r.id,p.id LIMIT 1 FOR UPDATE OF p`,
@@ -75,7 +85,68 @@ export class DeliveryWorker {
         person.state !== (work.submit ? 'submitting' : 'uncertain')
       )
         return;
-      const provider = this.provider ?? new StagingReceiptProvider(sql, workspace, brand, row.id);
+      const local = new StagingReceiptProvider(sql, workspace, brand, row.id);
+      // A reviewed transport may not fall back to a different provider after reconfiguration.
+      let provider: DeliveryProvider = this.provider ?? local;
+      if (row.transport === 'ses_simulator') {
+        const binding = row.provider_binding;
+        const runtime = sesScope(this.ses, workspace, brand);
+        const receipt = async (operation: string) =>
+          Boolean(
+            (
+              await sql.query(
+                'SELECT 1 FROM campaign_provider_receipts WHERE operation_key=$1 AND rehearsal_id=$2 AND provider_binding=$3',
+                [operation, row.id, binding],
+              )
+            ).rowCount,
+          );
+        if (work.submit) {
+          const sender =
+            runtime &&
+            runtime.route.fingerprint === binding &&
+            runtime.port &&
+            (await sql.query(
+              "SELECT 1 FROM sender_domains WHERE domain=$1 AND verified_at > now()-interval '24 hours'",
+              [runtime.route.from.split('@')[1]],
+            ));
+          if (!runtime?.port || !binding || !sender || !sender.rowCount) {
+            await setRecipient(sql, work, 'cancelled', 'simulator_unavailable', true);
+            await finish(sql, row.id, 'blocked', 'simulator_unavailable');
+            return;
+          }
+          provider = new SesSimulatorProvider(runtime.route, runtime.port, {
+            record: (key, id) => saveProviderReceipt(sql, workspace, brand, row.id, key, binding, id),
+            lookup: receipt,
+          });
+        } else {
+          // A missing receipt can never prove that an external send did not happen.
+          provider = {
+            submit: async () => 'rejected',
+            lookup: async (key) => ((await receipt(key)) ? 'accepted' : 'unknown'),
+          };
+        }
+      } else if (row.transport === 'feedback_test') {
+        provider = {
+          lookup: (key) => local.lookup(key),
+          submit: async (message) => {
+            const result = await local.submit(message);
+            if (result === 'accepted' || result === 'unknown')
+              await recordCampaignFeedback(sql, {
+                workspace,
+                brand,
+                operation: message.operationKey,
+                eventId: 'local-event-' + message.operationKey,
+                messageId: 'local-' + message.operationKey,
+                kind: localFeedbackKind(message.to),
+                binding: localFeedbackBinding,
+                destination: message.to,
+                transport: 'feedback_test',
+              });
+            // The offline result and the simulated event share one local transaction.
+            return result === 'unknown' ? 'accepted' : result;
+          },
+        };
+      }
       let outcome: DeliveryOutcome;
       if (work.submit) {
         await sql.query('SELECT enabled FROM subscriber_intake_settings FOR UPDATE');

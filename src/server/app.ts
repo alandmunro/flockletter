@@ -8,6 +8,7 @@ import { AppError } from './errors.js';
 import { configurationGaps, type Config } from './config.js';
 import type { Authenticator } from './auth.js';
 import { authorize, type CommandService } from './service.js';
+import { SesNotifications } from './campaign/ses-notifications.js';
 import { subscriberRoutes } from './subscribers/routes.js';
 import { marketingUnsubscribeRoutes } from './subscribers/marketing-routes.js';
 
@@ -58,6 +59,13 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     if (req.get('sec-fetch-site') === 'cross-site') return next(new AppError(403, 'origin_rejected', 'Cross-site browser requests are not authorized.'));
     if (!service || !auth) return next(new AppError(503, 'setup_required', 'Workspace operations require the Flockletter database and Clerk backend connection.'));
     next();
+  });
+  const sesNotifications=service?.ses && new SesNotifications(service.ses.route);
+  app.post('/api/v1/campaign-feedback/ses',express.raw({type:['text/plain','application/json'],limit:'256kb'}),async(req,res)=>{
+    if(!sesNotifications) throw new AppError(503,'simulator_not_configured','SES campaign feedback is not configured.');
+    if(!Buffer.isBuffer(req.body)) throw new AppError(415,'unsupported_notification','Expected a signed SNS notification.');
+    await sesNotifications.handle(service!.db,req.body);
+    res.sendStatus(204);
   });
   subscriberRoutes(app, config, service?.intake, auth);
   marketingUnsubscribeRoutes(app,config,service?.db);

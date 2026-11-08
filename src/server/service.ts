@@ -10,6 +10,9 @@ import { audienceSummary, contactDetail, listContacts, unsubscribeContact } from
 import {createSegment,deleteSegment,listSegments,renameSegment,segmentSummary,updateSegmentMembers} from './subscribers/segments.js';
 import { templates, fromTemplateContent, fromProductContent } from '../shared/authoring.js';
 import { invalidateStudioReviews, approveRehearsal, cancelRehearsal, capturedMessage, listRehearsals, processDue, recipientOutcomes, rehearsalReport, reviewRehearsal, type CheckOwner } from './campaign/rehearsal.js';
+import { localFeedbackBinding } from './campaign/feedback.js';
+import { sesScope,type SesRuntime } from './campaign/ses-runtime.js';
+import type { RehearsalTransport } from '../shared/rehearsal.js';
 import { DeliveryWorker } from './campaign/delivery-worker.js';
 import { practiceUsage, utcPeriod, workspaceAccess } from './campaign/access.js';
 import { previewImport } from './subscribers/import-preview.js';
@@ -72,7 +75,18 @@ export class CommandService {
   constructor(readonly db: Database, readonly intake = new SubscriberIntake(db),
     readonly checkOwner:CheckOwner = async()=>{throw new AppError(503,'membership_unavailable','Current workspace membership could not be verified.');},
     readonly resolveTxt:LookupTxt=lookupTxt,readonly billing=new SandboxBilling(db),readonly team:ClerkTeam=unavailableTeam,
-    private readonly providerScope?:(workspace:string,brand:string)=>boolean) {}
+    private readonly providerScope?:(workspace:string,brand:string)=>boolean, readonly ses?:SesRuntime) {}
+  private async methods(sql:Sql,w:string,b:string,actor:Actor):Promise<RehearsalTransport[]> {
+    const methods:RehearsalTransport[]=['capture'];
+    if(this.providerScope && !this.providerScope(w,b)) return methods;
+    methods.push('provider_test');
+    if(actor.kind==='connection' && !actor.scopes.includes('campaign:simulate')) return methods;
+    methods.push('feedback_test');
+    const candidate=sesScope(this.ses,w,b);
+    if(candidate?.port && (await sql.query("SELECT 1 FROM sender_domains WHERE domain=$1 AND verified_at > now()-interval '24 hours'",[candidate.route.from.split('@')[1]])).rowCount)
+      methods.push('ses_simulator');
+    return methods;
+  }
   async execute(name: CommandName, raw: unknown, actor: Actor): Promise<unknown> {
     authorize(actor, name);
     const definition = commands[name];
@@ -107,6 +121,10 @@ export class CommandService {
           if(name==='rehearsal.review' && 'audience' in input && input.audience==='confirmed' && actor.kind==='connection')
             requireCondition(actor.scopes.includes('audience:summary'),403,'scope_required','Grant audience totals to review a brand audience.');
           if('id' in input) await checkPracticeScope(sql,actor,input.id);
+          if(actor.kind==='connection' && !actor.scopes.includes('campaign:simulate') && name!=='rehearsal.cancel'){
+            const method='transport' in input?input.transport:'id' in input?(await sql.query('SELECT transport FROM campaign_rehearsals WHERE id=$1',[input.id])).rows[0]?.transport:undefined;
+            requireCondition(method!=='feedback_test' && method!=='ses_simulator',403,'scope_required','This method requires a separate campaign simulator grant.');
+          }
         }
         if (name.startsWith('segment.') && 'brandId' in input) {
           requireCondition(await this.checkOwner(actor.userId,actor.workspaceId),403,'owner_required','Current workspace ownership is required to manage groups.');
@@ -147,7 +165,7 @@ export class CommandService {
     });
     // The saved command receipt requests processing. Claims must commit independently
     // of that receipt and before any provider contact. Replaying the command only reads its receipt.
-    if (wake) await new DeliveryWorker(this.db,this.checkOwner).tick(actor.workspaceId,wake.brandId,wake.id);
+    if (wake) await new DeliveryWorker(this.db,this.checkOwner,undefined,this.ses).tick(actor.workspaceId,wake.brandId,wake.id);
     return response;
   }
   private async perform(name: CommandName, raw: unknown, actor: Actor, sql: Sql): Promise<unknown> {
@@ -225,11 +243,19 @@ export class CommandService {
         await audienceBrand(sql,actor,input.brandId);
         return exportPage(sql,input);
       }
+      case 'rehearsal.methods': {
+        const {brandId}=commands[name].schema.parse(raw);
+        await audienceBrand(sql,actor,brandId);
+        return {methods:await this.methods(sql,w,brandId,actor)};
+      }
       case 'rehearsal.review': {
         const input=commands[name].schema.parse(raw),draft=await campaign(sql,actor,input.campaignId);
         requireCondition(draft.brandId===input.brandId,404,'not_found','This campaign is unavailable for this brand.');
-        if(input.transport==='provider_test' && this.providerScope) requireCondition(this.providerScope(w,input.brandId),422,'worker_not_configured','The staging delivery worker is not configured for this brand. Ask your operator before scheduling a provider test.');
-        return reviewRehearsal(sql,actor,draft,input.expectedVersion,input.audience,input.dueAt,input.segmentId,input.transport);
+        await audienceBrand(sql,actor,input.brandId);
+        requireCondition((await this.methods(sql,w,input.brandId,actor)).includes(input.transport??'capture'),422,'worker_not_configured','This rehearsal method is not configured for this brand.');
+        const route=input.transport==='ses_simulator'?sesScope(this.ses,w,input.brandId)?.route:undefined;
+        const binding=input.transport==='feedback_test'?localFeedbackBinding:route?.fingerprint??null;
+        return reviewRehearsal(sql,actor,draft,input.expectedVersion,input.audience,input.dueAt,input.segmentId,input.transport,binding);
       }
       case 'rehearsal.approve': {
         const {brandId,id}=commands[name].schema.parse(raw);
@@ -238,7 +264,7 @@ export class CommandService {
       case 'rehearsal.process': {
         const {brandId,id}=commands[name].schema.parse(raw);
         const rehearsal=await rehearsalReport(sql,id);
-        if(rehearsal.transport==='provider_test')return {processingRequested:true};
+        if(rehearsal.transport!=='capture')return {processingRequested:true};
         return processDue(sql,w,brandId,this.checkOwner,id);
       }
       case 'rehearsal.cancel': return cancelRehearsal(sql,commands[name].schema.parse(raw).id);
@@ -398,6 +424,7 @@ export class CommandService {
       }
       case 'connection.create': {
         const input = commands[name].schema.parse(raw);
+        requireCondition(!input.scopes.includes('campaign:simulate')||input.scopes.includes('campaign:rehearse'),422,'invalid_rehearsal_grant','Simulator access also requires campaign rehearsals and draft read access.');
         requireCondition(!input.scopes.includes('campaign:rehearse')||input.scopes.includes('read'),422,'invalid_rehearsal_grant','Select draft read access together with campaign rehearsals.');
         for (const id of input.brandIds) await brand(sql, actor, id);
         if (input.scopes.includes('subscriber:signup')) {

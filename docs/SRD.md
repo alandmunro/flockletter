@@ -170,6 +170,8 @@ The detailed trust-policy discussion is deferred at the owner's request. It does
 
 **FL-DEL-004 — Authenticated feedback.** Verify delivery webhooks using provider-supported authentication, deduplicate them and resolve the owning workspace from trusted mappings. Missing authentication requires authoritative reconciliation before changing eligibility. Complaints and hard bounces SHALL suppress future applicable mail; repeated or out-of-order feedback SHALL not undo suppression.
 
+D-038 implements the staging portion of FL-CAM-007 and FL-DEL-004. A newly reviewed local feedback test exercises delivery, temporary bounce, permanent bounce and complaint outcomes. An operator-configured Amazon SES simulator test is a separate choice, limited to AWS-owned simulator addresses and the workspace, brand and sender configuration frozen at review. Both use the same recipient reports as other rehearsals. The public provider decision and ordinary customer delivery remain open. [Staging campaign feedback](implementation/CAMPAIGN_FEEDBACK.md)
+
 **FL-DEL-005 — Transport-independent enforcement.** All actual sends SHALL pass through the approved usage, suppression and provider controls, including engine retries and direct API paths. Before implementation, validate where Listmonk can enforce these checks; treat missing adapter/hooks as a design gap requiring review. Do not expose an unguarded engine send endpoint behind a billing-aware dashboard.
 
 ## API MCP and FFA integration

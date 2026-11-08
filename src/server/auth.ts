@@ -92,6 +92,6 @@ export class Authenticator {
       const access=await this.db.tenant(identity.workspaceId,sql=>memberPermissions(sql,identity.workspaceId,identity.userId,this.identity.team!));
       return {...identity,actorId:'user:'+identity.userId,owner:false,kind:'session',...access};
     }
-    return { ...identity, actorId: `user:${identity.userId}`, owner:true, kind: 'session', scopes: ['read', 'draft:write', 'assets:write', 'audience:summary','campaign:rehearse'], brandIds: null };
+    return { ...identity, actorId: `user:${identity.userId}`, owner:true, kind: 'session', scopes: ['read', 'draft:write', 'assets:write', 'audience:summary','campaign:rehearse','campaign:simulate'], brandIds: null };
   }
 }
