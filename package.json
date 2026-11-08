@@ -12,6 +12,7 @@
     "dev:ui": "vite --host 127.0.0.1",
     "build": "vite build && tsc -p tsconfig.server.json",
     "start": "node dist/server/server/main.js",
+    "delivery:worker": "node dist/server/server/campaign/delivery-main.js",
     "confirmation:worker": "node dist/server/server/confirmation/main.js",
     "mcp": "tsx src/mcp/main.ts",
     "db:migrate": "tsx scripts/migrate.ts",

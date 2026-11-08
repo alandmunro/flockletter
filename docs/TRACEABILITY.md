@@ -59,3 +59,5 @@ FL-AUD-001/002/004, FL-API-002/005, FL-DEL-003/004/005 and FL-OPS-007 have targe
 The deployed foundation passed Clerk passwordless sign-in, workspace creation, partial image-batch validation, and saved campaign preview and reload. The second synthetic organization's campaign list was empty. The shared-host release verified seven forced row-level policies and the runtime role's restricted access. [Foundation verification](implementation/VERIFICATION.md)
 
 Design-only browser checks and screen/story coverage are recorded in [design verification](design/VERIFICATION.md). They do not mark any FL-AT case complete.
+
+For the D-037 staging delivery worker, FL-AT-015/018/019/020 and the engine portion of FL-AT-024 have synthetic evidence. The [PostgreSQL/HTTP/MCP scenarios](../tests/staging-delivery-worker.test.ts) exercise frozen schedules, late opt-outs, lost acknowledgments, cancellation, version changes, allowance protection, no duplicate contact and tenant isolation. The [isolated Listmonk exercise](implementation/LISTMONK_CAPTURE.md) checks the real engine. These tests do not attest to outbound sending, inbox placement or billing.

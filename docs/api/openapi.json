@@ -1707,7 +1707,7 @@
     "/api/v1/commands/rehearsal.review": {
       "post": {
         "operationId": "rehearsal_review",
-        "summary": "Freeze this draft and its test mailbox or confirmed synthetic recipients. Optionally choose one same-brand group for confirmed recipients.",
+        "summary": "Freeze this draft, synthetic recipients and test transport. An omitted transport uses the original capture mailbox.",
         "security": [
           {
             "bearerAuth": []
@@ -1747,6 +1747,13 @@
                     "enum": [
                       "test",
                       "confirmed"
+                    ]
+                  },
+                  "transport": {
+                    "type": "string",
+                    "enum": [
+                      "capture",
+                      "provider_test"
                     ]
                   },
                   "segmentId": {
@@ -1806,7 +1813,7 @@
     "/api/v1/commands/rehearsal.approve": {
       "post": {
         "operationId": "rehearsal_approve",
-        "summary": "Queue the exact reviewed capture. No external email is sent.",
+        "summary": "Queue the exact reviewed capture or synthetic provider test. No external email is sent.",
         "security": [
           {
             "bearerAuth": []
@@ -1881,7 +1888,7 @@
     "/api/v1/commands/rehearsal.cancel": {
       "post": {
         "operationId": "rehearsal_cancel",
-        "summary": "Cancel a reviewed or queued capture and release its practice reservation.",
+        "summary": "Stop new submissions. An earlier uncertain attempt retains its reservation until a provider receipt resolves it.",
         "security": [
           {
             "bearerAuth": []
@@ -1956,7 +1963,7 @@
     "/api/v1/commands/rehearsal.process": {
       "post": {
         "operationId": "rehearsal_process",
-        "summary": "Run one due capture for the chosen brand and rehearsal.",
+        "summary": "Process a due capture or request one worker step on the chosen staging provider rehearsal. Uncertain attempts only check provider status.",
         "security": [
           {
             "bearerAuth": []
@@ -2102,6 +2109,76 @@
       "post": {
         "operationId": "rehearsal_report",
         "summary": "Read counts and outcome for one brand rehearsal.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "campaign:rehearse",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "brandId",
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/rehearsal.outcomes": {
+      "post": {
+        "operationId": "rehearsal_outcomes",
+        "summary": "Read the state and attempt count of each synthetic recipient. An uncertain result requires provider reconciliation before any new submission.",
         "security": [
           {
             "bearerAuth": []

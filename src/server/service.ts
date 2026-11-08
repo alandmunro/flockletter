@@ -9,7 +9,8 @@ import { SubscriberIntake } from './subscribers/intake.js';
 import { audienceSummary, contactDetail, listContacts, unsubscribeContact } from './subscribers/audience.js';
 import {createSegment,deleteSegment,listSegments,renameSegment,segmentSummary,updateSegmentMembers} from './subscribers/segments.js';
 import { templates, fromTemplateContent, fromProductContent } from '../shared/authoring.js';
-import { invalidateStudioReviews, approveRehearsal, cancelRehearsal, capturedMessage, listRehearsals, processDue, rehearsalReport, reviewRehearsal, type CheckOwner } from './campaign/rehearsal.js';
+import { invalidateStudioReviews, approveRehearsal, cancelRehearsal, capturedMessage, listRehearsals, processDue, recipientOutcomes, rehearsalReport, reviewRehearsal, type CheckOwner } from './campaign/rehearsal.js';
+import { DeliveryWorker } from './campaign/delivery-worker.js';
 import { practiceUsage, utcPeriod, workspaceAccess } from './campaign/access.js';
 import { previewImport } from './subscribers/import-preview.js';
 import { senderStatus, registerSender, verifySender,lookupTxt,type LookupTxt } from './campaign/sender.js';
@@ -70,7 +71,8 @@ async function checkImages(sql: Sql, actor: Actor, brandId: string, ids: string[
 export class CommandService {
   constructor(readonly db: Database, readonly intake = new SubscriberIntake(db),
     readonly checkOwner:CheckOwner = async()=>{throw new AppError(503,'membership_unavailable','Current workspace membership could not be verified.');},
-    readonly resolveTxt:LookupTxt=lookupTxt,readonly billing=new SandboxBilling(db),readonly team:ClerkTeam=unavailableTeam) {}
+    readonly resolveTxt:LookupTxt=lookupTxt,readonly billing=new SandboxBilling(db),readonly team:ClerkTeam=unavailableTeam,
+    private readonly providerScope?:(workspace:string,brand:string)=>boolean) {}
   async execute(name: CommandName, raw: unknown, actor: Actor): Promise<unknown> {
     authorize(actor, name);
     const definition = commands[name];
@@ -86,7 +88,8 @@ export class CommandService {
     if(name==='billing.restart'){const input=commands[name].schema.parse(raw);return this.billing.restart(actor,input.plan,input.expiredId,input.operationKey);}
     if(name==='billing.portal') return this.billing.portal(actor,commands[name].schema.parse(raw).operationKey);
     const optOut = name === 'audience.unsubscribe' ? commands[name].schema.parse(raw) : null;
-    return this.db.tenant(actor.workspaceId, async sql => {
+    let wake: {brandId:string;id:string} | undefined;
+    const response = await this.db.tenant(actor.workspaceId, async sql => {
       let requestHash = '';
       let operationKey = '';
       if (definition.mutation) {
@@ -132,6 +135,8 @@ export class CommandService {
         }
       }
       const result = await this.perform(name, raw, actor, sql);
+      if (name==='rehearsal.process' && result && typeof result==='object' && 'processingRequested' in result)
+        wake=commands[name].schema.parse(raw);
       if (definition.mutation) {
         // Connection secrets are returned once, never persisted in replay records or audit.
         const stored = name === 'connection.create' ? { ...(result as Record<string, unknown>), token: undefined, secretAlreadyIssued: true } : result;
@@ -140,6 +145,10 @@ export class CommandService {
       }
       return result;
     });
+    // The saved command receipt requests processing. Claims must commit independently
+    // of that receipt and before any provider contact. Replaying the command only reads its receipt.
+    if (wake) await new DeliveryWorker(this.db,this.checkOwner).tick(actor.workspaceId,wake.brandId,wake.id);
+    return response;
   }
   private async perform(name: CommandName, raw: unknown, actor: Actor, sql: Sql): Promise<unknown> {
     const w = actor.workspaceId;
@@ -219,7 +228,8 @@ export class CommandService {
       case 'rehearsal.review': {
         const input=commands[name].schema.parse(raw),draft=await campaign(sql,actor,input.campaignId);
         requireCondition(draft.brandId===input.brandId,404,'not_found','This campaign is unavailable for this brand.');
-        return reviewRehearsal(sql,actor,draft,input.expectedVersion,input.audience,input.dueAt,input.segmentId);
+        if(input.transport==='provider_test' && this.providerScope) requireCondition(this.providerScope(w,input.brandId),422,'worker_not_configured','The staging delivery worker is not configured for this brand. Ask your operator before scheduling a provider test.');
+        return reviewRehearsal(sql,actor,draft,input.expectedVersion,input.audience,input.dueAt,input.segmentId,input.transport);
       }
       case 'rehearsal.approve': {
         const {brandId,id}=commands[name].schema.parse(raw);
@@ -227,15 +237,18 @@ export class CommandService {
       }
       case 'rehearsal.process': {
         const {brandId,id}=commands[name].schema.parse(raw);
-        await rehearsalReport(sql,id);
+        const rehearsal=await rehearsalReport(sql,id);
+        if(rehearsal.transport==='provider_test')return {processingRequested:true};
         return processDue(sql,w,brandId,this.checkOwner,id);
       }
       case 'rehearsal.cancel': return cancelRehearsal(sql,commands[name].schema.parse(raw).id);
       case 'rehearsal.report':
+      case 'rehearsal.outcomes':
       case 'rehearsal.message': {
         const {brandId,id}=commands[name].schema.parse(raw);
         await audienceBrand(sql,actor,brandId);
         await checkPracticeScope(sql,actor,id);
+        if(name==='rehearsal.outcomes')return recipientOutcomes(sql,id);
         return name==='rehearsal.report'?rehearsalReport(sql,id):capturedMessage(sql,brandId,id);
       }
       case 'rehearsal.list': {
@@ -272,10 +285,8 @@ export class CommandService {
         await checkImages(sql, actor, current.brandId, content.assetIds);
         const result = await sql.query<CampaignRow>('UPDATE campaigns SET content=$1,version=version+1,updated_at=now() WHERE id=$2 AND version=$3 RETURNING *', [JSON.stringify(content), input.id, input.expectedVersion]);
         requireCondition(result.rows[0], 409, 'version_conflict', 'This draft changed. Reload before saving.');
-        if(content.studio){
-          await audienceBrand(sql,actor,current.brandId);
-          await invalidateStudioReviews(sql,current.id,result.rows[0].version);
-        }
+        await audienceBrand(sql,actor,current.brandId);
+        await invalidateStudioReviews(sql,current.id,result.rows[0].version,!content.studio);
         return campaignView(result.rows[0]);
       }
       case 'campaign.preflight': {

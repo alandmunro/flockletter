@@ -13,6 +13,13 @@ The campaign foundation exposes preparation commands through the administration 
 
 Normal preparation uses a few batch calls, not one call per image. Authentication, file preparation and intentional editing add calls. Do not claim an upload, save or preview is publication.
 
+## Rehearse a scheduled provider submission
+
+1. Call `rehearsal_review` with `operationKey`, `brandId`, `campaignId`, `expectedVersion`, `audience` and `transport: "provider_test"`. For a scheduled run add an ISO date and time with an offset in `dueAt`. Use `"test"` for the fixed test mailbox or `"confirmed"` for eligible test contacts in the brand. A delegated connection requires `read` and `campaign:rehearse`, plus `audience:summary` for confirmed contacts. The staging operator must bind the brand before reviewing a provider test. Omitting `transport` selects the existing capture workflow.
+2. Present the returned review and obtain approval for its version, audience and time. Call `rehearsal_approve` with its `id`, the same `brandId` and a new `operationKey`. The worker processes approved recipients when due. `rehearsal_process` with `id`, `brandId` and its own `operationKey` requests one worker step. Read the outcome through the report.
+3. Call `rehearsal_report` with `brandId` and `id` for run state and counts, including pending, submitting, accepted, uncertain, rejected and skipped or cancelled recipients. `rehearsal_outcomes` takes the same arguments and returns `recipients` with each opaque `id`, `state`, `reason` and `attempts`. A subscriber who withdrew before their first submission has zero attempts. The same view appears under **Show recipient outcomes** on the dashboard.
+4. For an uncertain attempt, inspect the original receipt. Only verified nonacceptance makes a new attempt eligible. `rehearsal_cancel` stops new submissions and still permits receipt checks on work already attempted. Follow the [staging pilot](CAMPAIGN_PILOT.md) for retry limits and worker configuration.
+
 ## Newsletter Studio commands
 
 Use `campaign_get` to read the current `version`, brand and content. Use `campaign_create` or `campaign_update` with `content.studio` for the visual document. Existing title, subject, preheader, sender and reply-to metadata stay in the normal campaign fields. The following example is the Studio field of a campaign request.

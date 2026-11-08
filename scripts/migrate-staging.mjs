@@ -17,7 +17,9 @@ async function run() {
   input.close();
   let migration, runtime;
   try {
-    migration = new URL(JSON.parse(line.value).migrationUrl);
+    // In a protected, echo-disabled terminal the operator can paste the existing
+    // migration URI directly. Never accept a credential on the command line.
+    migration = new URL(process.argv[3] === '--uri-stdin' ? line.value : JSON.parse(line.value).migrationUrl);
     runtime = new URL(process.env.DATABASE_URL);
   } catch {
     throw new Error('Invalid private staging release input.');

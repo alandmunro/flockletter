@@ -3,7 +3,7 @@ import { studioSchema, studioAssetIds } from './studio.js';
 import { normalizedEmail } from './subscriber.js';
 import { stateFilter } from './audience.js';
 import { productFields, templateIds } from './authoring.js';
-import { rehearsalAudiences } from './rehearsal.js';
+import { rehearsalAudiences, rehearsalTransports } from './rehearsal.js';
 import { importPreviewInput } from './import-preview.js';
 import { exportPageInput } from './audience-export.js';
 import { senderDomain } from './sender.js';
@@ -75,12 +75,13 @@ export const commands = {
   'sender.verify': descriptor('Check the public domain ownership TXT record. This never activates a provider.', 'owner',true,{operationKey:key,brandId:id}),
   'campaign.fromTemplate': descriptor('Create a campaign draft from a newsletter layout.', 'draft:write', true, {operationKey:key,brandId:id,templateId:z.enum(templateIds)}),
   'campaign.fromProduct': descriptor('Prepare a draft from approved product details and existing brand images.', 'draft:write', true, {operationKey:key,brandId:id,...productFields,assetIds:contentSchema.shape.assetIds}),
-  'rehearsal.review': descriptor('Freeze this draft and its test mailbox or confirmed synthetic recipients. Optionally choose one same-brand group for confirmed recipients.', 'campaign:rehearse', true, {operationKey:key,brandId:audienceId,campaignId:id,expectedVersion:z.number().int().positive(),audience:z.enum(rehearsalAudiences),segmentId:audienceId.optional(),dueAt:z.iso.datetime({offset:true}).optional()}),
-  'rehearsal.approve': descriptor('Queue the exact reviewed capture. No external email is sent.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
-  'rehearsal.cancel': descriptor('Cancel a reviewed or queued capture and release its practice reservation.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
-  'rehearsal.process': descriptor('Run one due capture for the chosen brand and rehearsal.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
+  'rehearsal.review': descriptor('Freeze this draft, synthetic recipients and test transport. An omitted transport uses the original capture mailbox.', 'campaign:rehearse', true, {operationKey:key,brandId:audienceId,campaignId:id,expectedVersion:z.number().int().positive(),audience:z.enum(rehearsalAudiences),transport:z.enum(rehearsalTransports).optional(),segmentId:audienceId.optional(),dueAt:z.iso.datetime({offset:true}).optional()}),
+  'rehearsal.approve': descriptor('Queue the exact reviewed capture or synthetic provider test. No external email is sent.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
+  'rehearsal.cancel': descriptor('Stop new submissions. An earlier uncertain attempt retains its reservation until a provider receipt resolves it.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
+  'rehearsal.process': descriptor('Process a due capture or request one worker step on the chosen staging provider rehearsal. Uncertain attempts only check provider status.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
   'rehearsal.list': descriptor('List recent brand rehearsal results for a draft.', 'campaign:rehearse',false,{brandId:id,campaignId:id}),
   'rehearsal.report': descriptor('Read counts and outcome for one brand rehearsal.', 'campaign:rehearse',false,{brandId:id,id}),
+  'rehearsal.outcomes': descriptor('Read the state and attempt count of each synthetic recipient. An uncertain result requires provider reconciliation before any new submission.', 'campaign:rehearse',false,{brandId:id,id}),
   'rehearsal.message': descriptor('Read the reviewed email captured inside Flockletter.', 'campaign:rehearse',false,{brandId:id,id}),
   'audience.previewImport': descriptor('Preview a CSV for one brand. Returns counts and row numbers only.', 'owner', false, importPreviewInput.shape),
   'audience.exportPage': descriptor('Read one bounded page for an explicitly requested owner export.', 'owner',false, exportPageInput.shape),
