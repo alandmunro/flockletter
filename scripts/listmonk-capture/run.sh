@@ -81,5 +81,12 @@ END $$;
 SQL
 engine="$(docker run -d "${engine_args[@]}" --network-alias engine "$listmonk" --config '')"
 [[ -z "$(docker port "$database")" && -z "$(docker port "$engine")" ]]
-docker run --rm -i "${common[@]}" --network-alias capture --user node --cap-drop ALL --read-only \
-  -e LISTMONK_ADMIN_PASSWORD -e FIXTURE_CAPTURE_SECRET -e FLOCKLETTER_STUDIO_FIXTURE "$node_image" node --input-type=module - < "$fixture_dir/probe.mjs"
+# Both probes use the same private messenger address. Pass their source via stdin;
+# the helper has no host mounts or published ports.
+helper="$(docker run -d "${common[@]}" --network-alias capture --user node --cap-drop ALL --read-only \
+  --tmpfs /fixture:rw,noexec,nosuid,size=4m,mode=1777 -e LISTMONK_ADMIN_PASSWORD -e FIXTURE_CAPTURE_SECRET \
+  -e FLOCKLETTER_STUDIO_FIXTURE "$node_image" sleep 540)"
+tar -cf - -C "$fixture_dir" probe.mjs worker-peer.mjs -C "$fixture_dir/../../src/server/campaign" listmonk-test-provider.ts \
+  | docker exec -i "$helper" tar -xf - -C /fixture
+docker exec "$helper" node /fixture/probe.mjs
+node --import tsx "$fixture_dir/worker-proof.ts" "$helper"

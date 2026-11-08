@@ -9,6 +9,7 @@ import {
 } from '../shared/rehearsal.js';
 import { operationKey, type Api } from './api.js';
 import type { SegmentDirectory } from '../shared/segments.js';
+import { ProviderOutcomes } from './ProviderOutcomes.js';
 
 const showError = (e: unknown) =>
   e instanceof Error ? e.message : 'Flockletter could not complete this request.';
@@ -21,6 +22,7 @@ const reasonText: Record<string, string> = {
 type Message = { subject: string; text: string; html: string; mailbox: string };
 export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
   const [audience, setAudience] = useState<RehearsalAudience>('test');
+  const [transport, setTransport] = useState<Rehearsal['transport']>('capture');
   const [chosenGroup, setChosenGroup] = useState({ brandId: '', id: '' });
   const [groups, setGroups] = useState<{ brandId: string; directory: SegmentDirectory } | null>(null);
   const [groupError, setGroupError] = useState('');
@@ -99,12 +101,20 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
   return (
     <section className="card" aria-labelledby="rehearsal-heading">
       <h2 id="rehearsal-heading">Campaign rehearsal</h2>
-      <p>
-        Review a saved version and capture its message inside Flockletter. Rehearsals never deliver email to
-        an inbox.
-      </p>
+      <p>Review the saved version and test recipients before approving a rehearsal.</p>
       <fieldset disabled={busy}>
         <div className="field-grid">
+          <div className="field">
+            <label htmlFor="rehearsal-method">Rehearsal method</label>
+            <select
+              id="rehearsal-method"
+              value={transport}
+              onChange={(e) => setTransport(e.target.value as Rehearsal['transport'])}
+            >
+              <option value="capture">Flockletter capture</option>
+              <option value="provider_test">Staging test provider</option>
+            </select>
+          </div>
           <div className="field">
             <label htmlFor="capture-audience">Practice audience</label>
             <select
@@ -164,8 +174,11 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
         </div>
         <p className="help">
           {audience === 'test'
-            ? 'Capture for ' + practiceMailbox + '.'
-            : 'Requires a complimentary plan and up to 25 confirmed addresses on reserved test domains.'}
+            ? 'This rehearsal uses ' + practiceMailbox + '.'
+            : 'Requires a complimentary plan and up to 25 confirmed addresses on reserved test domains.'}{' '}
+          {transport === 'provider_test'
+            ? 'The staging provider records one result per test recipient.'
+            : 'The captured message stays inside Flockletter.'}
         </p>
         <button
           className="btn"
@@ -180,13 +193,14 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
                 ...context,
                 expectedVersion: draft.version,
                 audience,
+                ...(transport === 'provider_test' ? { transport } : {}),
                 ...(audience === 'confirmed' && selectedGroup ? { segmentId: selectedGroup } : {}),
                 ...(at ? { dueAt: new Date(at).toISOString() } : {}),
               });
             })
           }
         >
-          Review capture
+          {transport === 'provider_test' ? 'Review provider test' : 'Review capture'}
         </button>
       </fieldset>
       {error && (
@@ -197,6 +211,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
       {items.map((item) => (
         <article className="card" key={item.id}>
           <h3>
+            {item.transport === 'provider_test' ? 'Staging provider test' : 'Flockletter capture'} ·{' '}
             {item.segment?.name ?? (item.audience === 'test' ? 'Test mailbox' : 'Confirmed test audience')} ·
             version {item.version}
           </h3>
@@ -204,17 +219,25 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
             <strong>{item.state}</strong> · {new Date(item.dueAt).toLocaleString()} · {item.selected} selected
             · {item.excluded} excluded at review
           </p>
-          <p>
-            {item.captured} captured · {item.pending} pending · {item.skipped} skipped or cancelled
-          </p>
+          {item.transport === 'provider_test' ? (
+            <p>
+              {item.accepted} accepted by the test provider · {item.rejected} rejected · {item.uncertain}{' '}
+              uncertain · {item.submitting} submitting · {item.pending} pending · {item.skipped} skipped or
+              cancelled
+            </p>
+          ) : (
+            <p>
+              {item.captured} captured · {item.pending} pending · {item.skipped} skipped or cancelled
+            </p>
+          )}
           {item.reason && <p>{reasonText[item.reason] ?? item.reason}</p>}
           <div className="actions">
             {item.state === 'reviewed' && (
               <button className="btn" disabled={busy} onClick={() => void action(() => approve(item))}>
-                Approve capture
+                {item.transport === 'provider_test' ? 'Approve provider test' : 'Approve capture'}
               </button>
             )}
-            {item.state === 'queued' && (
+            {(item.state === 'queued' || (item.transport === 'provider_test' && item.uncertain > 0)) && (
               <button
                 className="btn"
                 disabled={busy}
@@ -224,7 +247,9 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
                   })
                 }
               >
-                Process if due
+                {item.transport === 'provider_test' && item.uncertain > 0
+                  ? 'Check provider status'
+                  : 'Process if due'}
               </button>
             )}
             {['reviewed', 'queued'].includes(item.state) && (
@@ -240,7 +265,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
                 Cancel rehearsal
               </button>
             )}
-            {item.captured > 0 && (
+            {item.transport !== 'provider_test' && item.captured > 0 && (
               <button
                 className="btn secondary"
                 disabled={busy}
@@ -256,6 +281,9 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
               </button>
             )}
           </div>
+          {item.transport === 'provider_test' && (
+            <ProviderOutcomes api={api} brandId={draft.brandId} rehearsalId={item.id} revision={revision} />
+          )}
         </article>
       ))}
       <button
@@ -318,7 +346,7 @@ export function WorkspaceAccessPanel({ api }: { api: Api }) {
           <p>{data.access.plan ? 'Complimentary · ' + data.access.plan : 'Preparation access'}</p>
           <p>
             Practice usage for {data.usage.period} (UTC). {data.usage.campaigns} campaigns and{' '}
-            {data.usage.messages} messages captured. {data.usage.reservedCampaigns} campaigns and{' '}
+            {data.usage.messages} messages used. {data.usage.reservedCampaigns} campaigns and{' '}
             {data.usage.reservedMessages} messages reserved.
           </p>
           <p className="help">

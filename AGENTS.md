@@ -2,7 +2,7 @@
 
 ## Current authorization
 
-The owner requested all independently buildable work after the staging assessment. D-034 covers the staging campaign pilot, sender ownership checks, protected complimentary grants, customer administration, Stripe sandbox integration and independent engine tests. Use synthetic capture until the live delivery and commercial decisions are resolved. [Pilot operation](docs/implementation/CAMPAIGN_PILOT.md)
+The owner requested all independently buildable work after the staging assessment. D-034 covers the staging campaign pilot, sender ownership checks, protected complimentary grants, customer administration, Stripe sandbox integration and independent engine tests. D-037 adds a separate, explicitly approved synthetic provider rehearsal and a real Listmonk integration in isolation. Hosted staging uses a receipt store with no external sending. Preserve old capture approvals; unresolved provider outcomes require lookup, never a speculative resend. [Pilot operation](docs/implementation/CAMPAIGN_PILOT.md)
 
 Under the owner's direction to continue building, D-033 adds an owner audience directory and consent history, durable brand-specific opt-out and an optional aggregate-only assistant capability. Use the existing Flockletter subscriber records and verify populated flows with disposable addresses. [Audience workflow and verification](docs/implementation/AUDIENCE.md)
 

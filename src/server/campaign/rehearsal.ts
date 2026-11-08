@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { normalizedEmail } from '../../shared/subscriber.js';
 import { digest, contentGaps, renderPreview } from '../content.js';
 import type { Sql } from '../db.js';
 import { requireCondition } from '../errors.js';
@@ -10,12 +11,15 @@ import {
   practiceMailbox,
   type Rehearsal,
   type RehearsalAudience,
+  type RehearsalTransport,
+  type RecipientOutcome,
 } from '../../shared/rehearsal.js';
 import { reservePractice, utcPeriod, workspaceAccess } from './access.js';
 import { requireSegment } from '../subscribers/segments.js';
 
-// This transport has no network or external provider. Only reserved test destinations can enter its mailbox.
+// Every rehearsal transport accepts only syntactically valid reserved-domain destinations.
 export function isPracticeAddress(address: string) {
+  if (!normalizedEmail.safeParse(address).success || address !== address.trim()) return false;
   const domain = address.slice(address.lastIndexOf('@') + 1).toLowerCase();
   return domain.endsWith('.test') || ['example.com', 'example.net', 'example.org'].includes(domain);
 }
@@ -28,6 +32,7 @@ type Row = {
   creator_id: string;
   actor_id: string;
   audience: RehearsalAudience;
+  transport: RehearsalTransport;
   segment_id: string | null;
   segment_name: string | null;
   state: Rehearsal['state'];
@@ -46,6 +51,7 @@ type ReportRow = Pick<
   | 'campaign_id'
   | 'version'
   | 'audience'
+  | 'transport'
   | 'segment_id'
   | 'segment_name'
   | 'state'
@@ -53,12 +59,15 @@ type ReportRow = Pick<
   | 'selected'
   | 'excluded'
   | 'reason'
-> & { pending: number; captured: number; skipped: number };
-const reportColumns = `r.id,r.campaign_id,r.version,r.audience,r.segment_id,r.segment_name,r.state,r.due_at,r.selected,r.excluded,r.reason,
-  counts.pending,counts.captured,counts.skipped`;
+> &
+  Pick<Rehearsal, 'pending' | 'captured' | 'skipped' | 'submitting' | 'uncertain' | 'accepted' | 'rejected'>;
+const reportColumns = `r.id,r.campaign_id,r.version,r.audience,r.transport,r.segment_id,r.segment_name,r.state,r.due_at,r.selected,r.excluded,r.reason,
+  counts.pending,counts.captured,counts.skipped,counts.submitting,counts.uncertain,counts.accepted,counts.rejected`;
 const countRecipients = `CROSS JOIN LATERAL (
   SELECT count(*) FILTER(WHERE p.state='pending')::int pending,count(*) FILTER(WHERE p.state='captured')::int captured,
-    count(*) FILTER(WHERE p.state IN('cancelled','excluded'))::int skipped
+    count(*) FILTER(WHERE p.state IN('cancelled','excluded'))::int skipped,
+    count(*) FILTER(WHERE p.state='submitting')::int submitting,count(*) FILTER(WHERE p.state='uncertain')::int uncertain,
+    count(*) FILTER(WHERE p.state='accepted')::int accepted,count(*) FILTER(WHERE p.state='rejected')::int rejected
   FROM rehearsal_recipients p WHERE (p.workspace_id,p.brand_id,p.rehearsal_id)=(r.workspace_id,r.brand_id,r.id)
 ) counts`;
 function reportView(row: ReportRow): Rehearsal {
@@ -67,6 +76,7 @@ function reportView(row: ReportRow): Rehearsal {
     campaignId: row.campaign_id,
     version: row.version,
     audience: row.audience,
+    transport: row.transport,
     ...(row.segment_id && row.segment_name
       ? { segment: { id: row.segment_id, name: row.segment_name } }
       : {}),
@@ -76,6 +86,10 @@ function reportView(row: ReportRow): Rehearsal {
     excluded: row.excluded,
     pending: row.pending,
     captured: row.captured,
+    accepted: row.accepted,
+    rejected: row.rejected,
+    uncertain: row.uncertain,
+    submitting: row.submitting,
     skipped: row.skipped,
     reason: row.reason,
   };
@@ -90,10 +104,18 @@ export async function rehearsalReport(sql: Sql, id: string): Promise<Rehearsal> 
   requireCondition(row, 404, 'rehearsal_missing', 'This rehearsal is unavailable for this brand.');
   return reportView(row);
 }
-async function rehearsalRow(sql: Sql, id: string) {
+export async function rehearsalRow(sql: Sql, id: string) {
   const row = (await sql.query<Row>('SELECT * FROM campaign_rehearsals WHERE id=$1', [id])).rows[0];
   requireCondition(row, 404, 'rehearsal_missing', 'This rehearsal is unavailable for this brand.');
   return row;
+}
+export async function recipientOutcomes(sql: Sql, id: string) {
+  await rehearsalRow(sql, id);
+  const result = await sql.query<RecipientOutcome>(
+    'SELECT id,state,reason,attempts FROM rehearsal_recipients WHERE rehearsal_id=$1 ORDER BY id',
+    [id],
+  );
+  return { recipients: result.rows };
 }
 export async function listRehearsals(sql: Sql, campaignId: string, includeConfirmed: boolean) {
   const result = await sql.query<ReportRow>(
@@ -113,6 +135,7 @@ export async function reviewRehearsal(
   audience: RehearsalAudience,
   due?: string,
   segmentId?: string,
+  transport: RehearsalTransport = 'capture',
 ) {
   requireCondition(
     !segmentId || audience === 'confirmed',
@@ -204,7 +227,7 @@ export async function reviewRehearsal(
   const rendered = renderPreview(draft, images as typeof assets);
   await sql.query(
     `INSERT INTO campaign_rehearsals(workspace_id,brand_id,id,campaign_id,version,content,creator_id,actor_id,
-    audience,access_revision,selected,excluded,due_at,period,render_html,render_text,segment_id,segment_name) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+    audience,access_revision,selected,excluded,due_at,period,render_html,render_text,segment_id,segment_name,transport) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
     [
       actor.workspaceId,
       draft.brandId,
@@ -224,6 +247,7 @@ export async function reviewRehearsal(
       rendered.text,
       segment?.id ?? null,
       segment?.name ?? null,
+      transport,
     ],
   );
   if (audience === 'test') {
@@ -250,7 +274,12 @@ export async function approveRehearsal(sql: Sql, actor: Actor, brand: string, id
     'reviewer_required',
     'Confirm a review prepared with this same account or connection.',
   );
-  requireCondition(row.reason!=='draft_changed',409,'version_conflict','The draft changed. Review its current version.');
+  requireCondition(
+    row.reason !== 'draft_changed',
+    409,
+    'version_conflict',
+    'The draft changed. Review its current version.',
+  );
   requireCondition(
     row.state === 'reviewed' && Date.now() - row.reviewed_at.getTime() <= 30 * 60000,
     409,
@@ -290,45 +319,50 @@ export async function approveRehearsal(sql: Sql, actor: Actor, brand: string, id
   return rehearsalReport(sql, id);
 }
 
-async function finish(
+export async function finish(
   sql: Sql,
   id: string,
   state: 'completed' | 'blocked' | 'cancelled',
   reason: string | null,
 ) {
   await sql.query(
-    "UPDATE rehearsal_recipients SET state='cancelled' WHERE rehearsal_id=$1 AND state='pending'",
-    [id],
+    "UPDATE rehearsal_recipients SET state='cancelled',reason=$2 WHERE rehearsal_id=$1 AND state='pending'",
+    [id, reason],
   );
-  const result = (
-    await sql.query<{ n: number }>(
-      "SELECT count(*)::int n FROM rehearsal_recipients WHERE rehearsal_id=$1 AND state='captured'",
-      [id],
-    )
-  ).rows[0]!;
-  await sql.query(
-    "UPDATE rehearsal_reservations SET settled=true,messages=$2,slots=CASE WHEN $2=0 THEN 0 ELSE slots END WHERE rehearsal_id=$1 AND brand_id::text=current_setting('app.intake_brand_id',true)",
-    [id, result.n],
-  );
+  await settleReservation(sql, id);
   await sql.query('UPDATE campaign_rehearsals SET state=$2,reason=$3,finished_at=now() WHERE id=$1', [
     id,
     state,
     reason,
   ]);
 }
-// Called under the existing workspace lock, in the same transaction as the new campaign revision.
-export async function invalidateStudioReviews(sql:Sql,campaignId:string,version:number) {
-  await sql.query(`WITH blocked AS (
-    UPDATE campaign_rehearsals SET state='blocked',reason='draft_changed',finished_at=now()
-    WHERE campaign_id=$1 AND version<>$2 AND state IN('reviewed','queued') RETURNING id,brand_id
-  ), skipped AS (
-    UPDATE rehearsal_recipients p SET state='cancelled' FROM blocked b
-    WHERE p.rehearsal_id=b.id AND p.brand_id=b.brand_id AND p.state='pending'
-  ), captured AS (
-    SELECT b.id,b.brand_id,count(p.id) FILTER (WHERE p.state='captured')::int AS n FROM blocked b
-    LEFT JOIN rehearsal_recipients p ON p.rehearsal_id=b.id AND p.brand_id=b.brand_id GROUP BY b.id,b.brand_id
-  ) UPDATE rehearsal_reservations r SET settled=true,messages=c.n,slots=CASE WHEN c.n=0 THEN 0 ELSE r.slots END
-    FROM captured c WHERE r.rehearsal_id=c.id AND r.brand_id=c.brand_id`,[campaignId,version]);
+// Unknown acceptances retain their practice allowance until the provider gives a definitive answer.
+export async function settleReservation(sql: Sql, id: string) {
+  await sql.query(
+    `UPDATE rehearsal_reservations r
+    SET settled=(counts.open=0), messages=counts.used+counts.open,
+        slots=CASE WHEN counts.used+counts.open=0 THEN 0 ELSE r.slots END
+    FROM (SELECT count(*) FILTER(WHERE state IN ('captured','accepted'))::int used,
+                 count(*) FILTER(WHERE state IN ('pending','submitting','uncertain'))::int open
+          FROM rehearsal_recipients WHERE rehearsal_id=$1) counts
+    WHERE r.rehearsal_id=$1 AND r.brand_id::text=current_setting('app.intake_brand_id',true)`,
+    [id],
+  );
+}
+// Called under the workspace lock, in the same transaction as the new campaign revision.
+export async function invalidateStudioReviews(
+  sql: Sql,
+  campaignId: string,
+  version: number,
+  providerOnly = false,
+) {
+  const { rows } = await sql.query<{ id: string }>(
+    `SELECT id FROM campaign_rehearsals
+    WHERE campaign_id=$1 AND version<>$2 AND state IN ('reviewed','queued')
+      AND (NOT $3::boolean OR transport='provider_test')`,
+    [campaignId, version, providerOnly],
+  );
+  for (const row of rows) await finish(sql, row.id, 'blocked', 'draft_changed');
 }
 export async function cancelRehearsal(sql: Sql, id: string) {
   const row = await rehearsalRow(sql, id);
@@ -342,23 +376,13 @@ export async function cancelRehearsal(sql: Sql, id: string) {
   return rehearsalReport(sql, id);
 }
 export type CheckOwner = (user: string, workspace: string) => Promise<boolean>;
-export async function processDue(
+export async function submissionBlock(
   sql: Sql,
+  row: Row,
   workspace: string,
   brand: string,
   isOwner: CheckOwner,
-  id?: string,
 ) {
-  // serialize with public opt-outs and owner commands within the same transaction.
-  await sql.query('SELECT enabled FROM subscriber_intake_settings FOR UPDATE');
-  const row = (
-    await sql.query<Row>(
-      `SELECT * FROM campaign_rehearsals WHERE state='queued' AND due_at<=now()
-    AND ($1::uuid IS NULL OR id=$1) ORDER BY due_at,id LIMIT 1 FOR UPDATE`,
-      [id ?? null],
-    )
-  ).rows[0];
-  if (!row) return { processed: false };
   const access = await workspaceAccess(sql);
   const version = (
     await sql.query<{ version: number }>('SELECT version FROM campaigns WHERE id=$1 AND brand_id=$2', [
@@ -381,6 +405,48 @@ export async function processDue(
   else if (version !== row.version) reason = 'draft_changed';
   else if (access.revision !== row.access_revision || (row.audience === 'confirmed' && !access.plan))
     reason = 'access_changed';
+  return reason;
+}
+export async function eligibleAddress(
+  sql: Sql,
+  audience: RehearsalAudience,
+  recipient: { subscriber_id: string | null; email_digest: string | null },
+): Promise<string | null> {
+  if (audience === 'test') return recipient.subscriber_id === null ? practiceMailbox : null;
+  if (!recipient.subscriber_id) return null;
+  const person = (
+    await sql.query<{ email_normalized: string; state: string }>(
+      'SELECT email_normalized,state FROM subscribers WHERE id=$1 FOR UPDATE',
+      [recipient.subscriber_id],
+    )
+  ).rows[0];
+  if (
+    !person ||
+    person.state !== 'confirmed' ||
+    !isPracticeAddress(person.email_normalized) ||
+    digest(person.email_normalized) !== recipient.email_digest
+  )
+    return null;
+  return person.email_normalized;
+}
+export async function processDue(
+  sql: Sql,
+  workspace: string,
+  brand: string,
+  isOwner: CheckOwner,
+  id?: string,
+) {
+  // serialize with public opt-outs and owner commands within the same transaction.
+  await sql.query('SELECT enabled FROM subscriber_intake_settings FOR UPDATE');
+  const row = (
+    await sql.query<Row>(
+      `SELECT * FROM campaign_rehearsals WHERE transport='capture' AND state='queued' AND due_at<=now()
+    AND ($1::uuid IS NULL OR id=$1) ORDER BY due_at,id LIMIT 1 FOR UPDATE`,
+      [id ?? null],
+    )
+  ).rows[0];
+  if (!row) return { processed: false };
+  const reason = await submissionBlock(sql, row, workspace, brand, isOwner);
   if (reason) {
     await finish(sql, row.id, 'blocked', reason);
     return { processed: true, rehearsal: await rehearsalReport(sql, row.id) };
@@ -392,21 +458,7 @@ export async function processDue(
     )
   ).rows;
   for (const recipient of recipients) {
-    let eligible = row.audience === 'test' && !recipient.subscriber_id;
-    if (recipient.subscriber_id && row.audience === 'confirmed') {
-      const person = (
-        await sql.query<{ email_normalized: string; state: string }>(
-          'SELECT email_normalized,state FROM subscribers WHERE id=$1 FOR UPDATE',
-          [recipient.subscriber_id],
-        )
-      ).rows[0];
-      eligible = Boolean(
-        person &&
-        person.state === 'confirmed' &&
-        isPracticeAddress(person.email_normalized) &&
-        digest(person.email_normalized) === recipient.email_digest,
-      );
-    }
+    const eligible = await eligibleAddress(sql, row.audience, recipient);
     await sql.query(
       `UPDATE rehearsal_recipients SET state=$3,captured_at=CASE WHEN $3='captured' THEN now() END
       WHERE rehearsal_id=$1 AND id=$2 AND state='pending'`,
