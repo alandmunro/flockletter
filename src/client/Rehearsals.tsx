@@ -540,7 +540,7 @@ export function WorkspaceAccessPanel({ api }: { api: Api }) {
             {data.usage.reservedMessages} messages reserved.
           </p>
           <p className="help">
-            Practice messages use a separate counter and incur no delivery or billing charges.
+            Practice usage is tracked separately from a paid plan. Local rehearsals stay inside Flockletter. AWS charges its usual delivery rate for mailbox simulator submissions.
           </p>
         </>
       )}

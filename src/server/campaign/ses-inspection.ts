@@ -16,6 +16,7 @@ import type { SesSimulatorCredentials } from './ses-simulator.js';
 export type ProviderChecks = {
   account: boolean | null;
   quota: boolean | null;
+  sendRate: boolean | null;
   productionAccess: boolean | null;
   tenant: boolean | null;
   resources: boolean | null;
@@ -115,10 +116,8 @@ export async function inspectSesRoute(
     rate = quota?.MaxSendRate;
   return {
     account: account ? account.SendingEnabled === true : null,
-    quota:
-      typeof max === 'number' && typeof used === 'number' && typeof rate === 'number'
-        ? (max === -1 || max > used) && rate > 0
-        : null,
+    quota: typeof max === 'number' && typeof used === 'number' ? max === -1 || max > used : null,
+    sendRate: typeof rate === 'number' ? rate > 0 : null,
     productionAccess: account?.ProductionAccessEnabled ?? null,
     tenant: !tenantResult
       ? null

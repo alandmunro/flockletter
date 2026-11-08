@@ -9,6 +9,7 @@ import {
   type SesRuntime,
 } from '../src/server/campaign/ses-runtime.js';
 import { inspectSesRoute } from '../src/server/campaign/ses-inspection.js';
+import { deliveryReadiness } from '../src/server/campaign/delivery-readiness.js';
 import { createSesSimulatorPort } from '../src/server/campaign/ses-simulator.js';
 import { startDeliveryFixture } from './staging-delivery-fixture.js';
 import type { DeliveryReadiness } from '../src/shared/sender.js';
@@ -169,6 +170,19 @@ it('treats unavailable account and tenant reads as unverified without exposing p
     expect(checks).toMatchObject({account:null,tenant:null,resources:null,dkim:null,feedback:null,productionAccess:null});
     expect(JSON.stringify(checks)).not.toContain('sensitive');
   } finally { client.destroy(); }
+});
+
+it('allows a simulator check at an exhausted daily quota but requires a positive rate', async () => {
+  const r=parseSesRoute(route('shop'));
+  const remote={account:true,quota:false,sendRate:true,productionAccess:false,tenant:true,resources:true,sender:true,
+    dkim:true,configuration:true,feedback:true,checkedAt:new Date().toISOString()};
+  const check=()=>deliveryReadiness({domain:'shop.example.com',recordName:null,recordValue:null,status:'ownership_verified',
+    checkedAt:remote.checkedAt,verifiedAt:remote.checkedAt,providerVerified:false},
+    {route:r,inspect:async()=>remote,port:{send:async()=>{throw Error('Readiness must not send');}}},true);
+  expect(await check()).toMatchObject({simulatorConfigured:true,customerSendingEnabled:false,
+    checks:expect.arrayContaining([expect.objectContaining({label:'Daily customer-mail quota',state:'action_needed'})])});
+  remote.sendRate=false;
+  expect((await check()).simulatorConfigured).toBe(false);
 });
 
 it('only forwards the exact issued unsubscribe header pair on simulator messages', async () => {
