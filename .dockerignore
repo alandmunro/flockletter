@@ -14,6 +14,7 @@
 !migrations/**
 !scripts/
 !scripts/apply-migrations.mjs
+!scripts/prepare-listmonk.mjs
 !selfhost/
 !selfhost/runtime.mjs
 !selfhost/drill-data.mjs

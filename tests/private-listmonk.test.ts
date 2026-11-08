@@ -516,6 +516,16 @@ describe('durable private Listmonk delivery', () => {
       (await account.command<{ usage: { reservedMessages: number } }>('workspace.access', {})).usage
         .reservedMessages,
     ).toBe(1);
+    await commands(first, ses).execute(
+      'rehearsal.cancel',
+      { brandId: account.brandId, id: run.id, operationKey: randomUUID() },
+      account.owner,
+    );
+    expect(await report(run.id)).toMatchObject({ state: 'cancelled', uncertain: 1, skipped: 0 });
+    expect(
+      (await account.command<{ usage: { reservedMessages: number } }>('workspace.access', {})).usage
+        .reservedMessages,
+    ).toBe(1);
     const restored = dispatcher(ses);
     await restored.receive(callback(rendered[0]!));
     await makeReconciliationDue(run.id);
@@ -542,7 +552,7 @@ describe('durable private Listmonk delivery', () => {
       undefined,
     );
     await tick(stopped, run.id);
-    expect(await report(run.id)).toMatchObject({ state: 'completed', accepted: 1, uncertain: 0 });
+    expect(await report(run.id)).toMatchObject({ state: 'cancelled', accepted: 1, uncertain: 0 });
     expect((await outcomes(run.id)).recipients).toMatchObject([{ state: 'accepted', attempts: 1 }]);
     expect(requests).toHaveLength(1);
     expect(rendered).toHaveLength(1);
