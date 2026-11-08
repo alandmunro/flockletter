@@ -46,7 +46,7 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
-FL-AT-001/017/036 have pinned package and distribution evidence for the Newsletter Studio editor, dependency notices and bundled art. A received Gmail message preserved both text representations and the original inline image across three placements. Desktop and phone-width WebKit checks cover stacking and image sizing. Outlook client verification remains open. [Editor and redistribution](implementation/STUDIO_LICENSES.md) · [Client results](implementation/VERIFICATION.md#newsletter-studio)
+FL-AT-001/017/036 have pinned package and distribution evidence for the Newsletter Studio editor, dependency notices and bundled art. A received Gmail web message preserved both text representations and the original inline image across three placements. Desktop and phone-width WebKit checks cover stacking and image sizing. Outlook and actual mobile inbox verification remain open. [Editor and redistribution](implementation/STUDIO_LICENSES.md) · [Client results](implementation/VERIFICATION.md#newsletter-studio)
 
 FL-AT-003/017/021/025/028/030/031/034/035 have additional partial coverage for existing Clerk members with brand-specific editor/viewer access, static groups feeding immutable review, signed expired checkout recovery, support drafting and isolated PostgreSQL restores. A verified sandbox end date yields a 90-day preview. Real inbox automation, destructive purge, customer delivery and production recovery have separate acceptance gates. [Workspace workflows](implementation/WORKSPACE_OPERATIONS.md) · [Team verification](implementation/TEAM_ACCESS.md) · [Recovery drill](implementation/SELF_HOST.md)
 
