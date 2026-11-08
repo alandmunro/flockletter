@@ -36,9 +36,9 @@ export async function deliveryReadiness(
   const remote = await scope?.inspect?.();
   add('Provider account', remote?.account, 'Verify sending is enabled in the selected AWS region.');
   add(
-    'Provider quota',
-    remote?.quota,
-    'Verify the account has remaining daily capacity and a positive send rate.',
+    'Provider sending rate',
+    remote?.sendRate,
+    'Verify the regional sending rate permits a simulator submission.',
   );
   add(
     'Tenant sending status',
@@ -59,6 +59,7 @@ export async function deliveryReadiness(
     'Enable delivery, bounce and complaint notifications to the dedicated topic.',
   );
   const simulatorConfigured = checks.every((item) => item.state === 'ready');
+  add('Daily customer-mail quota', remote?.quota, 'Ordinary mail needs daily capacity. AWS excludes simulator messages from that quota.');
   add(
     'AWS production access',
     remote?.productionAccess,

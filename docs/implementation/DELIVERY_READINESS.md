@@ -12,6 +12,8 @@ The report checks current DNS ownership, worker configuration and simulator acce
 
 ## Rehearse one-click unsubscribe
 
+The AWS simulator uses the account’s sending rate and incurs normal SES delivery charges. Its messages do not consume the 24-hour customer-mail quota. The report displays that quota as a separate customer-pilot check. [AWS mailbox simulator](https://docs.aws.amazon.com/ses/latest/dg/send-an-email-from-console.html)
+
 Configure the brand’s HTTPS unsubscribe binding and dedicated signer as described in the [unsubscribe guide](MARKETING_UNSUBSCRIBE.md). In **Campaigns**, save the draft, choose confirmed test contacts and a provider rehearsal, then select **Include a personal one-click unsubscribe link**. Review and approve that version. The links are issued in the committed review, and the report identifies the selected option without displaying a recipient capability.
 
 Immediately before provider submission the worker checks consent again and adds the recipient’s saved link to the HTML, plain text and both unsubscribe headers. If the signer or binding changed, prepare a new review. Earlier reviews retain their original message. The Listmonk renderer receives the approved content before the private link is added. Original image bytes follow the approved version. The staging SES port permits only AWS-owned simulator recipients and the expected HTTPS unsubscribe header pair.

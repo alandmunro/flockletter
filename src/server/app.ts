@@ -90,7 +90,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     const actor = await auth!.authenticate(req);
     if (!req.is('application/json')) throw new AppError(415, 'json_required', 'Send application/json.');
     const name = String(req.params.name);
-    if (!isCommand(name)) throw new AppError(404, 'unknown_command', 'This command is unavailable. Sending and billing are not enabled.');
+    if (!isCommand(name)) throw new AppError(404, 'unknown_command', 'This command is unavailable. Check the command name and your workspace access.');
     authorize(actor, name);
     if (name === 'asset.uploadBatch') {
       if (activeUploads >= 2) throw new AppError(429, 'upload_busy', 'Two image batches are already being processed. Retry this batch shortly with the same keys.');
