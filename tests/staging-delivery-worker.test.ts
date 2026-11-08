@@ -175,6 +175,24 @@ describe('staging provider delivery through the worker, HTTP and MCP', () => {
     expect((await usage()).usage).toMatchObject({ campaigns: 1, messages: 1, reservedMessages: 0 });
   });
 
+  it('reports a missing worker binding at review without disabling ordinary captures', async () => {
+    account.removeWorkerBinding();
+    const review = {
+      operationKey: randomUUID(),
+      campaignId: draft.id,
+      brandId: account.brandId,
+      expectedVersion: draft.version,
+      audience: 'test',
+    };
+    const response = await account.post('rehearsal.review', { ...review, transport: 'provider_test' });
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(await response.json())).toContain('worker_not_configured');
+    expect(await account.command<Rehearsal>('rehearsal.review', review)).toMatchObject({
+      state: 'reviewed',
+      transport: 'capture',
+    });
+  });
+
   it('admits only a single submission when two workers wake for the same recipient', async () => {
     const queued = await approve();
     let entered!: () => void, release!: () => void;

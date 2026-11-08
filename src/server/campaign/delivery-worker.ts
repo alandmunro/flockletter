@@ -84,8 +84,8 @@ export class DeliveryWorker {
             ? await submissionBlock(sql, row, workspace, brand, this.isOwner)
             : (row.reason ?? 'cancelled_by_owner');
         const reserved = await sql.query(
-          "SELECT 1 FROM rehearsal_reservations WHERE rehearsal_id=$1 AND NOT settled AND (slots=1 OR $2::text='test') AND messages>=1 FOR UPDATE",
-          [row.id, row.audience],
+          "SELECT 1 FROM rehearsal_reservations WHERE rehearsal_id=$1 AND brand_id=$3 AND NOT settled AND (slots=1 OR $2::text='test') AND messages>=1 FOR UPDATE",
+          [row.id, row.audience, brand],
         );
         const blocked = authority ?? (reserved.rowCount ? null : 'reservation_unavailable');
         if (blocked) {

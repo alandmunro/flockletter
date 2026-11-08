@@ -72,7 +72,16 @@ export async function startDeliveryFixture() {
       LOCAL_TEST_IDENTITY: 'true',
       DATABASE_URL: fixture.url,
     });
-    const service = new CommandService(db, undefined, identity.isOwner);
+    const activeBindings = new Set<string>();
+    const service = new CommandService(
+      db,
+      undefined,
+      identity.isOwner,
+      undefined,
+      undefined,
+      undefined,
+      (w, b) => activeBindings.has(w + '/' + b),
+    );
     server.on('request', createApp(config, service, new Authenticator(db, identity)));
 
     async function workspace() {
@@ -139,8 +148,10 @@ export async function startDeliveryFixture() {
         if (reply.isError) throw Error(name + ' failed: ' + content[0]?.text);
         return JSON.parse(content[0]!.text) as T;
       }
+      activeBindings.add(workspaceId + '/' + brandId);
       return {
         workspaceId,
+        removeWorkerBinding: () => activeBindings.delete(workspaceId + '/' + brandId),
         brandId,
         post,
         command,
