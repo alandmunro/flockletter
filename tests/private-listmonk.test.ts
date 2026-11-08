@@ -244,6 +244,32 @@ describe('durable private Listmonk delivery', () => {
     expect(rendered).toHaveLength(2);
   });
 
+  it('bounds retries of a lost private render under its original operation and keeps a late callback from reviving the exhausted run', async () => {
+    const first = dispatcher(),
+      run = await approve(commands(first), 'listmonk_test');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await tick(dispatcher(), run.id);
+      expect(rendered).toHaveLength(attempt);
+      const original = rendered[0]!,
+        latest = rendered[attempt - 1]!;
+      expect(latest.reference).toBe(original.reference);
+      expect(latest.message.operationKey).toBe(original.message.operationKey);
+      expect(latest.message.images[0]!.bytes).toEqual(photo);
+      expect(await countReceipts(run.id)).toBe(0);
+      await makeReconciliationDue(run.id);
+    }
+    await tick(dispatcher(), run.id);
+    expect(await report(run.id)).toMatchObject({ state: 'completed', rejected: 1, accepted: 0 });
+    expect((await outcomes(run.id)).recipients).toMatchObject([
+      { state: 'rejected', reason: 'engine_render_failed', attempts: 0 },
+    ]);
+    await dispatcher().receive(callback(rendered[0]!));
+    await tick(dispatcher(), run.id);
+    expect(rendered).toHaveLength(3);
+    expect(await countReceipts(run.id)).toBe(0);
+    expect(await report(run.id)).toMatchObject({ state: 'completed', rejected: 1, accepted: 0 });
+  });
+
   it('retains an authenticated callback that arrived before the engine response was lost', async () => {
     let queued = false;
     const primary = new PrivateListmonk(

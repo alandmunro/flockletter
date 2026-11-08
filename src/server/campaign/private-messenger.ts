@@ -1,5 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
+import { constants } from 'node:fs';
+import { access } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import express, { type ErrorRequestHandler } from 'express';
 import { limits } from '../../shared/contracts.js';
@@ -76,6 +79,8 @@ export async function startPrivateMessenger(
   const scope = captureBinding(env);
   if (env.FLOCKLETTER_PRIVATE_ENGINE !== 'embedded' || env.APP_ENV !== 'staging' || !scope)
     throw Error('Configure one explicit staging workspace and brand for the private engine.');
+  // Verify that this revision built the optional binary before advertising the method to owners.
+  await access(resolve('dist/private/listmonk'), constants.X_OK);
   const { EmbeddedListmonk } = await import('./embedded-listmonk.js');
   const secret = randomBytes(32).toString('hex');
   const server = createServer(privateMessenger(secret, (body) => dispatcher.receive(body)));
