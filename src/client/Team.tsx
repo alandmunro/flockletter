@@ -3,6 +3,7 @@ import type { Brand } from '../shared/contracts.js';
 import type { DirectoryMember, TeamPage, TeamRole } from '../shared/team.js';
 import { operationKey, type Api } from './api.js';
 import { accountSuffix, brandLabel, TeamRoster } from './TeamRoster.js';
+import { PendingInvitations } from './PendingInvitations.js';
 import './team.css';
 
 type GrantCommand = 'team.grant' | 'team.revoke';
@@ -64,6 +65,7 @@ export function Team({ api, brands }: { api: Api; brands: Brand[] }) {
         navigate={navigate}
         change={change}
       />
+      <PendingInvitations api={api} />
     </>
   );
 }

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { verifyPracticeImport } from './check-practice-import.js';
+import { verifyWorkspaceActivity } from './check-workspace-activity.js';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir } from 'node:fs/promises';
@@ -8,6 +10,7 @@ import { chromium, type Browser, type Page } from 'playwright-core';
 import { startDatabase } from './database-fixture.js';
 import { verifyCompanies } from './check-companies.js';
 import { verifyPublicPlans } from './check-public-plans.js';
+import { verifyPlanComparison } from './check-plan-comparison.js';
 import { verifySegments } from './check-segments-browser.js';
 import { verifyAuthoring } from './check-authoring-browser.js';
 import { createApp } from '../src/server/app.js';
@@ -263,6 +266,14 @@ async function verify(page: Page, origin: string) {
   assert.match(await grant.innerText(), /audience:summary/);
   await grant.getByRole('button', { name: 'Revoke', exact: true }).click();
   await grant.getByText(/Revoked/).waitFor();
+  await button('Workspace').click();
+  const sender = page.locator('section').filter({has: page.getByRole('heading',{name:'Sending domain for '+primary,exact:true})}).last();
+  await sender.getByRole('button',{name:'Check delivery setup'}).click();
+  await sender.getByRole('status').filter({hasText:'Customer delivery is disabled'}).waitFor();
+  const provider = sender.getByRole('listitem').filter({hasText:'Provider route'});
+  assert.match(await provider.innerText(),/Action needed/);
+  const dkim = sender.getByRole('listitem').filter({hasText:'DKIM signing'});
+  assert.match(await dkim.innerText(),/Unverified/);
   assert.deepEqual(failures, []);
 }
 const fixture = await startDatabase();
@@ -270,15 +281,18 @@ const db = new Database(fixture.url);
 let browser: Browser | undefined;
 try {
   await db.verifyBoundary();
-  const service = new CommandService(db,undefined,localIdentity().isOwner);
+  const service = new CommandService(db,undefined,localIdentity().isOwner,undefined,undefined,undefined,undefined,undefined,undefined,'test');
   await seed(db, service);
   browser = await chromium.launch({ channel: process.env.FLOCKLETTER_BROWSER_CHANNEL ?? 'chromium' });
   const journeys: ((page:Page,origin:string)=>Promise<void>)[] = [
     verify,
     (page,origin)=>verifyPublicPlans(page,origin,photo),
+    verifyPlanComparison,
     (page,origin)=>verifyAuthoring(page,origin,photo),
     (page,origin)=>verifySegments(page,origin,fixture.adminUrl,actor.workspaceId),
     (page,origin)=>verifyCompanies(page,origin,fixture.adminUrl,actor.workspaceId),
+    verifyPracticeImport,
+    (page,origin)=>verifyWorkspaceActivity(page,origin,db,actor.workspaceId),
   ];
   // Each independent journey gets a fresh browser session and server-side rate-limit window.
   for (const journey of journeys) {

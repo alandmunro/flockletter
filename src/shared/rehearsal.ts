@@ -29,6 +29,7 @@ export type Usage = {
   reservedMessages: number;
 };
 export type Rehearsal = {
+  includesUnsubscribe?: true;
   id: string;
   campaignId: string;
   version: number;

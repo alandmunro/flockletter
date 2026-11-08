@@ -1,4 +1,5 @@
-import { deliveryBlock, finishIfDone, reviewedEnvelope } from './reviewed-delivery.js';
+import { deliveryBlock, finalRecipientMessage, finishIfDone, reviewedEnvelope } from './reviewed-delivery.js';
+import type { MarketingLinks } from '../subscribers/marketing-links.js';
 import { PrivateListmonk } from './private-listmonk.js';
 import type { Database, Sql } from '../db.js';
 import type { RecipientOutcome } from '../../shared/rehearsal.js';
@@ -12,7 +13,7 @@ import {
   saveProviderReceipt,
 } from './feedback.js';
 import { SesSimulatorProvider } from './ses-simulator.js';
-import { sesScope, type SesRuntime } from './ses-runtime.js';
+import { sesScope, type SesConfiguration } from './ses-runtime.js';
 
 type Recipient = RecipientOutcome & { subscriber_id: string | null; email_digest: string | null };
 type Work = { id: string; rehearsal: string; attempts: number; submit: boolean };
@@ -25,8 +26,9 @@ export class DeliveryWorker {
     private db: Database,
     private isOwner: CheckOwner,
     private provider?: DeliveryProvider,
-    private readonly ses?: SesRuntime,
+    private readonly ses?: SesConfiguration,
     private readonly listmonk?: PrivateListmonk,
+    private readonly marketing?: MarketingLinks,
   ) {}
 
   private scoped<T>(workspace: string, brand: string, run: (sql: Sql) => Promise<T>) {
@@ -63,7 +65,7 @@ export class DeliveryWorker {
       // Previously reviewed jobs retain a reconciliation path when the renderer is switched off.
       const handler = this.listmonk?.owns(workspace, brand)
         ? this.listmonk
-        : new PrivateListmonk(this.db, this.isOwner, { workspace, brand }, undefined, this.ses);
+        : new PrivateListmonk(this.db, this.isOwner, { workspace, brand }, undefined, this.ses, this.marketing);
       return handler.tick(workspace, brand, rehearsalId);
     }
     await this.scoped(workspace, brand, async (sql) => {
@@ -164,8 +166,14 @@ export class DeliveryWorker {
           await finish(sql, row.id, 'blocked', 'image_unavailable');
           return;
         }
+        const final = await finalRecipientMessage(sql,row,message,person.subscriber_id,this.marketing);
+        if (!final) {
+          await setRecipient(sql, work, 'cancelled', 'unsubscribe_unavailable', true);
+          await finish(sql,row.id,'blocked','unsubscribe_unavailable');
+          return;
+        }
         try {
-          outcome = await provider.submit(message);
+          outcome = await provider.submit(final);
         } catch {
           outcome = 'unknown';
         }

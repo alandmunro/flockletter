@@ -2,13 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { AppError } from '../errors.js';
 import { isListmonkMethod, type ListmonkMethod } from '../../shared/rehearsal.js';
-import { deliveryBlock, finishIfDone, reviewedEnvelope } from './reviewed-delivery.js';
+import { deliveryBlock, finalRecipientMessage, finishIfDone, reviewedEnvelope } from './reviewed-delivery.js';
+import type { MarketingLinks } from '../subscribers/marketing-links.js';
 import { eligibleAddress, finish, rehearsalRow, type CheckOwner } from './rehearsal.js';
 import type { DeliveryEnvelope } from './delivery-provider.js';
 import { listmonkReference, reviewedListmonkMessage } from './listmonk-callback.js';
 import { localFeedbackKind, recordCampaignFeedback, saveProviderReceipt } from './feedback.js';
 import { SesSimulatorProvider, simulatorDestination } from './ses-simulator.js';
-import { sesScope, type SesRuntime } from './ses-runtime.js';
+import { sesScope, type SesConfiguration } from './ses-runtime.js';
 
 export interface PrivateEngine {
   render(message: DeliveryEnvelope, reference: string): Promise<void>;
@@ -57,7 +58,8 @@ export class PrivateListmonk {
     private checkOwner: CheckOwner,
     private scope: EngineScope,
     private engine: PrivateEngine | undefined,
-    private ses?: SesRuntime,
+    private ses?: SesConfiguration,
+    private marketing?: MarketingLinks,
   ) {}
   owns(workspace: string, brand: string) {
     return workspace === this.scope.workspace && brand === this.scope.brand;
@@ -230,8 +232,14 @@ export class PrivateListmonk {
     ).rows[0];
     if (!p) return;
     if (await this.hasReceipt(sql, row, p.id)) return this.settle(sql, p, 'accepted', null);
-    const message = await this.eligibleMessage(sql, row, p, p.reviewed_address);
-    if (!message) return;
+    const rendered = await this.eligibleMessage(sql, row, p, p.reviewed_address);
+    if (!rendered) return;
+    const message = await finalRecipientMessage(sql,row,rendered,p.subscriber_id,this.marketing);
+    if (!message) {
+      await this.settle(sql,p,'cancelled','unsubscribe_unavailable',true);
+      await finish(sql,row.id,'blocked','unsubscribe_unavailable');
+      return;
+    }
     const { workspace, brand } = this.scope;
     const binding = row.provider_binding!;
     if (row.transport === 'listmonk_test') {

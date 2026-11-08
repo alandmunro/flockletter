@@ -10,6 +10,7 @@ export type DeliveryEnvelope = {
   subject: string;
   html: string;
   text: string;
+  unsubscribe?: { url: string };
   images: { name: string; mime: string; sha256: string; bytes: Buffer }[];
 };
 // not_submitted is authoritative proof that this attempt cannot have been accepted.
@@ -44,6 +45,7 @@ export class StagingReceiptProvider implements DeliveryProvider {
           message.html,
           message.text,
           message.images.map(({ name, mime, sha256 }) => [name, mime, sha256]),
+          ...(message.unsubscribe ? [message.unsubscribe.url] : []),
         ]),
       )
       .digest('hex');

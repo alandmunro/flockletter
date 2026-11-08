@@ -23,6 +23,7 @@ const reasonText: Record<string, string> = {
     'The approved Amazon SES simulator configuration is no longer available for this brand.',
   engine_unavailable: 'The private Listmonk test is unavailable for this brand.',
   engine_render_failed: 'Listmonk could not prepare the reviewed message.',
+  unsubscribe_unavailable: 'The reviewed unsubscribe setup changed. Check the brand and review again.',
   cancelled_by_owner: 'Cancelled by a workspace owner or authorized connection.',
 };
 type Message = { subject: string; text: string; html: string; mailbox: string };
@@ -65,9 +66,10 @@ const methodText: Record<
     audienceGuide: 'ses',
   },
 };
-type AvailableMethods = { methods: RehearsalTransport[] };
+type AvailableMethods = { methods: RehearsalTransport[]; unsubscribeAvailable?: true };
 export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
   const [audience, setAudience] = useState<RehearsalAudience>('test');
+  const [unsubscribeBrand,setUnsubscribeBrand] = useState('');
   const [choice, setChoice] = useState<{ brandId: string; method: RehearsalTransport }>({
     brandId: draft.brandId,
     method: 'capture',
@@ -307,6 +309,9 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
               <input type="checkbox" checked={scheduled} onChange={(e) => setScheduled(e.target.checked)} />{' '}
               Schedule for later
             </label>
+            {audience === 'confirmed' && transport !== 'capture' && currentDirectory?.unsubscribeAvailable &&
+              <label><input type="checkbox" checked={unsubscribeBrand === draft.brandId}
+                onChange={e => setUnsubscribeBrand(e.target.checked ? draft.brandId : '')} /> Include a personal one-click unsubscribe link</label>}
             {scheduled && (
               <>
                 <label htmlFor="capture-time">Scheduled time (local)</label>
@@ -354,6 +359,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
                 audience,
                 ...(transport === 'capture' ? {} : { transport }),
                 ...(audience === 'confirmed' && selectedGroup ? { segmentId: selectedGroup } : {}),
+                ...(audience === 'confirmed' && transport !== 'capture' && currentDirectory?.unsubscribeAvailable && unsubscribeBrand === draft.brandId ? { includeUnsubscribe: true } : {}),
                 ...(at ? { dueAt: new Date(at).toISOString() } : {}),
               });
             })
@@ -398,6 +404,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
               </p>
             )}
             {item.reason && <p>{reasonText[item.reason] ?? item.reason}</p>}
+            {item.includesUnsubscribe && <p>Each eligible test recipient gets a personal link and one-click unsubscribe headers.</p>}
             {methodText[method].audienceGuide === 'ses' && item.state === 'reviewed' && (
               <p className="help">{methodText[method].help}</p>
             )}

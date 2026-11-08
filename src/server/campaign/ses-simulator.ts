@@ -48,6 +48,7 @@ function simulatorRequest(
   destination: string,
   key: string,
   simple: Message,
+  unsubscribe?: string,
 ): SendEmailCommandInput {
   return {
     TenantName: binding.tenant,
@@ -62,13 +63,28 @@ function simulatorRequest(
       { Name: 'fl_operation', Value: key },
       { Name: 'fl_tenant', Value: binding.tenant },
     ],
-    Content: { Simple: { Subject: simple.Subject, Body: simple.Body, Attachments: simple.Attachments } },
+    Content: {
+      Simple: {
+        Subject: simple.Subject,
+        Body: simple.Body,
+        Attachments: simple.Attachments,
+        ...(unsubscribe
+          ? {
+              Headers: [
+                { Name: 'List-Unsubscribe', Value: '<' + unsubscribe + '>' },
+                { Name: 'List-Unsubscribe-Post', Value: 'List-Unsubscribe=One-Click' },
+              ],
+            }
+          : {}),
+      },
+    },
   };
 }
 
 export function createSesSimulatorPort(
   binding: SesSimulationBinding,
   credentials: SesSimulatorCredentials,
+  unsubscribeOrigin?: string,
 ): SesSimulatorPort & { destroy(): void } {
   if (!credentials?.accessKeyId?.trim() || !credentials.secretAccessKey?.trim()) {
     throw new Error('Dedicated Flockletter simulator credentials are required.');
@@ -98,7 +114,28 @@ export function createSesSimulatorPort(
       }
       // Rebuild the final request from approved fields so the port cannot forward mail
       // or feedback to additional destinations through raw headers or optional API fields.
-      const request = simulatorRequest(fixed, to[0]!, key, simple);
+      // Reconstruct these two platform-owned headers. Never pass arbitrary engine or draft headers through.
+      const list =
+        simple.Headers?.filter((h) =>
+          ['list-unsubscribe', 'list-unsubscribe-post'].includes(h.Name?.toLowerCase() ?? ''),
+        ) ?? [];
+      let unsubscribe: string | undefined;
+      if (list.length) {
+        const value = list.find((h) => h.Name === 'List-Unsubscribe')?.Value;
+        const candidate = value?.startsWith('<') && value.endsWith('>') ? value.slice(1, -1) : '';
+        const base = unsubscribeOrigin && unsubscribeOrigin + '/mail/unsubscribe?t=';
+        if (
+          list.length !== 2 ||
+          !base ||
+          !base.startsWith('https://') ||
+          !candidate.startsWith(base) ||
+          !/^v1\.[\w-]{22}\.[a-f\d-]{36}\.[\w-]{43}$/.test(candidate.slice(base.length)) ||
+          !list.some((h) => h.Name === 'List-Unsubscribe-Post' && h.Value === 'List-Unsubscribe=One-Click')
+        )
+          throw Error('Invalid simulator unsubscribe headers.');
+        unsubscribe = candidate;
+      }
+      const request = simulatorRequest(fixed, to[0]!, key, simple, unsubscribe);
       return client.send(new SendEmailCommand(request), { abortSignal: AbortSignal.timeout(5000) });
     },
     destroy: () => client.destroy(),
@@ -156,14 +193,20 @@ export class SesSimulatorProvider implements DeliveryProvider {
       return 'rejected';
     const attachments = inlineOriginals(message);
     if (!attachments) return 'rejected';
-    const input = simulatorRequest(this.binding, destination, message.operationKey, {
-      Subject: { Charset: 'UTF-8', Data: message.subject },
-      Body: {
-        Html: { Charset: 'UTF-8', Data: message.html },
-        Text: { Charset: 'UTF-8', Data: message.text },
+    const input = simulatorRequest(
+      this.binding,
+      destination,
+      message.operationKey,
+      {
+        Subject: { Charset: 'UTF-8', Data: message.subject },
+        Body: {
+          Html: { Charset: 'UTF-8', Data: message.html },
+          Text: { Charset: 'UTF-8', Data: message.text },
+        },
+        Attachments: attachments,
       },
-      Attachments: attachments,
-    });
+      message.unsubscribe?.url,
+    );
     try {
       if (await this.receipts.lookup(message.operationKey)) return 'accepted';
       const { MessageId } = await this.port.send(input);

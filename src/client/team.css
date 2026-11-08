@@ -59,6 +59,12 @@
 .team-pager {
   margin-top: 1rem;
 }
+.team-invitations { padding: 0; list-style: none; }
+.team-invitations li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1rem; padding: .6rem 0; border-bottom: 1px solid var(--border); }
+.team-invitations span, .team-invite { overflow-wrap: anywhere; }
+.team-invitations small { color: var(--muted); }
+.team-invite { margin-top: 1rem; }
+.team-invite select { max-width: 100%; }
 .team-back {
   margin: 0.5rem;
 }

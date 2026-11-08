@@ -52,7 +52,7 @@ The `Self-host restore drill` GitHub workflow runs the same command on Ubuntu 24
 4. The source records a later opt-out. The original restore fails the consent comparison. The script then restores a fresh authoritative snapshot and verifies the later opt-out. A stale recipient list cannot pass the check.
 5. The runner removes its own containers, volumes, temporary archive and role-secret directory. Each run uses a newly named project.
 
-The drill covers logical recovery using synthetic records while the authoritative source is available. Production recovery after loss of that source still needs an independently retained suppression/deletion journal, recovery targets and a restore plan for other attached services.
+This Docker exercise compares logical recovery with the available source. A [second disposable drill](RETENTION_DRILL.md) restores with the source offline using a separately sealed checkpoint of workspace erasures and later suppressions. Production recovery needs independently protected checkpoint storage, recovery targets and a restore plan for attached services.
 
 ## Verification
 

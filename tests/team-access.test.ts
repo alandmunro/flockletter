@@ -11,7 +11,7 @@ import { createApp } from '../src/server/app.js';
 import { loadConfig } from '../src/server/config.js';
 import type { ClerkTeam } from '../src/server/team.js';
 import { emptyContent, type Campaign, type CommandName, type Workspace } from '../src/shared/contracts.js';
-import type { TeamPage } from '../src/shared/team.js';
+import type { TeamPage, TeamInvitationPage } from '../src/shared/team.js';
 let fix: Awaited<ReturnType<typeof startDatabase>>,
   db: Database,
   admin: Database,
@@ -24,10 +24,11 @@ let owner: Actor,
   other: string,
   roster: Map<string, 'owner' | 'member'>,
   unavailable = false;
+let invitationFailure = false, pendingTotal = 0, invitationQueries: number[] = [];
 const id = randomUUID,
   target = 'user_reader',
   boss = 'user_manager';
-async function plan(p: 'growth' | 'starter' | null) {
+async function plan(p: 'growth' | 'starter' | 'pro' | null) {
   await recordAccess(admin, org, {
     workspaceId: org,
     operator: 'tester',
@@ -64,6 +65,9 @@ beforeEach(async () => {
     [target, 'member'],
   ]);
   unavailable = false;
+  invitationFailure = false;
+  pendingTotal = 0;
+  invitationQueries = [];
   const clerk: ClerkTeam = {
     async membership(user, w) {
       if (unavailable) throw Error('unavailable');
@@ -78,6 +82,16 @@ beforeEach(async () => {
           .slice(offset, offset + limit)
           .map(([userId, membership]) => ({ userId, name: userId, membership })),
       };
+    },
+    async invitations(w, offset, limit) {
+      expect(w).toBe(org);
+      invitationQueries.push(offset);
+      if (invitationFailure) throw Error('private provider error');
+      const rows = Array.from({length:27}, (_, i) => ({
+        id: 'invite_' + i, email: 'person' + i + '@example.test', expiresAt: '2028-11-01T00:00:00.000Z',
+        url: 'sensitive acceptance URL', privateMetadata: { sensitive: true },
+      }));
+      return { total:pendingTotal, invitations: rows.slice(0, Math.max(0,pendingTotal)).slice(offset, offset + limit) };
     },
   };
   const identity: IdentityProvider = {
@@ -119,6 +133,44 @@ afterEach(async () => {
   await new Promise<void>((done) => server.close(() => done()));
 });
 describe('Clerk-owned teams with explicit brand grants', () => {
+  it('pages pending invitations, permits only the verified owner, and counts held seats for finite and unlimited plans', async () => {
+    await plan('growth');
+    const invitations = async (offset: number) => {
+      const response = await http(boss, 'team.invitations', {offset});
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      return (await response.json()).result as TeamInvitationPage;
+    };
+    expect(await invitations(0)).toMatchObject({ invitations: [], members: 2, total: 0, available: 1, seats: 3 });
+    pendingTotal = 27;
+    const first = await invitations(0), last = await invitations(25);
+    expect(first.invitations).toHaveLength(25);
+    expect(last).toMatchObject({ members: 2, total: 27, limit: 25, offset: 25, available: 0, seats: 3 });
+    expect(last.invitations.map((x) => x.id)).toEqual(['invite_25','invite_26']);
+    expect(Object.keys(last.invitations[0]!).sort()).toEqual(['email','expiresAt','id']);
+    await plan('pro');
+    expect(await invitations(50)).toMatchObject({ invitations: [], total: 27, available: null, seats: null });
+    const before = invitationQueries.length;
+    await expect(s.execute('team.invitations', {}, {...owner, kind:'connection'})).rejects.toMatchObject({ code:'owner_required' });
+    await grant('viewer');
+    expect((await http(target, 'team.invitations', {})).status).toBe(403);
+    await expect(s.execute('team.invitations', {}, {...owner, workspaceId:'org_other'})).rejects.toMatchObject({ code:'owner_required' });
+    roster.delete(boss);
+    await expect(s.execute('team.invitations', {}, owner)).rejects.toMatchObject({ code: 'owner_required' });
+    expect(invitationQueries).toHaveLength(before);
+  });
+  it('reports unknown seat capacity on a missing Clerk invitation count or provider outage and retains the member directory', async () => {
+    pendingTotal = Number.NaN;
+    const unknown = await http(boss,'team.invitations',{});
+    expect(unknown.status).toBe(503);
+    expect((await unknown.json()).error.code).toBe('invitation_directory_unavailable');
+    invitationFailure = true;
+    const outage = await http(boss, 'team.invitations', {});
+    expect(outage.status).toBe(503);
+    expect(await outage.text()).not.toContain('private provider error');
+    expect((await http(boss, 'team.list', {})).status).toBe(200);
+    expect((await http(boss, 'team.invitations', {workspaceId:'org_other'})).status).toBe(422);
+  });
   it('lists verified membership and cap but never gives a pending, absent, or unassigned member implicit access', async () => {
     const page = (await (await http(boss, 'team.list', {})).json()) as { result: TeamPage };
     expect(page.result).toMatchObject({ total: 2, seats: 1, overLimit: true });

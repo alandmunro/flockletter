@@ -1,6 +1,8 @@
+import {loadInvitationBinding,type InvitationBinding} from './team-invitation-provider.js';
 export type Config = {
   environment: 'local' | 'test' | 'staging'; origin: string; browserOrigins: string[]; host: string; port: number;
   localIdentity: boolean; databaseUrl?: string; clerkSecretKey?: string; clerkPublishableKey?: string;
+  invitationBinding?: InvitationBinding;
 };
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const environment = env.APP_ENV ?? 'local';
@@ -25,7 +27,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
   }
   const browserOrigins = [...new Set([origin, ...aliases])];
-  return { environment: environment as Config['environment'], origin, browserOrigins, host, port, localIdentity, databaseUrl: env.DATABASE_URL, clerkSecretKey: env.CLERK_SECRET_KEY, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY };
+  return { environment: environment as Config['environment'], origin, browserOrigins, host, port, localIdentity, databaseUrl: env.DATABASE_URL, clerkSecretKey: env.CLERK_SECRET_KEY, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY, invitationBinding:loadInvitationBinding(env) };
 }
 export const configurationGaps = (c: Config) => [
   ...(!c.databaseUrl ? ['database_not_configured'] : []),

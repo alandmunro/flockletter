@@ -22,3 +22,9 @@ export type SenderStatus = {
   verifiedAt: string | null;
   providerVerified: false;
 };
+
+export type DeliveryCheck = { label: string; state: 'ready'|'action_needed'|'unverified'; detail: string };
+export type DeliveryReadiness = {
+  checks: DeliveryCheck[]; simulatorConfigured: boolean; providerCheckedAt: string | null;
+  customerSendingEnabled: false;
+};

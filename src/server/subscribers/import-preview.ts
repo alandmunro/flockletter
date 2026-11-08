@@ -10,7 +10,9 @@ import { normalizedEmail } from '../../shared/subscriber.js';
 import type { Sql } from '../db.js';
 import { AppError, requireCondition } from '../errors.js';
 
-export async function previewImport(sql: Sql, input: ImportPreviewInput): Promise<ImportPreviewResult> {
+type CsvRow = { row: number; address: string } | { row: number; issue: ImportIssue };
+
+export function importRows(input: ImportPreviewInput): CsvRow[] {
   const bytes = Buffer.from(input.csvBase64, 'base64');
   requireCondition(
     bytes.length <= importLimits.bytes,
@@ -38,46 +40,41 @@ export async function previewImport(sql: Sql, input: ImportPreviewInput): Promis
     'invalid_email_column',
     'Choose an email column from a CSV with a named header row.',
   );
-  const result: ImportPreviewResult = {
-    rows: csv.rows.length,
-    invalid: 0,
-    duplicates: 0,
-    newContacts: 0,
-    confirmed: 0,
-    pending: 0,
-    suppressed: 0,
-    examples: [],
-  };
   const unique = new Set<string>();
-  const example = (row: number, issue: ImportIssue) => {
-    if (result.examples.length < importLimits.issueExamples) result.examples.push({ row, issue });
-  };
-  for (const [index, cells] of csv.rows.entries()) {
+  return csv.rows.map((cells, index): CsvRow => {
     const row = index + 2; // Spreadsheet row number, with the header at row one.
-    if (cells.length !== csv.headers.length) {
-      result.invalid++;
-      example(row, 'column_count');
-      continue;
-    }
+    if (cells.length !== csv.headers.length) return { row, issue: 'column_count' };
     const address = normalizedEmail.safeParse(cells[input.emailColumn]);
-    if (!address.success) {
-      result.invalid++;
-      example(row, 'invalid_email');
-    } else if (unique.has(address.data)) {
-      result.duplicates++;
-      example(row, 'duplicate');
-    } else {
-      unique.add(address.data);
+    if (!address.success) return { row, issue: 'invalid_email' };
+    if (unique.has(address.data)) return { row, issue: 'duplicate' };
+    unique.add(address.data);
+    return { row, address: address.data };
+  });
+}
+
+export async function previewImport(sql: Sql, input: ImportPreviewInput): Promise<ImportPreviewResult> {
+  const parsed = importRows(input);
+  const result: ImportPreviewResult = {
+    rows: parsed.length, invalid: 0, duplicates: 0, newContacts: 0,
+    confirmed: 0, pending: 0, suppressed: 0, examples: [],
+  };
+  const addresses: string[] = [];
+  for (const item of parsed) {
+    if ('address' in item) addresses.push(item.address);
+    else {
+      if (item.issue === 'duplicate') result.duplicates++;
+      else result.invalid++;
+      if (result.examples.length < importLimits.issueExamples) result.examples.push(item);
     }
   }
-  result.newContacts = unique.size;
-  if (unique.size === 0) return result;
+  result.newContacts = addresses.length;
+  if (!addresses.length) return result;
   // Called only inside the authorized workspace and brand's RLS transaction.
   const { rows } = await sql.query<{ state: SubscriberState; count: number }>(
     `
     SELECT state, count(*)::int AS count FROM subscribers
     WHERE brand_id=$1 AND email_normalized=ANY($2::text[]) GROUP BY state`,
-    [input.brandId, Array.from(unique)],
+    [input.brandId, addresses],
   );
   for (const { state, count } of rows) {
     result.newContacts -= count;

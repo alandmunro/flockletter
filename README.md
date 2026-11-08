@@ -24,6 +24,8 @@ The application uses TypeScript, React/Vite, Express and PostgreSQL. You can cre
 
 [Newsletter Studio](docs/implementation/NEWSLETTER_STUDIO.md) covers visual editing, original brand images, versioned previews and captured rehearsals.
 
+The [first-newsletter walkthrough](docs/implementation/DELIVERY_READINESS.md) covers per-brand delivery setup, the two-workspace SES evaluation and an end-to-end unsubscribe rehearsal.
+
 ## Local setup
 
 See the [workspace workflows](docs/implementation/WORKSPACE_OPERATIONS.md) for group rehearsals, team permissions, billing recovery, retention and support.

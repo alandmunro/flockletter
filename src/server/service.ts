@@ -4,6 +4,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { commands, limits, plans, type AssetSummary, type Campaign, type CampaignContent, type Capability, type CommandName, type Connection } from '../shared/contracts.js';
 import { Database, type Sql } from './db.js';
 import { AppError, requireCondition } from './errors.js';
+import { comparePlan, verifiedMemberCount } from './billing/plan-comparison.js';
 import { deliveryGaps, digest, inspectImage, preflight, renderPreview } from './content.js';
 import { SubscriberIntake } from './subscribers/intake.js';
 import { audienceSummary, contactDetail, listContacts, unsubscribeContact } from './subscribers/audience.js';
@@ -11,18 +12,24 @@ import {createSegment,deleteSegment,listSegments,renameSegment,segmentSummary,up
 import { templates, fromTemplateContent, fromProductContent } from '../shared/authoring.js';
 import { invalidateStudioReviews, approveRehearsal, cancelRehearsal, capturedMessage, listRehearsals, processDue, recipientOutcomes, rehearsalReport, reviewRehearsal, type CheckOwner } from './campaign/rehearsal.js';
 import { localFeedbackBinding } from './campaign/feedback.js';
-import { sesScope,type SesRuntime } from './campaign/ses-runtime.js';
+import { sesScope,type SesConfiguration } from './campaign/ses-runtime.js';
+import { unsubscribeProfile, type MarketingLinks } from './subscribers/marketing-links.js';
+import { deliveryReadiness } from './campaign/delivery-readiness.js';
 import type {PrivateListmonk} from './campaign/private-listmonk.js';
 import {isListmonkMethod,requiresSimulationGrant,type RehearsalTransport} from '../shared/rehearsal.js';
 import { DeliveryWorker } from './campaign/delivery-worker.js';
 import { practiceUsage, utcPeriod, workspaceAccess } from './campaign/access.js';
 import { previewImport } from './subscribers/import-preview.js';
+import { applyPracticeImport } from './subscribers/apply-import.js';
+import { practiceImportRows } from '../shared/import-preview.js';
+import type { Config } from './config.js';
 import { senderStatus, registerSender, verifySender,lookupTxt,type LookupTxt } from './campaign/sender.js';
 import { exportPage } from './subscribers/audience-export.js';
 import { SandboxBilling } from './billing/service.js';
 import {operations} from './campaign/operations.js';
 import {retentionPreview} from './retention.js';
-import {teamPage,grantMember,revokeMember,unavailableTeam,memberPermissions,type ClerkTeam} from './team.js';
+import {teamPage,teamInvitations,grantMember,revokeMember,unavailableTeam,memberPermissions,seatLimit,type ClerkTeam} from './team.js';
+import { inviteMember } from './team-invitations.js';
 import {companyDirectory,createCompany,renameCompany,createBrand,renameBrand,moveBrand} from './companies.js';
 
 export type Actor = { workspaceId: string; userId: string; actorId: string; owner: boolean; kind: 'session' | 'connection'; scopes: Capability[]; brandIds: string[] | null };
@@ -76,7 +83,11 @@ export class CommandService {
   constructor(readonly db: Database, readonly intake = new SubscriberIntake(db),
     readonly checkOwner:CheckOwner = async()=>{throw new AppError(503,'membership_unavailable','Current workspace membership could not be verified.');},
     readonly resolveTxt:LookupTxt=lookupTxt,readonly billing=new SandboxBilling(db),readonly team:ClerkTeam=unavailableTeam,
-    private readonly providerScope?:(workspace:string,brand:string)=>boolean, readonly ses?:SesRuntime,readonly listmonk?:PrivateListmonk) {}
+    private readonly providerScope?:(workspace:string,brand:string)=>boolean, readonly ses?:SesConfiguration,readonly listmonk?:PrivateListmonk,
+    private readonly importEnvironment?: Config['environment'], readonly marketing?: MarketingLinks) {}
+  private get practiceImportsEnabled() {
+    return this.importEnvironment === 'staging' || this.importEnvironment === 'local' || this.importEnvironment === 'test';
+  }
   private async methods(sql:Sql,w:string,b:string,actor:Actor):Promise<RehearsalTransport[]> {
     const methods:RehearsalTransport[]=['capture'];
     if(this.providerScope && !this.providerScope(w,b)) return methods;
@@ -93,18 +104,37 @@ export class CommandService {
   }
   async execute(name: CommandName, raw: unknown, actor: Actor): Promise<unknown> {
     authorize(actor, name);
+    if (name === 'sender.deliveryReadiness') {
+      const {brandId} = commands[name].schema.parse(raw);
+      const sender = await this.db.tenant(actor.workspaceId, async sql => {
+        await audienceBrand(sql,actor,brandId);
+        return senderStatus(sql);
+      });
+      return deliveryReadiness(sender,sesScope(this.ses,actor.workspaceId,brandId),this.providerScope?.(actor.workspaceId,brandId) ?? false);
+    }
     const definition = commands[name];
     const parsed = definition.schema.safeParse(raw);
     if (!parsed.success) {
       if (name.startsWith('segment.')) throw new AppError(422, 'invalid_segment_input', 'Review the brand, group, name or contact rows.');
+      if (name === 'audience.applyPracticeImport') throw new AppError(422, 'invalid_practice_import', 'Choose a CSV email column, affirm permission for fictional contacts, and provide a stable operation key.');
       if (name.startsWith('audience.')) throw new AppError(422, 'invalid_audience_input', 'Review the brand, contact, email, status or page.');
       throw parsed.error;
     }
     const input = parsed.data;
+    if (name === 'billing.comparePlan') {
+      const { plan } = commands[name].schema.parse(raw);
+      const members = await verifiedMemberCount(this.team, actor.workspaceId);
+      return this.db.tenant(actor.workspaceId, sql => comparePlan(sql, plan, members));
+    }
     // Provider mutations persist their own intent before crossing the network. Session URLs never enter generic receipts.
     if(name==='billing.checkout') {const request=commands[name].schema.parse(raw);return this.billing.checkout(actor,request.plan,request.operationKey);}
     if(name==='billing.restart'){const input=commands[name].schema.parse(raw);return this.billing.restart(actor,input.plan,input.expiredId,input.operationKey);}
     if(name==='billing.portal') return this.billing.portal(actor,commands[name].schema.parse(raw).operationKey);
+    if(name==='team.invitations') return teamInvitations(this.db,actor.workspaceId,actor.userId,this.team,commands[name].schema.parse(raw).offset);
+    if(name==='team.invite'){
+      const request=commands[name].schema.parse(raw);
+      return inviteMember(this.db,actor,this.team,seatLimit,request.email,request.operationKey);
+    }
     const optOut = name === 'audience.unsubscribe' ? commands[name].schema.parse(raw) : null;
     let wake: {brandId:string;id:string} | undefined;
     const response = await this.db.tenant(actor.workspaceId, async sql => {
@@ -136,6 +166,11 @@ export class CommandService {
         }
         if(name==='team.grant'||name==='team.revoke')
           requireCondition(await this.team.membership(actor.userId,actor.workspaceId)==='owner',403,'owner_required','Current Clerk owner membership is required.');
+        if (name === 'audience.applyPracticeImport' && 'brandId' in input) {
+          requireCondition(this.practiceImportsEnabled, 403, 'practice_import_disabled', 'Practice imports are available only in staging or a local test.');
+          await audienceBrand(sql, actor, input.brandId);
+          requireCondition(await this.checkOwner(actor.userId,actor.workspaceId),403,'owner_required','Current workspace ownership is required to import contacts.');
+        }
         if (optOut) await audienceBrand(sql, actor, optOut.brandId);
         // A permanent opt-out has one replay identity per owner, brand and contact.
         operationKey = optOut ? `unsubscribe:${optOut.brandId}:${optOut.id}` : (input as { operationKey: string }).operationKey;
@@ -169,7 +204,7 @@ export class CommandService {
     });
     // The saved command receipt requests processing. Claims must commit independently
     // of that receipt and before any provider contact. Replaying the command only reads its receipt.
-    if (wake) await new DeliveryWorker(this.db,this.checkOwner,undefined,this.ses,this.listmonk).tick(actor.workspaceId,wake.brandId,wake.id);
+    if (wake) await new DeliveryWorker(this.db,this.checkOwner,undefined,this.ses,this.listmonk,this.marketing).tick(actor.workspaceId,wake.brandId,wake.id);
     return response;
   }
   private async perform(name: CommandName, raw: unknown, actor: Actor, sql: Sql): Promise<unknown> {
@@ -205,7 +240,7 @@ export class CommandService {
         return {access,usage:actor.kind==='session' && actor.owner?await practiceUsage(sql,utcPeriod(new Date())):null};
       }
       case 'workspace.operations':return operations(sql);
-      case 'workspace.retention':return retentionPreview(sql);
+      case 'workspace.retention':return retentionPreview(sql,w);
       case 'team.list':return teamPage(sql,w,this.team,commands[name].schema.parse(raw).offset);
       case 'team.grant':{
         const request=commands[name].schema.parse(raw);return grantMember(sql,w,actor.userId,this.team,request.userId,request.permission,request.brandIds);
@@ -240,7 +275,11 @@ export class CommandService {
       case 'audience.previewImport': {
         const input=commands[name].schema.parse(raw);
         await audienceBrand(sql,actor,input.brandId);
-        return previewImport(sql,input);
+        const preview = await previewImport(sql,input);
+        return this.practiceImportsEnabled ? {...preview, practiceRowLimit: practiceImportRows} : preview;
+      }
+      case 'audience.applyPracticeImport': {
+        return applyPracticeImport(sql,w,commands[name].schema.parse(raw));
       }
       case 'audience.exportPage': {
         const input=commands[name].schema.parse(raw);
@@ -250,7 +289,7 @@ export class CommandService {
       case 'rehearsal.methods': {
         const {brandId}=commands[name].schema.parse(raw);
         await audienceBrand(sql,actor,brandId);
-        return {methods:await this.methods(sql,w,brandId,actor)};
+        return {methods:await this.methods(sql,w,brandId,actor),...(unsubscribeProfile(this.marketing,{workspaceId:w,brandId}) ? {unsubscribeAvailable:true} : {})};
       }
       case 'rehearsal.review': {
         const input=commands[name].schema.parse(raw),draft=await campaign(sql,actor,input.campaignId);
@@ -260,7 +299,7 @@ export class CommandService {
         const route=input.transport==='ses_simulator'?sesScope(this.ses,w,input.brandId)?.route:undefined;
         const binding=isListmonkMethod(input.transport)?this.listmonk?.binding(w,input.brandId,input.transport)??null:
           input.transport==='feedback_test'?localFeedbackBinding:route?.fingerprint??null;
-        return reviewRehearsal(sql,actor,draft,input.expectedVersion,input.audience,input.dueAt,input.segmentId,input.transport,binding);
+        return reviewRehearsal(sql,actor,draft,input.expectedVersion,input.audience,input.dueAt,input.segmentId,input.transport,binding,input.includeUnsubscribe ? {settings:this.marketing} : undefined);
       }
       case 'rehearsal.approve': {
         const {brandId,id}=commands[name].schema.parse(raw);

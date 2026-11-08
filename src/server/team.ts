@@ -1,8 +1,10 @@
-import type { Sql } from './db.js';
+import type { Database, Sql } from './db.js';
 import { AppError, requireCondition } from './errors.js';
 import { workspaceAccess } from './campaign/access.js';
 import { plans, type Capability } from '../shared/contracts.js';
-import type { TeamPage, TeamRole, DirectoryMember } from '../shared/team.js';
+import type { TeamPage, TeamRole, DirectoryMember, PendingInvitation, TeamInvitationPage } from '../shared/team.js';
+import type { ClerkInvitationPilot } from './team-invitation-provider.js';
+import { invitationControls } from './team-invitations.js';
 
 export type ClerkTeam = {
   members: (
@@ -11,6 +13,8 @@ export type ClerkTeam = {
     limit: number,
   ) => Promise<{ total: number; members: Pick<DirectoryMember, 'userId' | 'name' | 'membership'>[] }>;
   membership: (user: string, workspace: string) => Promise<'owner' | 'member' | null>;
+  invitations?: (workspace: string, offset: number, limit: number) => Promise<{ total: number; invitations: PendingInvitation[] }>;
+  invitePilot?: ClerkInvitationPilot;
 };
 export const unavailableTeam: ClerkTeam = {
   async members() {
@@ -24,6 +28,45 @@ export async function seatLimit(sql: Sql) {
   const access = await workspaceAccess(sql);
   if (!access.plan) return 1;
   return plans.find((p) => p.id === access.plan)!.users;
+}
+const invitationDirectoryError = () => new AppError(503, 'invitation_directory_unavailable',
+  'Clerk invitation and seat counts are unavailable. Retry shortly.');
+export async function teamInvitations(db: Database, workspace: string, owner: string, clerk: ClerkTeam, offset: number): Promise<TeamInvitationPage> {
+  const limit = 25;
+  // Verify again at the point this dedicated reader releases invitation addresses.
+  let membership;
+  try { membership = await clerk.membership(owner, workspace); }
+  catch { throw invitationDirectoryError(); }
+  requireCondition(membership === 'owner', 403, 'owner_required', 'Current Clerk workspace ownership is required.');
+  if (!clerk.invitations) throw invitationDirectoryError();
+  let directory, members;
+  let capacity: Awaited<ReturnType<ClerkInvitationPilot['inspect']>> | undefined;
+  try {
+    // A mid-read acceptance can temporarily reserve an extra seat when invitations are counted first.
+    directory = await clerk.invitations(workspace, offset, limit);
+    members = await clerk.members(workspace, 0, 1);
+    if (clerk.invitePilot?.binding.workspace === workspace) {
+      capacity = await clerk.invitePilot.inspect(workspace);
+      if(capacity.members.length!==members.total || capacity.invitations.filter((row)=>row.state==='pending').length!==directory.total)
+        throw invitationDirectoryError();
+    }
+  } catch { throw invitationDirectoryError(); }
+  if (!Number.isSafeInteger(directory.total) || directory.total < 0 || directory.invitations.length > limit ||
+      (directory.invitations.length > 0 && offset + directory.invitations.length > directory.total) ||
+      !Number.isSafeInteger(members.total) || members.total < 1 || !Number.isSafeInteger(members.total + directory.total))
+    throw invitationDirectoryError();
+  const {seats,pilot} = await db.tenant(workspace,async(sql)=>{
+    const seats=await seatLimit(sql);
+    return {seats,pilot:await invitationControls(sql,workspace,clerk,seats,capacity)};
+  });
+  const effectiveLimit = pilot?.maximum ? Math.min(seats ?? pilot.maximum,pilot.maximum) : seats;
+  return {
+    invitations: directory.invitations.map(({id,email,expiresAt}) => ({id,email,expiresAt})),
+    total: directory.total, members: members.total, offset, limit, seats,
+    available: pilot?.blocked ? 0 : effectiveLimit === null ? null :
+      Math.max(0, effectiveLimit - members.total - directory.total - (pilot?.reserved ?? 0)),
+    ...(pilot ? {pilot} : {}),
+  };
 }
 export async function teamPage(sql: Sql, w: string, clerk: ClerkTeam, offset: number): Promise<TeamPage> {
   const limit = 25,

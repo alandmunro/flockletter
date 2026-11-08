@@ -4,12 +4,12 @@ import { normalizedEmail } from './subscriber.js';
 import { stateFilter } from './audience.js';
 import { productFields, templateIds } from './authoring.js';
 import { rehearsalAudiences, rehearsalTransports } from './rehearsal.js';
-import { importPreviewInput } from './import-preview.js';
+import { applyImportInput, importPreviewInput } from './import-preview.js';
 import { exportPageInput } from './audience-export.js';
 import { senderDomain } from './sender.js';
 import { companyOrBrandName } from './companies.js';
 import {segmentAction,segmentEmails,segmentName} from './segments.js';
-import {clerkUserId,teamRole} from './team.js';
+import {clerkUserId,teamRole,invitationEmail} from './team.js';
 
 export type { IntakeStatus } from './subscriber.js';
 export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate'] as const;
@@ -54,9 +54,11 @@ export const commands = {
   'workspace.preflight': descriptor('Start here: inspect all workspace setup gaps and preparation limits before gathering content or photos. Never starts billing or sends.', 'read', false, {}),
   'workspace.initialize': descriptor('Create the current Clerk organization workspace and first brand once. Does not activate a subscription.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(100), brandName: z.string().trim().min(1).max(100) }),
   'workspace.access': descriptor('Read the workspace access source and, for owners, practice usage. Live sends and payments are disabled.', 'read', false, {}),
-  'workspace.operations': descriptor('View recent workspace actions and aggregate capture queue health.', 'owner',false,{}),
+  'workspace.operations': descriptor('View current rehearsal queue health, recorded feedback, actionable staging alerts and recent workspace actions. Owner session required.', 'owner',false,{}),
   'workspace.retention':descriptor('Preview the 90-day review date for a verified sandbox service end.', 'owner',false,{}),
   'team.list':descriptor('List verified Clerk workspace members, brand access and seat capacity.', 'owner',false,{offset:z.number().int().min(0).max(10000000).default(0)}),
+  'team.invitations':descriptor('View pending Clerk invitations and remaining workspace seats in an owner session.', 'owner',false,{offset:z.number().int().min(0).max(10000000).default(0)}),
+  'team.invite':descriptor('Request or reconcile one preconfigured staging Clerk member invitation.', 'owner',true,{operationKey:z.uuid(),email:invitationEmail}),
   'team.grant':descriptor('Give an existing Clerk workspace member explicit brand preparation access.', 'owner',true,{operationKey:key,userId:clerkUserId,permission:teamRole,brandIds:z.array(id).min(1).max(5)}),
   'team.revoke':descriptor('Remove a member’s Flockletter brand access without changing their Clerk account.', 'owner',true,{operationKey:key,userId:clerkUserId}),
   'company.list':descriptor('List workspace companies, brands and applicable plan limits.', 'owner',false,{}),
@@ -66,17 +68,19 @@ export const commands = {
   'brand.rename':descriptor('Rename a workspace brand and preserve its audience identity.', 'owner',true,{operationKey:key,id,name:companyOrBrandName}),
   'brand.move':descriptor('Move an existing brand to another company in this workspace.', 'owner',true,{operationKey:key,id,companyId:id}),
   'billing.status': descriptor('View workspace-specific Stripe sandbox setup and verified status.', 'owner',false,{}),
+  'billing.comparePlan': descriptor('Compare a hosted tier with this workspace’s members, companies, brands, confirmed contacts and rehearsal usage. Read-only.', 'owner',false,{plan:z.enum(['starter','growth','pro'])}),
   'billing.checkout': descriptor('Open or resume the workspace’s isolated Stripe test checkout.', 'owner',true,{operationKey:z.uuid(),plan:z.enum(['starter','growth','pro'])}),
   'billing.restart': descriptor('Restart a verified, unused expired Stripe test checkout with a new attempt.', 'owner',true,{operationKey:z.uuid(),expiredId:z.uuid(),plan:z.enum(['starter','growth','pro'])}),
   'billing.portal': descriptor('Open the billing portal for this workspace’s sandbox customer.', 'owner',true,{operationKey:z.uuid()}),
   'template.list': descriptor('List built-in newsletter layouts.', 'read', false, {}),
   'sender.status': descriptor('Read the sender ownership challenge and provider status for this brand.', 'owner',false,{brandId:id}),
+  'sender.deliveryReadiness': descriptor('Inspect this brand’s staging worker and provider configuration. Returns setup gaps without submitting email.', 'campaign:simulate',false,{brandId:id}),
   'sender.register': descriptor('Create an ownership challenge for this brand domain.', 'owner',true,{operationKey:key,brandId:id,domain:senderDomain}),
   'sender.verify': descriptor('Check the public domain ownership TXT record. This never activates a provider.', 'owner',true,{operationKey:key,brandId:id}),
   'campaign.fromTemplate': descriptor('Create a campaign draft from a newsletter layout.', 'draft:write', true, {operationKey:key,brandId:id,templateId:z.enum(templateIds)}),
   'campaign.fromProduct': descriptor('Prepare a draft from approved product details and existing brand images.', 'draft:write', true, {operationKey:key,brandId:id,...productFields,assetIds:contentSchema.shape.assetIds}),
   'rehearsal.methods': descriptor('List rehearsal methods available to this brand. Ordinary customer delivery is never enabled.', 'campaign:rehearse', false, {brandId:id}),
-  'rehearsal.review': descriptor('Freeze this draft, synthetic recipients and test transport. An omitted transport uses the original capture mailbox.', 'campaign:rehearse', true, {operationKey:key,brandId:audienceId,campaignId:id,expectedVersion:z.number().int().positive(),audience:z.enum(rehearsalAudiences),transport:z.enum(rehearsalTransports).optional(),segmentId:audienceId.optional(),dueAt:z.iso.datetime({offset:true}).optional()}),
+  'rehearsal.review': descriptor('Freeze this draft, synthetic recipients and test transport. An omitted transport uses the original capture mailbox.', 'campaign:rehearse', true, {operationKey:key,brandId:audienceId,campaignId:id,expectedVersion:z.number().int().positive(),audience:z.enum(rehearsalAudiences),includeUnsubscribe:z.boolean().optional(),transport:z.enum(rehearsalTransports).optional(),segmentId:audienceId.optional(),dueAt:z.iso.datetime({offset:true}).optional()}),
   'rehearsal.approve': descriptor('Queue only the reviewed method. Local and private Listmonk rehearsals stay inside Flockletter. An explicitly reviewed SES method can reach only AWS simulator addresses.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
   'rehearsal.cancel': descriptor('Stop new submissions. An earlier uncertain attempt retains its reservation until a provider receipt resolves it.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
   'rehearsal.process': descriptor('Process a due capture or request one worker step on the chosen staging provider rehearsal. Uncertain attempts only check provider status.', 'campaign:rehearse', true, {operationKey:key,brandId:id,id}),
@@ -85,6 +89,7 @@ export const commands = {
   'rehearsal.outcomes': descriptor('Read submission attempts, private-renderer progress and reported delivery, bounce or complaint for each synthetic recipient. An uncertain result requires provider reconciliation before any new submission.', 'campaign:rehearse',false,{brandId:id,id}),
   'rehearsal.message': descriptor('Read the reviewed email captured inside Flockletter.', 'campaign:rehearse',false,{brandId:id,id}),
   'audience.previewImport': descriptor('Preview a CSV for one brand. Returns counts and row numbers only.', 'owner', false, importPreviewInput.shape),
+  'audience.applyPracticeImport': descriptor('Apply a staged CSV of fictional .test addresses as pending, with one outcome per row. Current owner session required.', 'owner', true, applyImportInput.shape),
   'audience.exportPage': descriptor('Read one bounded page for an explicitly requested owner export.', 'owner',false, exportPageInput.shape),
   'campaign.list': descriptor('List accessible draft campaigns, newest first.', 'read', false, {}),
   'campaign.get': descriptor('Read one authorized draft version.', 'read', false, { id }),

@@ -18,3 +18,18 @@ export type TeamPage = {
   overLimit: boolean;
   source: 'clerk';
 };
+export type PendingInvitation = { id: string; email: string; expiresAt: string };
+export const invitationEmail = z.string().trim().max(254).pipe(z.email()).transform((email) => email.toLowerCase());
+export type InvitationState = 'awaiting_reconciliation' | 'pending' | 'accepted' | 'revoked' | 'expired';
+export type InvitationOutcome = { operationKey: string; state: InvitationState };
+export type InvitationPilot = { choices: { email: string; prior: InvitationOutcome | null }[]; reserved: number; maximum: number; blocked: boolean };
+export type TeamInvitationPage = {
+  invitations: PendingInvitation[];
+  offset: number;
+  limit: number;
+  total: number;
+  members: number;
+  seats: number | null;
+  available: number | null;
+  pilot?: InvitationPilot;
+};

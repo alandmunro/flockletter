@@ -1,5 +1,7 @@
 # Private Listmonk rehearsals
 
+The [two-workspace isolation exercise](LISTMONK_ISOLATION.md) runs concurrent native renderers and verifies separate callback authority, database processes and restart behavior.
+
 Select **Private Listmonk test** to render the approved campaign inside Flockletter and simulate its delivery locally. **Listmonk with Amazon SES simulator** requires its own review, an eligible sender, and the separately configured SES binding. It addresses only AWS-owned simulator mailboxes. [Campaign feedback and SES setup](CAMPAIGN_FEEDBACK.md)
 
 ## Enable the staging engine

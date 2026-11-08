@@ -22,6 +22,8 @@ D-039 adds two explicitly reviewed private Listmonk methods for the bound stagin
 
 ## Product and public repository boundaries
 
+D-041 covers the additional staging implementation. Use server-owned SES mappings, separately reviewed personal unsubscribe links, and the synthetic import, support and retention exercises. Read [delivery readiness](docs/implementation/DELIVERY_READINESS.md) before working on the provider boundary. Production mailing, public paid activation and retention on hosted customer data retain their separate release requirements.
+
 - The product is Flockletter; the repository slug is `flockletter`.
 - Flockletter is an independent open-source mailing SaaS. Frosty Flamingo Apparel is its first intended customer.
 - Open self-service signup, included delivery in hosted plans and AGPLv3 are accepted decisions.

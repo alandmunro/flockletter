@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { plans } from '../shared/contracts.js';
 import type { PlanId } from '../shared/rehearsal.js';
 import { operationKey, type Api } from './api.js';
+import { PlanComparisonPanel } from './PlanComparisonPanel.js';
 type BillingView = {
   mode: 'off' | 'sandbox';
   complimentary: boolean;
@@ -107,6 +108,7 @@ export function BillingPanel({ api }: { api: Api }) {
             </div>
           </>
         ))}
+      <PlanComparisonPanel api={api}/>
     </section>
   );
 }

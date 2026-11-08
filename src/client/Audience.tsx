@@ -92,7 +92,7 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
       <h1 className="page-heading">Audience</h1>
       <Counts key={revision} api={api} brandId={brand.id} />
       <Segments key={brand.id} api={api} brandId={brand.id} />
-      <ImportPreview api={api} brand={brand} />
+      <ImportPreview api={api} brand={brand} onApplied={changed} />
       <AudienceExport api={api} brand={brand} />
       <section className="card" aria-labelledby="contact-heading">
         <h2 id="contact-heading">Contacts</h2>
@@ -445,6 +445,8 @@ function ContactRecord({
           </section>
           <section className="card">
             <h2>Consent history</h2>
+            {data.practiceImport && <p>Added from practice CSV row {data.practiceImport.row} on{' '}
+              {new Date(data.practiceImport.recordedAt).toLocaleDateString()}. The owner declared permission for fictional contacts.</p>}
             <ConsentTimeline events={data.events} />
             {(pages.length > 1 || data.nextCursor) && (
               <nav className="actions" aria-label="Consent history pages">

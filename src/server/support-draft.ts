@@ -5,7 +5,7 @@ export async function supportDraft(topic: SupportTopic, write: LocalWriter) {
   const guidance = supportAnswer(topic);
   if (!guidance) return { kind: 'human_review' as const, topic, draft: null, automaticSend: false };
   const output = (await write(guidance.text)).trim();
-  const control = /\p{Cc}/u.test(output.replaceAll(/[\t\n\r]/g, ''));
+  const control = /[\p{Cc}\p{Cf}]/u.test(output.replaceAll(/[\t\n\r]/g, ''));
   if (!output || output.length > 2500 || control || /<\/?think>/i.test(output))
     throw Error('The local draft needs another review.');
   const draft = output + '\n\nThis reply was drafted with AI assistance.';
