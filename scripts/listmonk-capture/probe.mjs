@@ -77,7 +77,7 @@ async function prove() {
   }
   const list = await api('POST', '/lists', { name: 'Field notes fixture', type: 'private', optin: 'double' });
   const contact = await api('POST', '/subscribers', {
-    email: 'casey@example.test',
+    email: 'reader@campaign.test',
     name: 'Casey Field',
     status: 'enabled',
     lists: [list.id],
@@ -114,7 +114,7 @@ async function prove() {
     body: 'Hello {{ .Subscriber.Name }},\nThe trail opens Friday.',
   });
   assert.equal(campaign.status, 'draft');
-  assert.equal(contact.email, 'casey@example.test');
+  assert.equal(contact.email, 'reader@campaign.test');
   const uuid = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i;
   assert.match(contact.uuid, uuid);
   assert.match(campaign.uuid, uuid);
