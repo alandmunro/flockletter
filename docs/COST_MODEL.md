@@ -1,6 +1,6 @@
 # Flockletter launch pricing and cost model
 
-Updated November 7, 2026 with a delivery-provider comparison (D-034). Plan prices, recipient limits, trial limits and Clerk-owned hosted memberships are accepted owner decisions D-024–D-026. Dollar amounts below are USD. Infrastructure sizing, provider activation and spending are not authorized by this planning document.
+Updated November 7, 2026 with a delivery-provider comparison (D-040). Plan prices, recipient limits, trial limits and Clerk-owned hosted memberships are accepted owner decisions D-024–D-026. Dollar amounts below are USD. Infrastructure sizing, provider activation and spending are not authorized by this planning document.
 
 ## Accepted catalogue
 
