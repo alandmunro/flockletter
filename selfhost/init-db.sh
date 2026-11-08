@@ -21,6 +21,11 @@ psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$FLOCKLETTER_DATABASE" <<'
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE,CREATE ON SCHEMA public TO flockletter_migrator WITH GRANT OPTION;
 GRANT USAGE ON SCHEMA public TO flockletter_runtime;
+-- Prepare fixed private namespaces without granting database CREATE to either app role.
+CREATE SCHEMA flockletter_customer_jobs;
+CREATE SCHEMA flockletter_retention_control;
+REVOKE ALL ON SCHEMA flockletter_customer_jobs,flockletter_retention_control FROM PUBLIC;
+GRANT USAGE,CREATE ON SCHEMA flockletter_customer_jobs,flockletter_retention_control TO flockletter_migrator WITH GRANT OPTION;
 SQL
 if [ "${FLOCKLETTER_DISPOSABLE_FIXTURE:-}" = "1" ]; then
   psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$FLOCKLETTER_DATABASE" <<'SQL'
