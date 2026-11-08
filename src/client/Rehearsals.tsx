@@ -211,7 +211,7 @@ export function Rehearsals({ api, draft }: { api: Api; draft: Campaign }) {
       {items.map((item) => (
         <article className="card" key={item.id}>
           <h3>
-            {item.transport === 'provider_test' ? 'Staging provider test' : 'Flockletter capture'} ·{' '}
+            {item.transport === 'provider_test' ? 'Staging provider test · ' : ''}
             {item.segment?.name ?? (item.audience === 'test' ? 'Test mailbox' : 'Confirmed test audience')} ·
             version {item.version}
           </h3>
