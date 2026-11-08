@@ -6,13 +6,14 @@ import { createApp } from '../src/server/app.js';
 import { Authenticator, localIdentity, type IdentityProvider } from '../src/server/auth.js';
 import { loadConfig } from '../src/server/config.js';
 import { Database } from '../src/server/db.js';
+import { PrivateListmonk, type PrivateEngine } from '../src/server/campaign/private-listmonk.js';
 import { CommandService, type Actor } from '../src/server/service.js';
 import type { AssetSummary, Capability, CommandName, Workspace } from '../src/shared/contracts.js';
 import { startDatabase } from './database-fixture.js';
 
 export const keyed = <T extends object>(fields: T) => ({ ...fields, operationKey: randomUUID() });
 
-export async function startStudioProof() {
+export async function startStudioProof(privateEngine?: PrivateEngine) {
   const fixture = await startDatabase();
   const db = new Database(fixture.url);
   const server = createServer();
@@ -109,7 +110,25 @@ export async function startStudioProof() {
       LOCAL_TEST_IDENTITY: 'true',
       DATABASE_URL: fixture.url,
     });
-    server.on('request', createApp(config, service, new Authenticator(db, identity)));
+    const commands = privateEngine
+      ? new CommandService(
+          db,
+          undefined,
+          identity.isOwner,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          new PrivateListmonk(
+            db,
+            identity.isOwner,
+            { workspace: owner.workspaceId, brand: brandId },
+            privateEngine,
+          ),
+        )
+      : service;
+    server.on('request', createApp(config, commands, new Authenticator(db, identity)));
     function post(name: CommandName, input: unknown, token = 'local-development-only') {
       return fetch(origin + '/api/v1/commands/' + name, {
         method: 'POST',

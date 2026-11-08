@@ -1,8 +1,10 @@
 import { verifyStudioImageUpload } from './check-studio-image.js';
 import assert from 'node:assert/strict';
+import { EventEmitter, once } from 'node:events';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, type Browser, type Locator, type Page } from 'playwright-core';
+import type { Rehearsal } from '../src/shared/rehearsal.js';
 import { emptyContent, type Campaign } from '../src/shared/contracts.js';
 import { keyed, startStudioProof } from './studio-proof-fixture.js';
 
@@ -172,7 +174,79 @@ async function editorJourney(page: Page, site: Awaited<ReturnType<typeof startSt
   await page.setViewportSize({ width: 1280, height: 900 });
   const after = await site.command<Campaign>('campaign.get', { id: persisted.id });
   assert.deepEqual(after.content.studio, before);
+  await verifyPendingPrivateApproval(page, site, persisted);
 }
+async function verifyPendingPrivateApproval(
+  page: Page,
+  site: Awaited<ReturnType<typeof startStudioProof>>,
+  campaign: Campaign,
+) {
+  await site.command<Rehearsal>(
+    'rehearsal.review',
+    keyed({
+      brandId: site.brandId,
+      campaignId: campaign.id,
+      expectedVersion: campaign.version,
+      audience: 'test',
+      transport: 'listmonk_test',
+    }),
+  );
+  const approve = button(page, 'Approve private Listmonk test');
+  await button(page, 'Refresh rehearsals').click();
+  await approve.waitFor();
+
+  const listUrl = site.origin + '/api/v1/commands/rehearsal.list';
+  const processUrl = site.origin + '/api/v1/commands/rehearsal.process';
+  const gates = new EventEmitter();
+  const snapshot = once(gates, 'snapshot', { signal: AbortSignal.timeout(10_000) });
+  const stale = once(gates, 'stale'),
+    queued = once(gates, 'queued'),
+    processing = once(gates, 'processed');
+  let lists = 0,
+    processes = 0;
+  await page.route(listUrl, async (route) => {
+    const first = ++lists === 1;
+    const response = await route.fetch();
+    if (first) gates.emit('snapshot');
+    await (first ? stale : queued);
+    await route.fulfill({ response });
+  });
+  await page.route(processUrl, async (route) => {
+    processes++;
+    await processing;
+    await route.fulfill({ json: { result: { processingRequested: true } } });
+  });
+  try {
+    await button(page, 'Refresh rehearsals').click();
+    await snapshot; // The held response contains the reviewed state.
+    await Promise.all([page.waitForRequest(processUrl), approve.click()]);
+    const card = page
+      .getByRole('article')
+      .filter({ has: page.getByRole('heading', { name: /^Private Listmonk test · Test mailbox/ }) });
+    await card.getByText('queued', { exact: true }).waitFor();
+    assert.equal(
+      await approve.count(),
+      0,
+      'The approval receipt removes the action while processing is pending',
+    );
+    const oldResponse = page.waitForResponse(listUrl);
+    gates.emit('stale');
+    await oldResponse;
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
+    assert.equal(await approve.count(), 0, 'A pre-approval report cannot restore the approve action');
+    assert.equal(processes, 1, 'The browser issued exactly one processing request');
+  } finally {
+    gates.emit('stale');
+    gates.emit('queued');
+    gates.emit('processed');
+    await page.unroute(listUrl);
+    await page.unroute(processUrl);
+  }
+}
+
 async function legacyJourney(page: Page, site: Awaited<ReturnType<typeof startStudioProof>>) {
   const product = await site.command<Campaign>(
     'campaign.fromProduct',
@@ -254,7 +328,11 @@ async function unknownJourney(page: Page, site: Awaited<ReturnType<typeof startS
   assert.equal(stored.rows[0].version, 1);
   assert.deepEqual(stored.rows[0].content, future);
 }
-const site = await startStudioProof();
+const site = await startStudioProof({
+  render: async () => {
+    throw Error('The delayed approval proof intercepts processing.');
+  },
+});
 let browser: Browser | undefined;
 try {
   browser = await chromium.launch({ channel: process.env.FLOCKLETTER_BROWSER_CHANNEL ?? 'chromium' });
