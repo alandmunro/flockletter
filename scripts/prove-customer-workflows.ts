@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { mkdir } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import { startDatabase } from './database-fixture.js';
 import { createApp } from '../src/server/app.js';
@@ -30,7 +31,7 @@ const actor: Actor = {
   scopes: ['read'],
 };
 const screenshotRoot =
-  process.env.FLOCKLETTER_CUSTOMER_SCREENSHOTS ?? '/private/tmp/flockletter-customer-proof';
+  process.env.FLOCKLETTER_CUSTOMER_SCREENSHOTS ?? path.join(tmpdir(), 'flockletter-customer-proof');
 const button = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
 const navigate = (page: Page, name: string) =>
   page
