@@ -142,7 +142,7 @@ export function createSesSimulatorPort(
   };
 }
 
-function inlineOriginals(message: DeliveryEnvelope) {
+export function inlineOriginals(message: DeliveryEnvelope) {
   const referenced = new Set(
     Array.from(
       message.html.matchAll(/<img\b[^>]*?\ssrc\s*=\s*(?:"cid:([^"]+)"|'cid:([^']+)'|cid:([^\s>]+))/gi),

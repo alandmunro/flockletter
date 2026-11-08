@@ -145,6 +145,28 @@ afterAll(async () => {
 });
 
 describe('signed SES simulator notifications', () => {
+  it('requires a current provisioning authorization before confirming a customer topic',async()=>{
+    const confirm=vi.fn(async()=>{});
+    const handler=new SesNotifications(route,async()=>signer.certificate,confirm,
+      {customer:true,canConfirm:async()=>false,apply:async()=>{}});
+    await expect(handler.handle(site.db,body(signed(confirmation(route))))).rejects.toMatchObject({code:'invalid_provider_event'});
+    expect(confirm).not.toHaveBeenCalled();
+  });
+  it('keeps current and previously reviewed sender profiles on one trusted topic',async()=>{
+    const old=makeRoute('org_history');
+    const current=parseSesRoute({workspaceId:old.workspaceId,brandId:old.brandId,region:old.region,accountId:old.accountId,
+      from:'updated@'+domain,tenant:old.tenant,configurationSet:old.configurationSet,identityArn:old.identityArn,topicArn:old.topicArn});
+    const older=vi.fn(async()=>{}),newer=vi.fn(async()=>{});
+    const router=new SesFeedbackRouter([new SesNotifications(old,async()=>signer.certificate,undefined,{customer:true,apply:older})]);
+    router.register(new SesNotifications(current,async()=>signer.certificate,undefined,{customer:true,apply:newer}));
+    const event=delivery(current,randomUUID(),'reader@store.example');
+    const customer={...event,mail:{...event.mail,tags:{...event.mail.tags,fl_customer:['1'],fl_brand:[current.brandId]}}};
+    await router.handle(site.db,body(signed(notification(current,customer))));
+    expect(newer).toHaveBeenCalledOnce();expect(older).not.toHaveBeenCalled();
+    const legacy={...customer,mail:{...customer.mail,source:old.from}};
+    await router.handle(site.db,body(signed(notification(old,legacy))));
+    expect(older).toHaveBeenCalledOnce();
+  });
   it('routes only a configured topic and rechecks its signature after selecting the brand', async () => {
     const other = {...makeRoute('org_other'),topicArn:route.topicArn+'-other'};
     const first=vi.fn(async () => signer.certificate), second=vi.fn(async () => signer.certificate);

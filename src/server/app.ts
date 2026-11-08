@@ -12,6 +12,7 @@ import { SesNotifications,SesFeedbackRouter } from './campaign/ses-notifications
 import { sesScopes } from './campaign/ses-runtime.js';
 import { subscriberRoutes } from './subscribers/routes.js';
 import { marketingUnsubscribeRoutes } from './subscribers/marketing-routes.js';
+import { customerAudienceRoutes } from './customer-audience/routes.js';
 
 export function createApp(config: Config, service?: CommandService, auth?: Authenticator) {
   const app = express();
@@ -23,7 +24,8 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     next();
   });
   // Render terminates TLS at one trusted reverse proxy. Local development trusts none.
-  if (config.environment === 'staging') app.set('trust proxy', 1);
+  const hosted=config.environment==='staging'||config.environment==='production';
+  if (hosted) app.set('trust proxy', 1);
   let clerkOrigin: string | undefined;
   if (config.clerkPublishableKey) {
     const host = Buffer.from(config.clerkPublishableKey.split('_').slice(2).join('_'), 'base64').toString('utf8').replace(/\$$/, '');
@@ -39,19 +41,20 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     workerSrc: clerkOrigin ? ["'self'", 'blob:'] : ["'self'"],
     imgSrc: ["'self'", 'blob:', 'data:', 'https://img.clerk.com'],
     styleSrc: ["'self'", "'unsafe-inline'"], frameSrc: ["'self'", ...clerkScriptAndFrameHosts],
-    objectSrc: ["'none'"], baseUri: ["'none'"], formAction: ["'self'"], upgradeInsecureRequests: config.environment === 'staging' ? [] : null,
-  } }, crossOriginEmbedderPolicy: false, strictTransportSecurity: config.environment === 'staging' ? undefined : false }));
+    objectSrc: ["'none'"], baseUri: ["'none'"], formAction: ["'self'"], upgradeInsecureRequests: hosted ? [] : null,
+  } }, crossOriginEmbedderPolicy: false, strictTransportSecurity: hosted ? undefined : false }));
   app.get('/healthz', (_req, res) => res.json({ status: 'alive' }));
   app.get('/readyz', async (_req, res) => {
     const gaps = configurationGaps(config);
     if (!service || !auth) gaps.push('service_not_ready');
     if (service) { try { await service.db.verifyBoundary(); } catch { gaps.push('database_unavailable'); } }
-    res.status(gaps.length ? 503 : 200).json({ ready: gaps.length === 0, gaps, sendingEnabled: false });
+    res.status(gaps.length ? 503 : 200).json({ ready: gaps.length === 0, gaps, sendingEnabled: service?.customer?.settings.delivery==='ses' });
   });
-  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), plans, sendingEnabled: false }));
+  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), plans, sendingEnabled: service?.customer?.settings.delivery==='ses',
+    customerWorkflows:service?.customer?{billing:service.customer.settings.billing,delivery:service.customer.settings.delivery,audience:service.customer.settings.audience,team:service.customer.settings.team,support:service.customer.settings.support,retention:service.customer.settings.retention}:null }));
   app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false,
     skip: req => (['HEAD','POST'].includes(req.method) && /^\/brands\/[^/]+\/subscriber-signups\/?$/i.test(req.path)) ||
-      (req.method==='POST' && /^\/(confirmation-feedback|billing\/stripe-events)\/?$/i.test(req.path)),
+      (req.method==='POST' && /^\/(confirmation-feedback|billing\/stripe-events|customer-billing\/stripe-events|support\/inbound|customer-delivery\/ses-events)\/?$/i.test(req.path)),
     message: { error: { code: 'rate_limited', message: 'Too many requests. Retry in a minute.' } } }));
   app.use('/api/v1', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -70,6 +73,24 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   });
   subscriberRoutes(app, config, service?.intake, auth);
   marketingUnsubscribeRoutes(app,config,service?.db);
+  if(service?.customer)app.use('/newsletter',customerAudienceRoutes(service.customer.audience));
+  app.post('/api/v1/customer-billing/stripe-events',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'128kb'}),async(req,res)=>{
+    if(!service?.customer)throw new AppError(503,'customer_workflow_unavailable','Customer billing is not configured.');
+    if(!Buffer.isBuffer(req.body))throw new AppError(415,'json_required','Send the raw signed provider event.');
+    await service.customer.billing.webhook(req.body,req.get('stripe-signature')??'');
+    res.json({received:true});
+  });
+  app.post('/api/v1/support/inbound',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'64kb'}),async(req,res)=>{
+    if(!service?.customer)throw new AppError(503,'customer_workflow_unavailable','Support intake is not configured.');
+    if(!Buffer.isBuffer(req.body))throw new AppError(415,'json_required','Send the raw signed provider event.');
+    await service.customer.support.receiveSigned(req.body,Object.fromEntries(['webhook-id','webhook-timestamp','webhook-signature'].map(name=>[name,req.get(name)??''])));
+    res.sendStatus(204);
+  });
+  app.post('/api/v1/customer-delivery/ses-events',rateLimit({windowMs:60000,limit:240,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:['text/plain','application/json'],limit:'256kb'}),async(req,res)=>{
+    if(!service?.customer?.feedback)throw new AppError(503,'delivery_feedback_unavailable','Customer delivery feedback is not configured.');
+    if(!Buffer.isBuffer(req.body))throw new AppError(415,'json_required','Send the raw signed provider event.');
+    await service.customer.feedback.handle(service.db,req.body);res.sendStatus(204);
+  });
   app.post('/api/v1/billing/stripe-events',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'128kb'}),async(req,res)=>{
     if(!Buffer.isBuffer(req.body)) throw new AppError(415,'json_required','Send the raw signed Stripe event.');
     await service!.billing.feedback(req.body,req.get('stripe-signature')??'');
@@ -99,7 +120,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
       const release = () => { if (!released) { activeUploads--; released = true; } };
       res.once('finish', release); res.once('close', release);
     }
-    const limit = name==='asset.uploadBatch' ? '29mb' : (name==='audience.previewImport'||name==='audience.applyPracticeImport') ? '350kb' : (name==='campaign.create'||name==='campaign.update') ? '160kb' : name.startsWith('audience.') ? '4kb' : '64kb';
+    const limit = name==='asset.uploadBatch' ? '29mb' : (name==='audience.previewImport'||name==='audience.applyPracticeImport'||name==='audienceOnboarding.import') ? '350kb' : (name==='campaign.create'||name==='campaign.update') ? '160kb' : name.startsWith('audience.') ? '4kb' : '64kb';
     express.json({ limit, strict: true })(req, res, error => {
       if (error) return next(error);
       void service!.execute(name, req.body, actor).then(result => res.json({ result })).catch(next);

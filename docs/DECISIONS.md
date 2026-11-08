@@ -48,6 +48,8 @@ Open signup describes the intended launched product. The foundation provides cam
 
 ## Implementation decisions under D-030
 
+**D-042 · Complete customer workflows.** The owner authorized implementation of all seven remaining areas on November 8 with a twelve-hour staging target, reasonable decisions and expanded local-model delegation. Build customer delivery, subscriptions/usage, generic audience onboarding, team lifecycle, hosted support, retention and operations. Apply the reversible exercise policies and preserve the source of each captured or external fact. [Implementation and acceptance plan](implementation/COMPLETE_WORKFLOWS.md)
+
 **D-041 · Pilot readiness and workspace operations.** Under the owner's instruction to continue independently, staging can exercise separately bound SES workspaces, explicit holds and recipient-specific unsubscribe links. Use an attended review and reserved addresses. Add a fictional-address CSV import, shared plan and team capacity views, workspace delivery alerts, an operator support-inbox rehearsal and a disposable 90-day purge and restore. These implementation choices do not select commercial terms or authorize customer mail, public list imports, hosted account erasure or new paid infrastructure. [First-newsletter workflow](implementation/DELIVERY_READINESS.md)
 
 | ID | Decision | Basis |

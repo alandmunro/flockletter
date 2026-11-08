@@ -31,6 +31,8 @@ import {retentionPreview} from './retention.js';
 import {teamPage,teamInvitations,grantMember,revokeMember,unavailableTeam,memberPermissions,seatLimit,type ClerkTeam} from './team.js';
 import { inviteMember } from './team-invitations.js';
 import {companyDirectory,createCompany,renameCompany,createBrand,renameBrand,moveBrand} from './companies.js';
+import type { CustomerWorkflows } from './customer-runtime.js';
+import { customerEligibility } from './customer-billing/service.js';
 
 export type Actor = { workspaceId: string; userId: string; actorId: string; owner: boolean; kind: 'session' | 'connection'; scopes: Capability[]; brandIds: string[] | null };
 type CampaignRow = { id: string; brand_id: string; version: number; content: CampaignContent; created_at: Date; updated_at: Date };
@@ -42,6 +44,7 @@ const connectionView = (row: ConnectionRow): Connection => ({ id: row.id, name: 
 
 export function authorize(actor: Actor, name: CommandName) {
   const scope = commands[name].scope;
+  if(scope==='campaign:send'&&actor.kind==='connection')requireCondition(actor.scopes.includes('read'),403,'scope_required','Delivery also requires draft read access.');
   if(scope==='campaign:rehearse' && actor.kind==='connection') requireCondition(actor.scopes.includes('read'),403,'scope_required','Rehearsals also require draft read access.');
   if (scope === 'owner') requireCondition(actor.kind === 'session' && actor.owner, 403, 'owner_required', 'Use a current workspace owner session for this action.');
   else {
@@ -84,7 +87,8 @@ export class CommandService {
     readonly checkOwner:CheckOwner = async()=>{throw new AppError(503,'membership_unavailable','Current workspace membership could not be verified.');},
     readonly resolveTxt:LookupTxt=lookupTxt,readonly billing=new SandboxBilling(db),readonly team:ClerkTeam=unavailableTeam,
     private readonly providerScope?:(workspace:string,brand:string)=>boolean, readonly ses?:SesConfiguration,readonly listmonk?:PrivateListmonk,
-    private readonly importEnvironment?: Config['environment'], readonly marketing?: MarketingLinks) {}
+    private readonly importEnvironment?: Config['environment'], readonly marketing?: MarketingLinks,
+    readonly customer?:CustomerWorkflows) {}
   private get practiceImportsEnabled() {
     return this.importEnvironment === 'staging' || this.importEnvironment === 'local' || this.importEnvironment === 'test';
   }
@@ -121,6 +125,14 @@ export class CommandService {
       throw parsed.error;
     }
     const input = parsed.data;
+    await this.db.tenant(actor.workspaceId,async sql=>{
+      requireCondition(!(await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount,
+        410,'workspace_erased','This workspace has completed its retention erasure. Contact support before creating another workspace.');
+    });
+    if(this.customer&&name==='workspace.preflight')return this.customer.preflight(actor);
+    if(this.customer?.owns(name))return this.customer.execute(name,raw,actor);
+    if(['customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'].some(prefix=>name.startsWith(prefix)))
+      throw new AppError(503,'customer_workflow_unavailable','This workflow needs the customer service configuration.');
     if (name === 'billing.comparePlan') {
       const { plan } = commands[name].schema.parse(raw);
       const members = await verifiedMemberCount(this.team, actor.workspaceId);
@@ -130,10 +142,10 @@ export class CommandService {
     if(name==='billing.checkout') {const request=commands[name].schema.parse(raw);return this.billing.checkout(actor,request.plan,request.operationKey);}
     if(name==='billing.restart'){const input=commands[name].schema.parse(raw);return this.billing.restart(actor,input.plan,input.expiredId,input.operationKey);}
     if(name==='billing.portal') return this.billing.portal(actor,commands[name].schema.parse(raw).operationKey);
-    if(name==='team.invitations') return teamInvitations(this.db,actor.workspaceId,actor.userId,this.team,commands[name].schema.parse(raw).offset);
+    if(name==='team.invitations') return teamInvitations(this.db,actor.workspaceId,actor.userId,this.team,commands[name].schema.parse(raw).offset,this.customer?.billing.options);
     if(name==='team.invite'){
       const request=commands[name].schema.parse(raw);
-      return inviteMember(this.db,actor,this.team,seatLimit,request.email,request.operationKey);
+      return inviteMember(this.db,actor,this.team,sql=>seatLimit(sql,this.customer?.billing.options),request.email,request.operationKey);
     }
     const optOut = name === 'audience.unsubscribe' ? commands[name].schema.parse(raw) : null;
     let wake: {brandId:string;id:string} | undefined;
@@ -145,7 +157,7 @@ export class CommandService {
         if(actor.kind==='session'&&!actor.owner){
           // Recheck after the workspace lock: a brand grant or seat could have changed while this write waited.
           requireCondition(await this.team.membership(actor.userId,actor.workspaceId)==='member',403,'membership_required','Current workspace membership is required.');
-          const current=await memberPermissions(sql,actor.workspaceId,actor.userId,this.team);
+          const current=await memberPermissions(sql,actor.workspaceId,actor.userId,this.team,this.customer?.billing.options);
           actor={...actor,...current};authorize(actor,name);
           if('brandId' in input)await brand(sql,actor,input.brandId);
           if(name==='campaign.update')await campaign(sql,actor,commands[name].schema.parse(raw).id);
@@ -221,8 +233,9 @@ export class CommandService {
         if (!workspace) return null;
         const brands = (await sql.query<{ id: string; name: string }>('SELECT id,name FROM brands ORDER BY name')).rows.filter(b => actor.brandIds === null || actor.brandIds.includes(b.id));
         const access=await workspaceAccess(sql);
+        const serviceAccess=this.customer?await customerEligibility(sql,actor.workspaceId,this.customer.billing.options):undefined;
         const hasDraft=Boolean((await sql.query('SELECT id FROM campaigns WHERE ($1::uuid[] IS NULL OR brand_id=ANY($1)) LIMIT 1',[actor.brandIds])).rowCount);
-        return { name: workspace.name, brands,hasDraft, canEdit:actor.kind==='session'&&actor.owner||actor.scopes.includes('draft:write'), entitlement: access.plan?'complimentary':'not_activated', canManageConnections: actor.kind === 'session' && actor.owner, preparationLimits: limits, plans };
+        return { name: workspace.name, brands,hasDraft,accessLabel:serviceAccess?((serviceAccess.source==='exercise'?'Captured exercise · ':serviceAccess.source==='complimentary'?'Complimentary · ':'')+serviceAccess.state.replaceAll('_',' ')):undefined, canEdit:actor.kind==='session'&&actor.owner||actor.scopes.includes('draft:write'), entitlement: access.plan?'complimentary':'not_activated', canManageConnections: actor.kind === 'session' && actor.owner, preparationLimits: limits, plans };
       }
       case 'workspace.initialize': {
         const input = commands[name].schema.parse(raw);
@@ -241,18 +254,18 @@ export class CommandService {
       }
       case 'workspace.operations':return operations(sql);
       case 'workspace.retention':return retentionPreview(sql,w);
-      case 'team.list':return teamPage(sql,w,this.team,commands[name].schema.parse(raw).offset);
+      case 'team.list':return teamPage(sql,w,this.team,commands[name].schema.parse(raw).offset,this.customer?.billing.options);
       case 'team.grant':{
-        const request=commands[name].schema.parse(raw);return grantMember(sql,w,actor.userId,this.team,request.userId,request.permission,request.brandIds);
+        const request=commands[name].schema.parse(raw);return grantMember(sql,w,actor.userId,this.team,request.userId,request.permission,request.brandIds,this.customer?.billing.options);
       }
       case 'team.revoke':{
         return revokeMember(sql,commands[name].schema.parse(raw).userId);
       }
       case 'template.list': return templates;
-      case 'company.list':return companyDirectory(sql);
-      case 'company.create':return createCompany(sql,w,commands[name].schema.parse(raw).name);
+      case 'company.list':return companyDirectory(sql,this.customer?.billing.options);
+      case 'company.create':return createCompany(sql,w,commands[name].schema.parse(raw).name,this.customer?.billing.options);
       case 'company.rename':{const {id,name:next}=commands[name].schema.parse(raw);return renameCompany(sql,id,next);}
-      case 'brand.create':{const {companyId,name:next}=commands[name].schema.parse(raw);return createBrand(sql,w,companyId,next);}
+      case 'brand.create':{const {companyId,name:next}=commands[name].schema.parse(raw);return createBrand(sql,w,companyId,next,this.customer?.billing.options);}
       case 'brand.rename':{const {id,name:next}=commands[name].schema.parse(raw);return renameBrand(sql,id,next);}
       case 'brand.move':{const {id,companyId}=commands[name].schema.parse(raw);return moveBrand(sql,id,companyId);}
       case 'billing.status':return this.billing.status(sql,w);
@@ -468,6 +481,7 @@ export class CommandService {
       }
       case 'connection.create': {
         const input = commands[name].schema.parse(raw);
+        requireCondition(!input.scopes.includes('campaign:send')||input.scopes.includes('read'),422,'invalid_send_grant','Select draft read access together with campaign delivery.');
         requireCondition(!input.scopes.includes('campaign:simulate')||input.scopes.includes('campaign:rehearse'),422,'invalid_rehearsal_grant','Simulator access also requires campaign rehearsals and draft read access.');
         requireCondition(!input.scopes.includes('campaign:rehearse')||input.scopes.includes('read'),422,'invalid_rehearsal_grant','Select draft read access together with campaign rehearsals.');
         for (const id of input.brandIds) await brand(sql, actor, id);

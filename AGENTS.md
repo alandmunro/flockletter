@@ -2,6 +2,8 @@
 
 ## Current authorization
 
+On November 8 the owner authorized all seven remaining customer workstreams, asked for much more local-model coding with chat oversight, and requested a staging application to exercise within 12 hours. D-042 and [the integration plan](docs/implementation/COMPLETE_WORKFLOWS.md) extend the earlier foundation scope. Complete reusable implementations and normal UI/API/MCP paths. Explicit captured exercises must use the same durable state machines while external activation stays separately configured. Continue without routine questions while the owner is away. Record local drafts actually used and corrections made.
+
 The owner requested all independently buildable work after the staging assessment. D-034 covers the staging campaign pilot, sender ownership checks, protected complimentary grants, customer administration, Stripe sandbox integration and independent engine tests. D-037 adds a separate, explicitly approved synthetic provider rehearsal and a real Listmonk integration in isolation. The original staging provider stores its receipts locally. Preserve old capture approvals; unresolved provider outcomes require lookup, never a speculative resend. [Pilot operation](docs/implementation/CAMPAIGN_PILOT.md)
 
 Under the owner's direction to continue building, D-033 adds an owner audience directory and consent history, durable brand-specific opt-out and an optional aggregate-only assistant capability. Use the existing Flockletter subscriber records and verify populated flows with disposable addresses. [Audience workflow and verification](docs/implementation/AUDIENCE.md)
@@ -36,6 +38,8 @@ D-041 covers the additional staging implementation. Use server-owned SES mapping
 Delegate bounded mechanical coding, boilerplate, test scaffolding, repetitive conversions, documentation scaffolding and first-draft commit messages to the configured local coding model when available. Use the locally installed model through the `llm` command; keep machine-specific model configuration outside this public repository. Never select removed or unavailable models.
 
 Keep architecture, product intent, security, money, tenant isolation, acceptance criteria and final review with the primary assistant. Supply the local model with the relevant facts and constraints, then review its output before use. Preserve the local service's recommended sampling defaults and allow sufficient reasoning time; do not impose a small token budget. If one correction does not resolve a draft's problems, finish that assignment in the primary assistant. If the local service is unavailable or no suitable mechanical assignment exists, continue and explain why.
+
+For bounded mechanical drafts, use the optional `llm --mechanical --stats` mode when the local command supports it. This mode must use a verified template for the installed model, preserve its sampling defaults and context, and enforce at most two concurrent requests. It avoids extended reasoning for routine drafts. Security, billing policy and integration still require primary review. Keep the machine-specific adapter outside this repository.
 
 Every completion report must identify actual local-model and primary-assistant contributions, including corrected or replaced drafts and skipped delegation. Report token or cost percentages only when measured.
 

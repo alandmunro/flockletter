@@ -15,6 +15,7 @@ import { deliveryBindings, runDeliveryQueue } from './campaign/delivery-runner.j
 import { CaptureWorker, captureBinding } from './campaign/worker.js';
 import { SandboxBilling } from './billing/service.js';
 import { sandboxGateway } from './billing/gateway.js';
+import { CustomerWorkflows } from './customer-runtime.js';
 
 if (existsSync('.env')) loadEnvFile('.env');
 const config = loadConfig();
@@ -29,6 +30,7 @@ if (configurationGaps(config).length === 0) {
   const db = new Database(config.databaseUrl!);
   await db.verifyBoundary();
   const identity = config.localIdentity ? localIdentity() : clerkIdentity(config);
+  const customer=new CustomerWorkflows(db,config,identity);
   const bindings = deliveryBindings(process.env);
   messenger=await startPrivateMessenger(db,identity.isOwner,ses,process.env,marketing);
   service = new CommandService(
@@ -41,9 +43,10 @@ if (configurationGaps(config).length === 0) {
     (workspace, brand) => bindings.some((b) => b.workspace === workspace && b.brand === brand),
     ses,
     messenger?.dispatcher,
-    config.environment, marketing,
+    config.environment, marketing,customer,
   );
-  auth = new Authenticator(db, identity);
+  auth = new Authenticator(db, identity,customer.billing.options);
+  if(!customer.settings.dedicated)tasks.push(customer.run(stop.signal));
   const binding = captureBinding(process.env);
   if (binding) {
     const worker = new CaptureWorker(db, identity.isOwner);
@@ -62,14 +65,15 @@ if (configurationGaps(config).length === 0) {
   }
 }
 const server = createApp(config, service, auth).listen(config.port, config.host, () => {
-  console.info(`Flockletter ${config.environment} listening on port ${config.port}. Sending disabled.`);
+  console.info(`Flockletter ${config.environment} listening on port ${config.port}. Customer delivery ${service?.customer?.settings.delivery==='ses'?'requires verified per-brand provider eligibility':'disabled'}.`);
 });
 for (const signal of ['SIGTERM', 'SIGINT'])
   process.once(signal, () => {
     stop.abort();
     ses?.close?.();
+    const customerShutdown=Promise.resolve(service?.customer?.close());
     server.close(() => {
-      void Promise.allSettled(tasks)
+      void customerShutdown.then(()=>Promise.allSettled(tasks))
         .then(() => messenger?.close())
         .then(() => service?.db.close())
         .finally(() => process.exit(0));

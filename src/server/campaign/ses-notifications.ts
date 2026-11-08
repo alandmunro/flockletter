@@ -31,15 +31,25 @@ function readNotification(body: Buffer) {
   catch { throw invalid(); }
 }
 export class SesFeedbackRouter {
-  private handlers: Map<string, SesNotifications>;
+  private handlers=new Map<string, SesNotifications[]>();
   constructor(handlers: readonly SesNotifications[]) {
-    this.handlers = new Map(handlers.map(handler => [handler.route.topicArn, handler]));
+    for(const handler of handlers)this.register(handler);
+  }
+  register(handler:SesNotifications) {
+    const existing=this.handlers.get(handler.route.topicArn)??[];
+    if(existing.some(item=>item.route.fingerprint===handler.route.fingerprint))return;
+    if(existing.length>=8||(!existing.length&&this.handlers.size>=64))throw Error('Feedback routing capacity requires review.');
+    this.handlers.set(handler.route.topicArn,[...existing,handler]);
   }
   async handle(db: Database, body: Buffer) {
     const msg = readNotification(body);
-    const handler = this.handlers.get(msg.TopicArn);
-    if (!handler) throw failed();
-    await handler.verifyAndApply(db, msg);
+    const handlers = this.handlers.get(msg.TopicArn);
+    if (!handlers) throw failed();
+    for(const handler of handlers) {
+      try {await handler.verifyAndApply(db,msg);return;}
+      catch(error){if(!(error instanceof AppError)||error.code!=='feedback_unmapped')throw error;}
+    }
+    throw unmapped();
   }
 }
 const trustedOrigin = (route: SesRoute) => 'https://sns.' + route.region + '.amazonaws.com';
@@ -89,6 +99,7 @@ export class SesNotifications {
       await res.body?.cancel();
       if (!res.ok) throw Error();
     },
+    private consumer?:{customer:true;canConfirm?:()=>Promise<boolean>;apply:(db:Database,event:NonNullable<ReturnType<typeof decodeSesEvent>>,eventId:string)=>Promise<void>},
   ) {}
   private async cert(url: string) {
     const parsed = new URL(url);
@@ -153,6 +164,7 @@ export class SesNotifications {
         url.searchParams.get('Token') !== msg.Token
       )
         throw failed();
+      if(this.consumer?.canConfirm&&!await this.consumer.canConfirm())throw failed();
       try {
         await this.confirm(url.href);
       } catch {
@@ -166,8 +178,9 @@ export class SesNotifications {
     } catch {
       throw invalid();
     }
-    const event = decodeSesEvent(this.route, raw);
+    const event = decodeSesEvent(this.route, raw,this.consumer?.customer===true);
     if (!event) return;
+    if(this.consumer){await this.consumer.apply(db,event,msg.MessageId);return;}
     await db.brand(this.route.workspaceId, this.route.brandId, async (sql) => {
       const owner = (
         await sql.query<{ transport: string }>(
@@ -214,7 +227,7 @@ const eventSchema = z.object({
     .optional(),
   complaint: z.object({ complainedRecipients: emails }).optional(),
 });
-export function decodeSesEvent(route: SesRoute, input: unknown) {
+export function decodeSesEvent(route: SesRoute, input: unknown,customer=false) {
   const type = z.object({ eventType: z.string() }).safeParse(input);
   if (!type.success) throw invalid();
   if (!['Delivery', 'Bounce', 'Complaint'].includes(type.data.eventType)) return;
@@ -228,12 +241,14 @@ export function decodeSesEvent(route: SesRoute, input: unknown) {
   if (
     m.sendingAccountId !== route.accountId ||
     m.sourceArn !== route.identityArn ||
-    m.source !== route.from ||
+    !(m.source===route.from||(customer&&/^"[^"\r\n]*" <[^<>]+>$/.test(m.source)&&m.source.endsWith(' <'+route.from+'>'))) ||
     tag('fl_tenant') !== route.tenant ||
     tag('ses:configuration-set') !== route.configurationSet ||
     !operation ||
     !z.uuid().safeParse(operation).success ||
-    !['success', 'bounce', 'complaint'].some((v) => dest === v + '@simulator.amazonses.com')
+    !(customer
+      ? tag('fl_customer')==='1' && tag('fl_brand')===route.brandId && !dest.toLowerCase().endsWith('@simulator.amazonses.com')
+      : ['success', 'bounce', 'complaint'].some((v) => dest === v + '@simulator.amazonses.com'))
   )
     throw unmapped();
   let kind: CampaignFeedbackKind;

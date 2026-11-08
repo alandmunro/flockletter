@@ -1,6 +1,7 @@
 // Run only in a protected release shell. Inputs are read from stdin, never argv or service env.
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import { applyMigrations } from './apply-migrations.mjs';
+import { prepareCustomerSchemas } from './prepare-customer-schemas.mjs';
 import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
 import { createInterface } from 'node:readline/promises';
 import process from 'node:process';
@@ -13,6 +14,7 @@ const runtime = 'flockletter_staging_runtime';
 const migrator = 'flockletter_staging_migrator';
 const marker = 'Flockletter staging foundation';
 const mode = process.argv[2];
+let phase='preparation';
 if (!['inspect', 'prepare', 'apply'].includes(mode)) throw new Error('Choose inspect, prepare or apply.');
 
 // PostgreSQL's SCRAM-SHA-256 stored-password format (RFC 5802). Only verifiers appear in DDL.
@@ -116,13 +118,17 @@ async function provision(admin) {
     await owner.query('REVOKE ALL ON SCHEMA public FROM PUBLIC');
     await owner.query(`GRANT USAGE, CREATE ON SCHEMA public TO ${migrator} WITH GRANT OPTION`);
     await owner.query(`GRANT USAGE ON SCHEMA public TO ${runtime}`);
+    phase='customer_schemas';
+    await prepareCustomerSchemas(owner);
   });
   await admin.query(`ALTER ROLE ${migrator} LOGIN`);
   await admin.query(`ALTER ROLE ${runtime} LOGIN`);
   await using(connect(target, migrator, passwords[migrator]), async release => {
+    phase='migrations';
     await applyMigrations(release, runtime);
   });
   await using(connect(target, runtime, passwords[runtime]), async app => {
+    phase='runtime_verification';
     const check = await verifyRuntimeBoundary(app,{database:target,role:runtime});
     console.log(JSON.stringify({ verified: true, foreignCatalogsChecked: other.rowCount, ...check }));
   });
@@ -131,6 +137,6 @@ async function provision(admin) {
 try { await using(connect(settings.expectedSource), provision); }
 catch (error) {
   // PostgreSQL errors can include SQL or request parameters. Emit only an error category.
-  console.error(error.code ? `Staging database operation failed (${error.code}).` : error.message?.replace(/postgres(?:ql)?:\/\/\S+/gi, '[connection]'));
+  console.error(error.code ? `Staging database operation failed (${error.code}; ${error.schemaPreparationPhase??phase}).` : error.message?.replace(/postgres(?:ql)?:\/\/\S+/gi, '[connection]'));
   process.exitCode = 1;
 }

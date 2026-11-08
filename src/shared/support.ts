@@ -1,18 +1,8 @@
 import { plans } from './contracts.js';
 import { hostedTrial } from './trial.js';
+import type { SupportTopic } from './support-topics.js';
+export { supportTopics,type SupportTopic } from './support-topics.js';
 export const supportAddress = 'support@frostyflamingosoftware.com';
-export const supportTopics = [
-  'plans',
-  'trial',
-  'audience',
-  'campaigns',
-  'billing',
-  'security',
-  'privacy',
-  'recovery',
-  'other',
-] as const;
-export type SupportTopic = (typeof supportTopics)[number];
 export function supportAnswer(topic: SupportTopic) {
   switch (topic) {
     case 'plans':
