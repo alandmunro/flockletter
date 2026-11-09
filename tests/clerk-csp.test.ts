@@ -3,15 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/server/app.js';
 import { loadConfig } from '../src/server/config.js';
 
-async function fetchPolicy(env: NodeJS.ProcessEnv) {
+async function fetchPolicy(env: NodeJS.ProcessEnv, path = '/healthz', expectedStatus = 200) {
   const server = createApp(loadConfig(env)).listen(0, '127.0.0.1');
   try {
     await once(server, 'listening');
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('The test requires a TCP port.');
-    const response = await fetch(`http://127.0.0.1:${address.port}/healthz`);
+    const response = await fetch(`http://127.0.0.1:${address.port}${path}`);
     await response.text();
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(expectedStatus);
     const policy = response.headers.get('content-security-policy');
     if (!policy) throw new Error('The response has no content security policy.');
     return Object.fromEntries(policy.split(';').map(directive => {
@@ -44,5 +44,36 @@ describe('Clerk signup browser policy', () => {
     for (const directive of ['script-src', 'frame-src', 'connect-src', 'worker-src']) {
       expect(policy[directive]).toEqual(["'self'"]);
     }
+  });
+
+  describe.each([
+    { env: { APP_ENV: 'local' }, label: 'local' },
+    {
+      env: {
+        APP_ENV: 'staging',
+        APP_ORIGIN: 'https://staging.example.com',
+        CLERK_PUBLISHABLE_KEY: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`,
+      },
+      label: 'staging',
+    },
+    {
+      env: {
+        APP_ENV: 'production',
+        APP_ORIGIN: 'https://production.example.com',
+        CLERK_PUBLISHABLE_KEY: `pk_live_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`,
+        CLERK_SECRET_KEY: 'sk_live_fixture_not_a_real_key',
+      },
+      label: 'production',
+    },
+  ])('$label font policy', ({ env }) => {
+    it.each([
+      { path: '/healthz', status: 200 },
+      { path: '/api/config', status: 200 },
+      { path: '/api/v1/schema', status: 503 },
+    ])('restricts font sources on $path ($status)', async ({ path, status }) => {
+      const policy = await fetchPolicy(env, path, status);
+      expect(policy['font-src']).toEqual(["'self'"]);
+      expect(policy['style-src']).toEqual(["'self'", "'unsafe-inline'"]);
+    });
   });
 });
