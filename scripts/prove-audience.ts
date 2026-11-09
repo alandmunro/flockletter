@@ -1,3 +1,4 @@
+import {rejectOptionalCookies} from './browser-cookie-choice.js';
 import assert from 'node:assert/strict';
 import { verifyPracticeImport } from './check-practice-import.js';
 import { verifyWorkspaceActivity } from './check-workspace-activity.js';
@@ -168,7 +169,7 @@ async function verify(page: Page, origin: string) {
   const list = page.getByRole('table', { name: 'Audience contacts' });
   const navigate = () => button('Audience').click();
   const openReader = () => button(reader).click();
-  await page.goto(origin);
+  await page.goto(origin);await rejectOptionalCookies(page);
   await navigate();
   await list.waitFor();
   const total = page.getByText('Total contacts', { exact: true });

@@ -49,6 +49,8 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
+**D-045 cookie choices:** FL-PRV-001 is covered by the preference validation tests and desktop/mobile browser journey in [cookie choices](implementation/COOKIE_CHOICES.md), with an unsaved Studio draft preservation check. Hosted sign-in preservation and deployment evidence are recorded after staging verification. No new optional tracking provider is activated.
+
 **D-044 release parity:** FL-OPS-001/003/004/006 have additional production provisioning/migration coverage in `tests/production-provision.test.ts`: explicit environment/confirmation, fixed isolated identities, full runtime-boundary checks, idempotent migration replay, protected input/output and refusal without repairing foreign permissions or altering foreign rows. Shared-host capacity and live production identity remain external checks. [Release record](implementation/RELEASE_PARITY.md)
 
 FL-AT-013/014/020/021/025/037/038 have additional staging implementation coverage. The synthetic storefront-to-newsletter test exercises double opt-in, the exact reviewed message and original image, a personal opt-out, and exclusion on the next send. Two workspaces exercise scoped simulator readiness, isolated holds, signed feedback routing and recovery. AWS account evidence and an authorized real inbox remain release gates. [Delivery readiness](implementation/DELIVERY_READINESS.md)

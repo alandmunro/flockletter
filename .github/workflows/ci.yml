@@ -39,6 +39,7 @@ jobs:
       - run: npm run check
       - run: node scripts/studio-notices.mjs --check-build
       - run: npx playwright-core install --with-deps chromium webkit
+      - run: node --import tsx scripts/prove-cookie-consent.ts
       - run: npm run audience:verify
       - run: node --import tsx scripts/prove-customer-workflows.ts
       - run: node --import tsx scripts/prove-platform.ts
