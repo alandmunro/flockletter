@@ -89,6 +89,7 @@ try{
       const approvals=calls.filter(call=>call.name==='delivery.approveTest');assert.equal(approvals.length,2);assert.deepEqual(approvals[0]!.body,approvals[1]!.body,'Lost acknowledgment retries preserve the exact approval intent.');
     }else await review.getByRole('button',{name:'Approve one-recipient test',exact:true}).click();
     await review.getByRole('button',{name:'Process or reconcile test',exact:true}).waitFor();
+    await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).some(button=>button.textContent?.trim()==='Refresh test'&&button.disabled));
     if(width===1280){
       await service.execute('delivery.pause',{operationKey:randomUUID(),brandId:brand,id:saved.id},actor);
       await review.getByRole('button',{name:'Refresh test',exact:true}).click();
