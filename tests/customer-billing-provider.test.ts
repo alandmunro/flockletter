@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import Stripe from 'stripe';
 import { expect, it } from 'vitest';
 import { stripeCustomerProvider, type ProviderNotice } from '../src/server/customer-billing/provider.js';
+import type { CustomerPlan } from '../src/shared/customer-billing.js';
 
 const environment = {
   APP_ENV: 'staging',
@@ -10,11 +11,55 @@ const environment = {
   FLOCKLETTER_CUSTOMER_STRIPE_KEY: 'sk_test_SYNTHETIC',
   FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK: 'whsec_fixture',
   FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG: 'pmc_fixture',
+  FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG: 'bpc_fixture',
   FLOCKLETTER_CUSTOMER_STARTER_PRICE: 'price_starter',
   FLOCKLETTER_CUSTOMER_GROWTH_PRICE: 'price_growth',
   FLOCKLETTER_CUSTOMER_PRO_PRICE: 'price_pro',
 };
 const base = 1804777200;
+function billingPrice(plan: CustomerPlan) {
+  const amounts = { starter: 1500, growth: 2500, pro: 3900 };
+  return {
+    id: 'price_' + plan,
+    active: true,
+    livemode: false,
+    currency: 'usd',
+    unit_amount: amounts[plan],
+    unit_amount_decimal: null,
+    billing_scheme: 'per_unit',
+    metadata: { fl_application: 'flockletter', fl_plan: plan },
+    recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
+    product: {
+      id: 'prod_flockletter',
+      active: true,
+      livemode: false,
+      metadata: { fl_application: 'flockletter' },
+    },
+  };
+}
+function billingPortal() {
+  return {
+    id: 'bpc_fixture', active: true, is_default: false, livemode: false,
+    metadata: { fl_application: 'flockletter' },
+    default_return_url: 'https://flockletter.example.test/',
+    login_page: { enabled: false },
+    features: {
+      customer_update: { enabled: false },
+      invoice_history: { enabled: true },
+      payment_method_update: { enabled: true, payment_method_configuration: 'pmc_fixture' },
+      subscription_cancel: { enabled: true, mode: 'at_period_end', proration_behavior: 'none' },
+      subscription_pause: { enabled: false },
+      subscription_update: {
+        enabled: true,
+        default_allowed_updates: ['price'],
+        billing_cycle_anchor: 'unchanged', proration_behavior: 'always_invoice',
+        trial_update_behavior: 'continue_trial',
+        schedule_at_period_end: { conditions: [{ type: 'decreasing_item_amount' }] },
+        products: [{ product: 'prod_flockletter', prices: ['price_starter', 'price_growth', 'price_pro'] }],
+      },
+    },
+  };
+}
 function subscription(price = 'price_growth', quantity = 1) {
   return {
     id: 'sub_fixture',
@@ -40,19 +85,7 @@ function subscription(price = 'price_growth', quantity = 1) {
           quantity,
           current_period_start: base,
           current_period_end: base + 30 * 86400,
-          price: {
-            id: price,
-            livemode: false,
-            unit_amount: 2500,
-            unit_amount_decimal: '2500',
-            currency: 'usd',
-            billing_scheme: 'per_unit',
-            recurring: {
-              interval: 'month',
-              interval_count: 1,
-              usage_type: 'licensed',
-            },
-          },
+          price: { ...billingPrice('growth'), id: price },
         },
       ],
     },
@@ -101,14 +134,7 @@ it('creates one provider-held card trial with exact account and catalogue fields
   const site = fixture((url, body) => {
     if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
     if (url.pathname === '/v1/prices/price_growth')
-      return {
-        id: 'price_growth',
-        active: true,
-        livemode: false,
-        unit_amount: 2500,
-        currency: 'usd',
-        recurring: { interval: 'month', interval_count: 1 },
-      };
+      return billingPrice('growth');
     if (url.pathname === '/v1/checkout/sessions')
       return {
         id: 'cs_test_fixture',
@@ -411,3 +437,106 @@ it('creates only the approved trial end under an activation idempotency key and 
     site.provider.lookupTrial!({ ...intent, trialEnd: new Date(end.getTime() + 1000) }),
   ).rejects.toThrow('could not be verified');
 });
+
+it('binds hosted portal sessions to the verified dedicated configuration and rejects changed policy before POST', async () => {
+  let portal = billingPortal();
+  const site = fixture((url) => {
+    if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
+    for (const plan of ['starter', 'growth', 'pro'] as const)
+      if (url.pathname === '/v1/prices/price_' + plan) return billingPrice(plan);
+    if (url.pathname === '/v1/billing_portal/configurations/bpc_fixture') return portal;
+    if (url.pathname === '/v1/billing_portal/sessions')
+      return { id: 'bps_fixture', url: 'https://billing.stripe.com/p/session_fixture' };
+    throw Error('Unexpected request');
+  });
+  expect(await site.provider.portal('cus_fixture', 'stable_portal_operation')).toBe(
+    'https://billing.stripe.com/p/session_fixture',
+  );
+  const posts = () => site.calls.filter((call) => call.url.pathname === '/v1/billing_portal/sessions');
+  expect(posts()).toHaveLength(1);
+  expect(posts()[0]!.body.get('configuration')).toBe('bpc_fixture');
+  expect(posts()[0]!.body.get('customer')).toBe('cus_fixture');
+  expect(posts()[0]!.body.get('return_url')).toBe('https://flockletter.example.test/');
+  portal = billingPortal();
+  portal.features.subscription_cancel.mode = 'immediately';
+  await expect(site.provider.portal('cus_fixture', 'new_portal_operation')).rejects.toThrow(
+    'The Flockletter billing provider could not be verified.',
+  );
+  expect(posts()).toHaveLength(1);
+});
+
+function subscriptionSchedule(status: 'active' | 'released' = 'active') {
+  return {
+    id: 'sub_sched_fixture',
+    object: 'subscription_schedule',
+    livemode: false,
+    status,
+    customer: 'cus_fixture',
+    subscription: status === 'active' ? 'sub_fixture' : null,
+    released_subscription: status === 'released' ? 'sub_fixture' : null,
+    metadata: { fl_workspace: 'org_wrong', fl_subscription: 'sub_wrong' },
+    current_phase: { start_date: base, end_date: base + 30 * 86400 },
+    phases: [
+      { start_date: base, end_date: base + 30 * 86400, items: [{ price: 'price_growth', quantity: 1 }] },
+      { start_date: base + 30 * 86400, end_date: base + 60 * 86400, items: [{ price: 'price_starter', quantity: 1 }] },
+    ],
+  };
+}
+
+it('projects the next renewal downgrade only after retrieving its bound schedule and current catalogue price', async () => {
+  let schedule = subscriptionSchedule();
+  let nextPrice = billingPrice('starter');
+  const site = fixture((url) => {
+    if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
+    if (url.pathname === '/v1/subscriptions/sub_fixture')
+      return { ...subscription(), schedule: 'sub_sched_fixture' };
+    if (url.pathname === '/v1/subscription_schedules/sub_sched_fixture') return schedule;
+    if (url.pathname === '/v1/prices/price_starter') return nextPrice;
+    throw Error('Unexpected request');
+  });
+  expect(await site.provider.inspectSubscription!('sub_fixture')).toMatchObject({
+    plan: 'growth', pendingPlan: 'starter', customer: 'cus_fixture',
+  });
+  const priceRead = site.calls.find((call) => call.url.pathname === '/v1/prices/price_starter')!;
+  expect(priceRead.url.searchParams.get('expand[0]')).toBe('product');
+  nextPrice = { ...billingPrice('starter'), product: { ...billingPrice('starter').product, metadata: { fl_application: 'other_application' } } };
+  await expect(site.provider.inspectSubscription!('sub_fixture')).rejects.toThrow(
+    'The Flockletter billing catalogue could not be verified.',
+  );
+  nextPrice = billingPrice('starter');
+  schedule = { ...subscriptionSchedule(), customer: 'cus_foreign' };
+  await expect(site.provider.inspectSubscription!('sub_fixture')).rejects.toThrow(
+    'The Flockletter billing schedule could not be verified.',
+  );
+});
+
+it.each(['updated', 'released'] as const)(
+  'resolves a signed schedule %s event through the authoritative subscription reference',
+  async (kind) => {
+    const eventType = 'subscription_schedule.' + kind;
+    const schedule = subscriptionSchedule(kind === 'released' ? 'released' : 'active');
+    const event = {
+      id: 'evt_schedule', object: 'event', livemode: false, type: eventType,
+      data: { object: { id: schedule.id, metadata: { fl_subscription: 'sub_wrong', fl_workspace: 'org_wrong' } } },
+    };
+    const site = fixture((url) => {
+      if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
+      if (url.pathname === '/v1/events/evt_schedule') return event;
+      if (url.pathname === '/v1/subscription_schedules/sub_sched_fixture') return schedule;
+      if (url.pathname === '/v1/subscriptions/sub_fixture')
+        return { ...subscription(), schedule: kind === 'released' ? null : schedule.id };
+      if (url.pathname === '/v1/prices/price_starter') return billingPrice('starter');
+      throw Error('Unexpected request');
+    });
+    const raw = JSON.stringify(event);
+    const signature = site.stripe.webhooks.generateTestHeaderString({ payload: raw, secret: 'whsec_fixture' });
+    const notice = site.provider.verify(Buffer.from(raw), signature);
+    expect(notice).toMatchObject({ id: 'evt_schedule', kind: eventType, subscription: null, risk: false });
+    const resolved = await site.provider.resolve(notice!);
+    expect(resolved).toMatchObject({
+      checkoutId: null, intentId: null, workspace: null,
+      subscription: { id: 'sub_fixture', workspaceHint: 'org_fixture', pendingPlan: kind === 'released' ? null : 'starter' },
+    });
+    expect(site.calls.some((call) => call.url.pathname === '/v1/subscriptions/sub_wrong')).toBe(false);
+  },
+);
