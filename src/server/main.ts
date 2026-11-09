@@ -1,5 +1,5 @@
 import { loadMarketingLinks } from './subscribers/marketing-links.js';
-import {startPrivateMessenger} from './campaign/private-messenger.js';
+import {startLegacyMessenger} from './private-engine-startup.js';
 import {loadSesRuntime} from './campaign/ses-runtime.js';
 import { loadEnvFile } from 'node:process';
 import { existsSync } from 'node:fs';
@@ -24,7 +24,7 @@ const config = loadConfig();
 const marketing = loadMarketingLinks(config.origin);
 const ses=loadSesRuntime(process.env);
 let service: CommandService | undefined;
-let messenger:Awaited<ReturnType<typeof startPrivateMessenger>>;
+let messenger:Awaited<ReturnType<typeof startLegacyMessenger>>;
 let auth: Authenticator | undefined;
 let platform:PlatformService|undefined;
 const stop = new AbortController();
@@ -35,8 +35,9 @@ if (configurationGaps(config).length === 0) {
   if((await db.pool.query('SELECT public.flockletter_restore_blocked() blocked')).rows[0]?.blocked)throw Error('Restored data remains quarantined. Complete protected checkpoint reconciliation and operator release before startup.');
   const identity = config.localIdentity ? localIdentity() : clerkIdentity(config);
   const customer=new CustomerWorkflows(db,config,identity);
+  await customer.engine?.verify();
   const bindings = deliveryBindings(process.env);
-  messenger=await startPrivateMessenger(db,identity.isOwner,ses,process.env,marketing);
+  messenger=await startLegacyMessenger(config,db,identity.isOwner,ses,process.env,marketing);
   service = new CommandService(
     db,
     new SubscriberIntake(db, loadIntakeBinding(config), loadLinkBinding(config)),
