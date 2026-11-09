@@ -29,6 +29,8 @@ Use a Flockletter-only Resend account or team. The provider currently offers `se
 | `FLOCKLETTER_PLATFORM_ALERT_RESEND_RETRIEVE_KEY` | Alert reconciliation retrieval credential, distinct from its sending key |
 | `FLOCKLETTER_PLATFORM_ALERT_FROM` / `FLOCKLETTER_PLATFORM_ALERT_TO` | Exact reviewed sending mailbox and operator recipient |
 
+Alert activation accepts only `off` or `approved`; unknown values fail configuration. Approved live alerts require nonblank, distinct sending and retrieval keys after whitespace normalization, and the transport receives those normalized values. Disabled alerts require no credentials.
+
 Support and alert retrieval credentials may reside in the same dedicated Flockletter provider account, but must not be mistaken for technically restricted read-only credentials. Code uses only fixed retrieval URLs. Provider permissions and account separation require external verification; variable names do not prove them.
 
 ## DNS and receiving
@@ -68,3 +70,5 @@ The legacy FFA server-proxy/intake contract remains explicitly staging-only. Its
 Credential separation and retry behavior are covered by provider/configuration tests and disposable PostgreSQL support tests. The complete local validation passed 92 files and 603 tests, with two explicitly gated private-engine tests skipped; lint, typecheck and the production build passed. Final confirmation hardening also passed all 11 focused tests. They do not prove live delivery, domain ownership or Resend key permissions. Record actual provider/domain/receipt verification separately, without secret values or customer bodies.
 
 Local Qwen drafted three bounded credential-isolation test cases. Chat reviewed the draft, corrected a mutable declaration and an existing lookup fixture, and owns credential scope, transport wiring, failure behavior and this operational checklist.
+
+For the follow-up alert configuration regression, the local model drafted focused tests; Chat owns the fail-closed flag validation, normalized credential separation and runtime integration, and corrected its import, duplicate cases and capture-mode fixture before use.

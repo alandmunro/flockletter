@@ -72,3 +72,17 @@ it('publishes an exactly reviewed disabled policy and rejects a stale current-ve
   const history=await support(review,'support.policyHistory',{}) as {policies:{version:number;enabled:boolean}[]};
   expect(history.policies[0]).toMatchObject({version:3,enabled:false});
 });
+
+it('fails alert credential configuration before opening live operator resources',async()=>{
+  const identity=localIdentity(),config=loadConfig({APP_ENV:'test',APP_ORIGIN:'http://127.0.0.1:4310',DATABASE_URL:fixture.url});
+  const customer=new CustomerWorkflows(db,config,identity,{}),auth=new Authenticator(db,identity);
+  const env={FLOCKLETTER_PLATFORM_MODE:'live',FLOCKLETTER_PLATFORM_ALERTS_ENABLED:'approved',
+    FLOCKLETTER_PLATFORM_ALERT_RESEND_KEY:'send-fixture',FLOCKLETTER_PLATFORM_ALERT_RESEND_RETRIEVE_KEY:' \t ',
+    FLOCKLETTER_PLATFORM_ALERT_FROM:'ops@example.test',FLOCKLETTER_PLATFORM_ALERT_TO:'owner@example.test'};
+  try {
+    // No operator database or organization is supplied: malformed transport must fail first.
+    await expect(platformRuntime(config,db,auth,customer,env)).rejects.toThrow('separate sending/retrieval');
+    await expect(platformRuntime(config,db,auth,customer,{...env,FLOCKLETTER_PLATFORM_ALERTS_ENABLED:'enabled'}))
+      .rejects.toThrow();
+  }finally{await customer.close();}
+});
