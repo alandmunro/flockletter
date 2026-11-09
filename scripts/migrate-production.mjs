@@ -1,3 +1,4 @@
+import {Buffer} from 'node:buffer';
 // Releases use the unlinked migration secret only in this private process.
 import { createInterface } from 'node:readline/promises';
 import process from 'node:process';
@@ -6,7 +7,7 @@ import { URL } from 'node:url';
 import pg from 'pg';
 import { applyMigrations } from './apply-migrations.mjs';
 import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
-import { hasSupportedProductionConnectionOptions } from './production-connection.mjs';
+import {releaseInputPreflight,refuseReleaseInput} from './release-input.mjs';
 
 async function run() {
   const tag = process.argv[2];
@@ -16,33 +17,15 @@ async function run() {
   if (process.stdin.isTTY) console.log('PRIVATE_INPUT_READY ' + tag);
   const line = await input[Symbol.asyncIterator]().next();
   input.close();
-  let migration, runtime;
+  let data;
   try {
-    // In a protected, echo-disabled terminal the operator can paste the existing
-    // migration URI directly. Never accept a credential on the command line.
-    const pair = process.argv[3] === '--pair-stdin';
-    if (!pair) throw new Error('Invalid private production release input.');
-    const data = JSON.parse(line.value);
-    migration = new URL(data.migrationUrl);
-    runtime = new URL(data.runtimeUrl);
-  } catch {
-    throw new Error('Invalid private production release input.');
-  }
-  if (
-    process.env.APP_ENV !== 'production' ||
-    !['postgres:', 'postgresql:'].includes(migration.protocol) ||
-    !['postgres:', 'postgresql:'].includes(runtime.protocol) ||
-    !hasSupportedProductionConnectionOptions(migration) ||
-    !hasSupportedProductionConnectionOptions(runtime) ||
-    migration.host !== runtime.host ||
-    migration.pathname !== '/flockletter_production' ||
-    runtime.pathname !== migration.pathname ||
-    migration.username !== 'flockletter_production_migrator' ||
-    runtime.username !== 'flockletter_production_runtime' ||
-    !migration.password ||
-    !runtime.password
-  )
-    throw new Error('Refusing a release outside the isolated production database.');
+    if(line.done||Buffer.byteLength(line.value,'utf8')>65536)throw Error('Invalid input.');
+    if(process.argv[3]!=='--pair-stdin')throw Error('Invalid input.');
+    data=JSON.parse(line.value);
+  } catch { refuseReleaseInput(['private_input_invalid']); }
+  const gaps=releaseInputPreflight('production.migrate',data,process.env.APP_ENV);
+  if(gaps.length)refuseReleaseInput(gaps);
+  const migration=new URL(data.migrationUrl),runtime=new URL(data.runtimeUrl);
   const client = new pg.Client({
     connectionString: migration.href,
     connectionTimeoutMillis: 8000,

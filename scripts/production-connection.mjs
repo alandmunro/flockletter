@@ -4,6 +4,6 @@ const sslModes = new Set(['disable', 'no-verify', 'prefer', 'require', 'verify-c
 
 export function hasSupportedProductionConnectionOptions(url) {
   const entries = [...url.searchParams.entries()];
-  return Boolean(url.hostname) && !url.hash && (entries.length === 0 ||
+  return Boolean(url.hostname) && !url.href.includes('#') && (entries.length === 0 ||
     (entries.length === 1 && entries[0][0] === 'sslmode' && sslModes.has(entries[0][1])));
 }

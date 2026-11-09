@@ -1,0 +1,12 @@
+export type ReleaseTarget={version:1;operation:string;host:string;port:number;database:string;migrationRole:string;runtimeRole:string;sourceDatabase?:string;administratorRole?:string};
+export type ReleasePlan={version:1;operation:string;environment:string;target:ReleaseTarget;targetFingerprint:string;sourceFingerprint:string;createdAt:string;operationId:string};
+export const releaseRoot:string;
+export function targetSpecGaps(value:unknown):string[];
+export function targetFingerprint(spec:ReleaseTarget):string;
+export function releaseSourceFingerprint():Promise<string>;
+export function verifyReleaseSourceFile(file:string):Promise<void>;
+export function createReleasePlan(spec:unknown,now?:Date):Promise<{codes?:string[];plan?:ReleasePlan}>;
+export function releasePlanGaps(plan:unknown,sourceFingerprint:string,now?:Date):string[];
+export function releasePlanDigest(plan:ReleasePlan):string;
+export function privateEnvelopeGaps(envelope:unknown,plan:ReleasePlan):string[];
+export function readProtectedReleaseFile(file:string|undefined,limit?:number):Promise<string>;

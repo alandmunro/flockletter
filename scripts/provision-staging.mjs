@@ -1,3 +1,4 @@
+import {Buffer} from 'node:buffer';
 // Run only in a protected release shell. Inputs are read from stdin, never argv or service env.
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import { applyMigrations } from './apply-migrations.mjs';
@@ -8,6 +9,8 @@ import process from 'node:process';
 import console from 'node:console';
 import { URL } from 'node:url';
 import pg from 'pg';
+import {releaseInputPreflight,refuseReleaseInput} from './release-input.mjs';
+import {auditReleaseForeignAccess} from './release-foreign-audit.mjs';
 
 const target = 'flockletter_staging';
 const runtime = 'flockletter_staging_runtime';
@@ -15,7 +18,8 @@ const migrator = 'flockletter_staging_migrator';
 const marker = 'Flockletter staging foundation';
 const mode = process.argv[2];
 let phase='preparation';
-if (!['inspect', 'prepare', 'apply'].includes(mode)) throw new Error('Choose inspect, prepare or apply.');
+if (!['inspect', 'prepare', 'apply'].includes(mode)) refuseReleaseInput(['operation_invalid']);
+if(process.env.APP_ENV!=='staging')refuseReleaseInput(['environment_mismatch']);
 
 // PostgreSQL's SCRAM-SHA-256 stored-password format (RFC 5802). Only verifiers appear in DDL.
 function verifier(password) {
@@ -35,16 +39,12 @@ if (process.stdin.isTTY) {
 }
 const line = await input[Symbol.asyncIterator]().next();
 input.close();
-if (line.done) throw new Error('Missing private release input.');
+if(line.done||Buffer.byteLength(line.value,'utf8')>65536)refuseReleaseInput(['private_input_invalid']);
 let settings;
-let url;
-try {
-  settings = JSON.parse(line.value);
-  url = new URL(settings.adminUrl);
-} catch { throw new Error('Invalid private release input.'); }
-if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.hostname !== settings.expectedHost ||
-    url.pathname !== `/${settings.expectedSource}` || !settings.expectedSource?.includes('staging') ||
-    settings.expectedSource === target || !url.password) throw new Error('The administration connection must match the explicitly selected staging host and source database.');
+try { settings=JSON.parse(line.value); } catch { refuseReleaseInput(['private_input_invalid']); }
+const gaps=releaseInputPreflight('staging.'+mode,settings,process.env.APP_ENV);
+if(gaps.length)refuseReleaseInput(gaps);
+const url=new URL(settings.adminUrl);
 
 function connect(database, role, password) {
   const connection = new URL(url);
@@ -82,7 +82,6 @@ async function provision(admin) {
     console.log(JSON.stringify({ prepared: true, database: target }));
     return;
   }
-  if (settings.runtimePassword === settings.migratorPassword) throw new Error('Use distinct role secrets.');
   const passwords = { [runtime]: settings.runtimePassword, [migrator]: settings.migratorPassword };
   await admin.query('BEGIN');
   try {
@@ -96,22 +95,7 @@ async function provision(admin) {
   } catch (error) { await admin.query('ROLLBACK'); throw error; }
   const memberships = await admin.query('SELECT 1 FROM pg_auth_members WHERE member IN (SELECT oid FROM pg_roles WHERE rolname=ANY($1))', [[runtime, migrator]]);
   if (memberships.rowCount) throw new Error('The Flockletter roles have additional role memberships. Review before activation.');
-  const other = await admin.query('SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate AND datname<>$1 AND has_database_privilege($2,datname,\'CONNECT\')', [target, runtime]);
-  for (const { datname } of other.rows) {
-    await using(connect(datname), async audit => {
-      const result = await audit.query(`SELECT EXISTS (
-        SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-        WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND has_schema_privilege($1,n.oid,'USAGE')
-        AND CASE WHEN c.relkind='S' THEN has_sequence_privilege($1,c.oid,'SELECT,USAGE,UPDATE')
-          WHEN c.relkind IN ('r','p','v','m','f') THEN has_table_privilege($1,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') ELSE false END
-      ) OR EXISTS (
-        SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-        WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND p.prosecdef
-        AND has_schema_privilege($1,n.oid,'USAGE') AND has_function_privilege($1,p.oid,'EXECUTE')
-      ) OR EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND has_schema_privilege($1,n.oid,'CREATE')) AS unsafe`, [runtime]);
-      if (result.rows[0].unsafe) throw new Error('A foreign database grants the runtime access to application objects or a privileged function. Review its grants before activation.');
-    });
-  }
+  const foreignCatalogsChecked=await auditReleaseForeignAccess(admin,connect,target,[runtime,migrator]);
   await admin.query(`GRANT CONNECT ON DATABASE ${target} TO ${migrator},${runtime}`);
   await admin.query(`ALTER DATABASE ${target} ALLOW_CONNECTIONS true`);
   await using(connect(target), async owner => {
@@ -130,7 +114,7 @@ async function provision(admin) {
   await using(connect(target, runtime, passwords[runtime]), async app => {
     phase='runtime_verification';
     const check = await verifyRuntimeBoundary(app,{database:target,role:runtime});
-    console.log(JSON.stringify({ verified: true, foreignCatalogsChecked: other.rowCount, ...check }));
+    console.log(JSON.stringify({ verified: true, foreignCatalogsChecked, ...check }));
   });
 }
 

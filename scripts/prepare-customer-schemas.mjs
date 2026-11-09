@@ -3,6 +3,7 @@ import pg from 'pg';
 import { createInterface } from 'node:readline/promises';
 import { URL, pathToFileURL } from 'node:url';
 import process from 'node:process';
+import {hasSupportedProductionConnectionOptions} from './production-connection.mjs';
 
 const database = 'flockletter_staging';
 const migrator = 'flockletter_staging_migrator';
@@ -30,8 +31,8 @@ export async function prepareCustomerSchemas(client) {
     if (identity.actor !== identity.database_owner) reject('database_owner_required');
     const role = (
       await client.query(
-        `SELECT oid,rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication AS unsafe,
-      shobj_description(oid,'pg_authid') AS marker FROM pg_roles WHERE rolname=$1`,
+        `SELECT r.oid,rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication OR EXISTS(SELECT FROM pg_auth_members m WHERE m.member=r.oid) AS unsafe,
+      shobj_description(r.oid,'pg_authid') AS marker FROM pg_roles r WHERE rolname=$1`,
         [migrator],
       )
     ).rows[0];
@@ -76,6 +77,7 @@ export async function prepareCustomerSchemas(client) {
 }
 
 async function main() {
+  if(process.env.APP_ENV!=='staging')reject('staging_environment_required');
   const input = createInterface({ input: process.stdin, terminal: false });
   const line = await input[Symbol.asyncIterator]().next();
   input.close();
@@ -88,11 +90,11 @@ async function main() {
     reject('private_input_invalid');
   }
   if (
-    settings.expectedDatabase !== database ||
+    settings.confirmStaging!==true || settings.expectedDatabase !== database ||
     !['postgres:', 'postgresql:'].includes(url.protocol) ||
     url.pathname !== `/${database}` ||
     !url.username ||
-    !url.password
+    !url.password || !hasSupportedProductionConnectionOptions(url)
   )
     reject('database_scope_invalid');
   const client = new pg.Client({
