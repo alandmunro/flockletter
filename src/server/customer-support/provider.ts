@@ -22,6 +22,7 @@ export class ResendSupportProvider implements SupportProvider {
   constructor(
     private readonly key: string,
     private readonly send: typeof fetch = fetch,
+    private readonly retrieveKey?: string,
   ) {
     if (!key.trim()) throw Error('Configure a dedicated support email credential.');
   }
@@ -62,12 +63,12 @@ export class ResendSupportProvider implements SupportProvider {
     }
   }
   async lookup(_operation: string, providerId: string | null): Promise<SupportSubmission> {
-    if (!providerId || !z.uuid().safeParse(providerId).success) return { state: 'unknown' };
+    if (!this.retrieveKey?.trim() || !providerId || !z.uuid().safeParse(providerId).success) return { state: 'unknown' };
     try {
       const response = await this.send('https://api.resend.com/emails/' + providerId, {
         redirect: 'error',
         signal: AbortSignal.timeout(8000),
-        headers: { authorization: 'Bearer ' + this.key },
+        headers: { authorization: 'Bearer ' + this.retrieveKey },
       });
       const result = response.ok ? z.object({ id: z.uuid() }).safeParse(await boundedJson(response,16384)) : null;
       if (!response.ok) await response.body?.cancel();

@@ -26,8 +26,8 @@ export async function platformRuntime(config:Config,db:Database,auth:Authenticat
  }
  let alerts;
  if(env.FLOCKLETTER_PLATFORM_ALERTS_ENABLED==='approved'){
-  if(selected!=='live'||!env.FLOCKLETTER_PLATFORM_ALERT_RESEND_KEY)throw Error('Live alerts require a verified operator configuration and dedicated transport.');
-  alerts={provider:new ResendSupportProvider(env.FLOCKLETTER_PLATFORM_ALERT_RESEND_KEY),from:z.email().parse(env.FLOCKLETTER_PLATFORM_ALERT_FROM),to:z.email().parse(env.FLOCKLETTER_PLATFORM_ALERT_TO)};
+  if(selected!=='live'||!env.FLOCKLETTER_PLATFORM_ALERT_RESEND_KEY||!env.FLOCKLETTER_PLATFORM_ALERT_RESEND_RETRIEVE_KEY||env.FLOCKLETTER_PLATFORM_ALERT_RESEND_KEY===env.FLOCKLETTER_PLATFORM_ALERT_RESEND_RETRIEVE_KEY)throw Error('Live alerts require a verified operator configuration and separate sending/retrieval transport credentials.');
+  alerts={provider:new ResendSupportProvider(env.FLOCKLETTER_PLATFORM_ALERT_RESEND_KEY,undefined,env.FLOCKLETTER_PLATFORM_ALERT_RESEND_RETRIEVE_KEY),from:z.email().parse(env.FLOCKLETTER_PLATFORM_ALERT_FROM),to:z.email().parse(env.FLOCKLETTER_PLATFORM_ALERT_TO)};
  }
  const platform=new PlatformService(db,store,{mode:selected,identity,support:customer.support,databaseName:new URL(config.databaseUrl!).pathname.slice(1),plan:planner?.plan,signing,alerts,gaps:selected==='capture'?['Workspace-only exercise. Global customer controls require a separate operator organization, restricted database role and recent MFA.','Hosted deletion needs configured protected checkpoint storage, exact external-copy inventory and a separate offline executor.','Live support and platform email notifications remain disabled until separately activated.']:['Hosted retention signing is disabled until protected evidence and the separate planner role are configured.']});
  customer.support.options.operatorAuthorized=(user,workspace,reference)=>platform.supportAuthorized(user,workspace,reference);

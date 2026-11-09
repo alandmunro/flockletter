@@ -16,6 +16,7 @@ import { CustomerTeamLifecycle } from './customer-team/service.js';
 import { customerTeamClerkPort } from './customer-team/clerk.js';
 import { configuredSupportWriter } from './customer-support/writer.js';
 import { CustomerSupport } from './customer-support/index.js';
+import { supportResendKeys } from './customer-support/configuration.js';
 import { ResendSupportProvider } from './customer-support/provider.js';
 import { CustomerRetention } from './customer-retention/index.js';
 import { CustomerDelivery } from './customer-delivery/service.js';
@@ -61,12 +62,13 @@ export class CustomerWorkflows {
       ...(settings.team==='clerk'?{port:customerTeamClerkPort({secretKey:config.clerkSecretKey!,publishableKey:config.clerkPublishableKey!})}:{})});
     const inbound=env.FLOCKLETTER_SUPPORT_INBOUND_WORKSPACE&&env.FLOCKLETTER_SUPPORT_INBOUND_ADDRESS&&env.FLOCKLETTER_SUPPORT_INBOUND_SECRET?
       {workspaceId:env.FLOCKLETTER_SUPPORT_INBOUND_WORKSPACE,address:env.FLOCKLETTER_SUPPORT_INBOUND_ADDRESS,webhookSecret:env.FLOCKLETTER_SUPPORT_INBOUND_SECRET}:undefined;
-    if(settings.support==='live'&&(!env.FLOCKLETTER_SUPPORT_RESEND_KEY||!env.FLOCKLETTER_SUPPORT_SENDER))
+    const supportKeys=supportResendKeys(env,settings.support==='live');
+    if(settings.support==='live'&&!env.FLOCKLETTER_SUPPORT_SENDER)
       throw Error('External support needs dedicated transport, sender and operator bindings.');
     this.support=new CustomerSupport(db,{mode:settings.support,isOwner:identity.isOwner,
       isOperator:async()=>false,writer:configuredSupportWriter({enabled:env.FLOCKLETTER_SUPPORT_WRITER_ENABLED==='true',origin:env.FLOCKLETTER_SUPPORT_WRITER_ORIGIN??'',allowedOrigins:(env.FLOCKLETTER_SUPPORT_WRITER_ALLOWED_ORIGINS??'').split(',').filter(Boolean),model:env.FLOCKLETTER_SUPPORT_WRITER_MODEL??'',apiKey:env.FLOCKLETTER_SUPPORT_WRITER_KEY}),automationLiveApproved:env.FLOCKLETTER_SUPPORT_AUTOMATION_APPROVED==='true',sender:env.FLOCKLETTER_SUPPORT_SENDER,
-      ...(env.FLOCKLETTER_SUPPORT_NATIVE_WEBHOOK_SECRET&&env.FLOCKLETTER_SUPPORT_RESEND_KEY?{nativeInbound:{webhookSecret:env.FLOCKLETTER_SUPPORT_NATIVE_WEBHOOK_SECRET,apiKey:env.FLOCKLETTER_SUPPORT_RESEND_KEY,bindings:JSON.parse(env.FLOCKLETTER_SUPPORT_NATIVE_BINDINGS??'[]'),platformAddress:env.FLOCKLETTER_SUPPORT_NATIVE_ADDRESS,replyDomain:env.FLOCKLETTER_SUPPORT_REPLY_DOMAIN,threadSecret:env.FLOCKLETTER_SUPPORT_THREAD_KEY}}:{}),
-      ...(settings.support==='live'?{provider:new ResendSupportProvider(env.FLOCKLETTER_SUPPORT_RESEND_KEY!),inbound}:{})});
+      ...(env.FLOCKLETTER_SUPPORT_NATIVE_WEBHOOK_SECRET?{nativeInbound:{webhookSecret:env.FLOCKLETTER_SUPPORT_NATIVE_WEBHOOK_SECRET,apiKey:supportKeys.retrieval!,bindings:JSON.parse(env.FLOCKLETTER_SUPPORT_NATIVE_BINDINGS??'[]'),platformAddress:env.FLOCKLETTER_SUPPORT_NATIVE_ADDRESS,replyDomain:env.FLOCKLETTER_SUPPORT_REPLY_DOMAIN,threadSecret:env.FLOCKLETTER_SUPPORT_THREAD_KEY}}:{}),
+      ...(settings.support==='live'?{provider:new ResendSupportProvider(supportKeys.sending!,undefined,supportKeys.retrieval),inbound}:{})});
     this.retention=new CustomerRetention(db,{mode:settings.retention,isOwner:identity.isOwner,
       serviceEnd:w=>this.billing.retentionServiceEnd(w),serviceEndSql:(sql,w)=>retentionServiceEndSql(sql,w,this.billing.options),
       clock:w=>this.billing.retentionClock(w),clockSql:(sql,w)=>retentionClockSql(sql,w,this.billing.options),
