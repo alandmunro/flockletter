@@ -41,7 +41,7 @@ For later releases, `APP_ENV=production node scripts/migrate-production.mjs <ope
 | Customer workflows | Existing capture/exercise modes | Default off until each external integration is configured and verified |
 | Team invitations | Exercise | Enable real Clerk invitations only after production membership setup is verified |
 | Global operator access | Own-workspace capture only | Off until separate operator organization, named users, recent MFA and restricted role are verified |
-| Paid trial history | Synthetic namespace | Blocked pending approved retention exception and reviewed historical baseline |
+| Paid trial history | Synthetic namespace | D-048 policy accepted; actual stable key/policy configuration, disclosure, provider/history baseline and current-owner agreement still required |
 | Hosted erasure | Disposable capture | Independent restricted executor and exact approvals; no customer HTTP/MCP deletion |
 
 The local model drafted the checklist, mechanical production-script conversions and disposable-database test scaffolding. Chat corrected an unsupported completed-parity claim, merge-SHA/build-hash equality, assumptions about existing credentials, escaped source formatting and test-order assumptions. Chat removed a private physical-database identifier from the draft, added explicit production confirmation/environment checks and reviewed foreign-grant preservation, migration scope and secret handling. Security decisions, environment boundaries and release evidence remain with Chat.

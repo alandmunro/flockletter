@@ -65,7 +65,7 @@ Bring up the protected planner/executor in this order after the AWS account is a
 8. Rehearse a disposable synthetic hosted workspace using the actual protected storage. Obtain independent engine receipts, a fresh plan and its exact MFA-signed approval (at most 15 minutes). Run the restricted offline executor through protected stdin with `{approval, externalInventory, engineReceipts}`; uncertain external outcomes require reconciliation.
 9. Independently verify the durable database receipt and complete external disposal before publishing an `erased` checkpoint. Exercise restore into an isolated destination, retaining quarantine until separate review releases it. Record which evidence was live and which was injected; a synthetic rehearsal does not authorize customer deletion.
 
-The lifetime trial-history retention exception remains an owner decision. See the [proposed amendment](PROPOSED_TRIAL_RETENTION_EXCEPTION.md) and [current trial configuration](TRIAL_ABUSE.md). A fresh empty database is not proof of an empty provider history.
+D-048 accepts the narrow lifetime trial-history exception. See the [accepted scope and remaining evidence](PROPOSED_TRIAL_RETENTION_EXCEPTION.md) and [current trial configuration](TRIAL_ABUSE.md). Actual key/policy installation, disclosure, provider/history baseline and signed private-retention inventory remain independent checks. A fresh empty database is not proof of an empty provider history; policy acceptance does not authorize hosted purge or grant operator/alert access.
 
 ## Validation and model contribution
 

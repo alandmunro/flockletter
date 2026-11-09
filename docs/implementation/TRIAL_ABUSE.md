@@ -1,6 +1,6 @@
 # Private trial eligibility and explicit activation
 
-This implements FL-BIL-002/003/007, FL-ID-005, FL-DEL-005, FL-AUD-005 and FL-OPS-004 under D-042. It does not activate real billing or silently amend the accepted 90-day retention policy.
+This implements FL-BIL-002/003/007, FL-ID-005, FL-DEL-005, FL-AUD-005 and FL-OPS-004 under D-042. On November 9 the owner accepted D-048’s narrow minimal keyed trial-history exception beyond ordinary 90-day tenant deletion. D-049 accepts the specified trial/billing defaults. These policy records do not activate billing, verify provider/history facts or replace each customer’s exact agreement.
 
 ## Customer flow
 
@@ -22,7 +22,9 @@ An advisory transaction lock serializes owner/card claims across workspaces. The
 
 ## Explicit retention policy gate
 
-Lifetime “one trial” uniqueness and deleting every identifying claim after 90 days cannot both be promised. No indefinite anti-abuse exception has been accepted by the owner. **Real provider free-trial activation remains disabled until a separate minimal keyed-claim retention exception is approved and configured.** This is a business policy activation gate, not an unfinished implementation. Ordinary paid service and existing saved agreements are not implicitly disabled by an unapproved new-trial policy.
+D-048 resolves the owner policy decision: minimal consumed HMAC owner/card/workspace trial-eligibility history and necessary linked metadata may remain indefinitely after ordinary tenant purge, solely to enforce lifetime one-trial/no-refresh protection. These are pseudonymous personal data, not anonymous data. The ordinary 90-day tenant policy remains intact outside that narrow exception; no mailing list or raw identity/card data belongs in the retained global record.
+
+Policy acceptance is distinct from activation. The real registry still requires the stable key, matching policy/version, verified provider account/history baseline, accurate disclosure and ordinary billing/provider gates. This document does not claim those settings or external checks are complete. Each recurring trial still needs its current owner’s exact price/date acceptance after verified card setup. See the [accepted exception and remaining evidence](PROPOSED_TRIAL_RETENTION_EXCEPTION.md).
 
 Two explicit policy modes are implemented:
 
@@ -37,7 +39,7 @@ The operator-only `trial_retention_inventory(namespace,workspace_digest)` return
 
 `trialRegistryFromEnvironment(env, source, account)` supplies `BillingOptions.trialRegistry`. The source/account must match the configured gateway; Stripe account retrieval verifies the actual account before card proof or provider mutation.
 
-Hosted: `FLOCKLETTER_TRIAL_HMAC_KEY` (stable private secret, minimum 32 characters), `FLOCKLETTER_TRIAL_POLICY_ID`, positive `FLOCKLETTER_TRIAL_POLICY_VERSION`, and separately approved `FLOCKLETTER_TRIAL_RETENTION_APPROVED=true`. Also require `FLOCKLETTER_TRIAL_HISTORY_BASELINE=verified-empty` or `reviewed-backfill` after actual provider/history review. There are no secret, baseline or approval defaults. Existing saved legacy trials are not retroactively protected merely by enabling a fresh registry; a nonempty historical population requires a separately reviewed authoritative backfill. Baseline choice is bound into the stable versioned key tag and cannot silently change. Live billing retains all existing production activation gates.
+Hosted: `FLOCKLETTER_TRIAL_HMAC_KEY` (stable private secret, minimum 32 characters), `FLOCKLETTER_TRIAL_POLICY_ID`, positive `FLOCKLETTER_TRIAL_POLICY_VERSION`, and `FLOCKLETTER_TRIAL_RETENTION_APPROVED=true` for the D-048-approved scope. This documentation does not set that flag or verify configuration. Also require `FLOCKLETTER_TRIAL_HISTORY_BASELINE=verified-empty` or `reviewed-backfill` after actual provider/history review. There are no secret, baseline or approval defaults. Existing saved legacy trials are not retroactively protected merely by enabling a fresh registry; a nonempty historical population requires a separately reviewed authoritative backfill. Baseline choice is bound into the stable versioned key tag and cannot silently change. Live billing retains all existing production activation gates.
 
 Synthetic: `FLOCKLETTER_EXERCISE_TRIAL_HMAC_KEY`, optional `FLOCKLETTER_EXERCISE_TRIAL_POLICY_ID` (synthetic-v1), `_POLICY_VERSION` (1), `_RETENTION_DAYS` (90). Use source exercise and an explicit synthetic account. It never shares keys or eligibility with actual card facts. Existing legacy captured fixtures without a registry remain captured-only; hosted staging supplies the explicit registry to exercise cross-workspace protection. Production cannot enable captured billing.
 
