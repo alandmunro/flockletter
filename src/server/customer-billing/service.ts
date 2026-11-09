@@ -1425,13 +1425,13 @@ export class CustomerBilling {
       }
       const applied = await sql.query(
         `INSERT INTO customer_subscriptions(workspace_id,id,source,state,plan,trial_started_at,trial_end_at,period_start_at,period_end_at,
-        cancel_at,failed_since,effective_end_at,provider_account,provider_customer,provider_subscription,observed_at,risk_hold,risk_reason)
-        VALUES($1,$2,'stripe',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now(),$15,$16)
+        cancel_at,failed_since,effective_end_at,provider_account,provider_customer,provider_subscription,observed_at,risk_hold,risk_reason,pending_plan)
+        VALUES($1,$2,'stripe',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now(),$15,$16,$19)
         ON CONFLICT(workspace_id) DO UPDATE SET state=excluded.state,plan=excluded.plan,revision=customer_subscriptions.revision+1,
         trial_started_at=excluded.trial_started_at,trial_end_at=excluded.trial_end_at,period_start_at=excluded.period_start_at,
         period_end_at=excluded.period_end_at,cancel_at=excluded.cancel_at,
         failed_since=CASE WHEN excluded.state IN ('past_due','suspended') THEN coalesce(customer_subscriptions.failed_since,excluded.failed_since,now()) ELSE NULL END,
-        effective_end_at=excluded.effective_end_at,observed_at=now(),pending_plan=NULL,
+        effective_end_at=excluded.effective_end_at,observed_at=now(),pending_plan=excluded.pending_plan,
         provider_account=excluded.provider_account,provider_customer=excluded.provider_customer,provider_subscription=excluded.provider_subscription,
         risk_hold=customer_subscriptions.risk_hold OR excluded.risk_hold,
         risk_reason=coalesce(excluded.risk_reason,customer_subscriptions.risk_reason)
@@ -1455,6 +1455,7 @@ export class CustomerBilling {
           notice.risk ? notice.kind : null,
           replacing,
           binding?.rejoin?.revision ?? null,
+          snapshot.pendingPlan ?? null,
         ],
       );
       requireCondition(
