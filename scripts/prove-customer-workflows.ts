@@ -280,6 +280,9 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   );
   assert.equal(captured, 1, 'Only the confirmed unsuppressed reader receives the captured newsletter.');
   await button(page, 'Close email').click();
+}
+async function phaseInfrastructure(page: Page, db: Database, brand: string) {
+  await navigate(page, 'Delivery');
   await page.getByLabel('From name', { exact: true }).fill('Trail Notes');
   await page.getByLabel('From email', { exact: true }).fill('news@trail.example.com');
   await page.getByLabel('Reply-to email', { exact: true }).fill('hello@trail.example.com');
@@ -432,7 +435,8 @@ let browser: Browser | undefined;
 try {
   await db.verifyBoundary();
   browser = await chromium.launch({ channel: process.env.FLOCKLETTER_BROWSER_CHANNEL ?? 'chrome' });
-  for (const [index, journey] of [phaseOne, phaseTwo].entries()) {
+  // Fresh app instances retain normal rate limits while the shared database preserves durable workspace progress.
+  for (const [index, journey] of [phaseOne, phaseInfrastructure, phaseTwo].entries()) {
     const server = createServer();
     let customer: CustomerWorkflows | undefined;
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
