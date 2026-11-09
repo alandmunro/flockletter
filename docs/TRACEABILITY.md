@@ -49,6 +49,8 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
+**Truthful workspace setup:** FL-ONB-001/002/004, FL-DEL-002 and FL-API-001 use scoped canonical setup observations and safe refresh/recovery states. See [workspace setup readiness](implementation/WORKSPACE_SETUP_READINESS.md) for grant masking, sender rechecks and synthetic verification.
+
 **Dedicated-worker liveness:** FL-ONB-004 and FL-OPS-002/003/005/006 now distinguish configured worker kind, database-clock process heartbeat, local scheduler execution and workspace queue progress. Private SQL/PG18 drift tests and UI/API status tests are documented in [worker liveness](implementation/WORKER_LIVENESS.md). No liveness observation grants customer sending authority.
 
 **Production preparation information:** FL-PROD-004 and FL-ONB-002/004 use server-reported environment presentation with neutral failure defaults. Pricing/owner views do not claim a production trial or paid delivery is enabled by account creation; captured components retain their own labels. See [launch preparation](implementation/PRODUCTION_LAUNCH_PREPARATION.md) for configuration, factual owner inputs and synthetic verification scope.

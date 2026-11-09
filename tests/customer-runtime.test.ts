@@ -558,3 +558,22 @@ it('uses the shared processor for captured support and due retention without del
   expect((await f.call<{ brands: unknown[] }>('workspace.get', {})).brands).toHaveLength(1);
   expect((await f.call<CustomerOperationsStatus>('operations.status', {})).worker.lastFailure).toBeNull();
 });
+
+it('shares truthful setup facts while withholding billing and audience facts outside their grants',async()=>{
+  const f=await factory();await trial(f);await audience(f);
+  const owner=await f.call<import('../src/shared/workspace-preflight.js').WorkspacePreflight>('workspace.preflight',{});
+  expect(owner).toMatchObject({canSend:false,reviewRequired:true,capturedExercise:true,
+    service:{source:'exercise',state:'trialing',eligible:true},brands:[{id:f.brandId,confirmed:1,senderVerified:false}]});
+  expect(owner.gaps).toEqual(expect.arrayContaining([expect.objectContaining({code:'sender_profile_required',action:'delivery'})]));
+  const connection:Actor={...f.actor,kind:'connection',actorId:'connection:'+randomUUID(),scopes:['read'],brandIds:[f.brandId]};
+  const read=await f.service.execute('workspace.preflight',{},connection) as typeof owner;
+  expect(read.service).toBeNull();expect(read.allowance).toBeNull();expect(read.brands[0]!.confirmed).toBeNull();
+  expect(read.gaps.some(gap=>gap.code==='confirmed_audience_required')).toBe(false);
+  const summary=await f.service.execute('workspace.preflight',{}, {...connection,scopes:['read','audience:summary']}) as typeof owner;
+  expect(summary.brands[0]!.confirmed).toBe(1);expect(summary.service).toBeNull();
+  const restricted=await f.service.execute('workspace.preflight',{}, {...connection,brandIds:[]}) as typeof owner;
+  expect(restricted.brands).toEqual([]);
+  owners.delete(f.workspaceId);
+  const revoked=await f.call<typeof owner>('workspace.preflight',{});
+  expect(revoked.service).toBeNull();expect(revoked.brands[0]!.confirmed).toBeNull();
+});
