@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { beforeAll, afterAll, expect, it } from 'vitest';
+import { beforeAll, afterAll, expect, it, vi } from 'vitest';
+import {makeAudienceConnection} from './helpers/audience-connection.js';
 import { startDatabase } from '../scripts/database-fixture.js';
 import { Database } from '../src/server/db.js';
 import { loadConfig } from '../src/server/config.js';
@@ -565,15 +566,41 @@ it('shares truthful setup facts while withholding billing and audience facts out
   expect(owner).toMatchObject({canSend:false,reviewRequired:true,capturedExercise:true,
     service:{source:'exercise',state:'trialing',eligible:true},brands:[{id:f.brandId,confirmed:1,senderVerified:false}]});
   expect(owner.gaps).toEqual(expect.arrayContaining([expect.objectContaining({code:'sender_profile_required',action:'delivery'})]));
-  const connection:Actor={...f.actor,kind:'connection',actorId:'connection:'+randomUUID(),scopes:['read'],brandIds:[f.brandId]};
-  const read=await f.service.execute('workspace.preflight',{},connection) as typeof owner;
+  const connection=await makeAudienceConnection(db,f.actor,[f.brandId],['read']);
+  const read=await f.service.execute('workspace.preflight',{},connection.actor) as typeof owner;
   expect(read.service).toBeNull();expect(read.allowance).toBeNull();expect(read.brands[0]!.confirmed).toBeNull();
   expect(read.gaps.some(gap=>gap.code==='confirmed_audience_required')).toBe(false);
-  const summary=await f.service.execute('workspace.preflight',{}, {...connection,scopes:['read','audience:summary']}) as typeof owner;
+  const summaryGrant=await makeAudienceConnection(db,f.actor,[f.brandId],['read','audience:summary']);
+  const summary=await f.service.execute('workspace.preflight',{},summaryGrant.actor) as typeof owner;
   expect(summary.brands[0]!.confirmed).toBe(1);expect(summary.service).toBeNull();
-  const restricted=await f.service.execute('workspace.preflight',{}, {...connection,brandIds:[]}) as typeof owner;
+  const restricted=await f.service.execute('workspace.preflight',{}, {...summaryGrant.actor,brandIds:[]}) as typeof owner;
   expect(restricted.brands).toEqual([]);
+  // Cached summary authority must disappear when the saved grant narrows.
+  await db.tenant(f.workspaceId,sql=>sql.query("UPDATE connections SET scopes=ARRAY['read']::text[] WHERE id=$1",[summaryGrant.id]));
+  const narrowed=await f.service.execute('workspace.preflight',{},summaryGrant.actor) as typeof owner;
+  expect(narrowed.brands[0]!.confirmed).toBeNull();expect(narrowed.scopes).toEqual(['read']);
+  await db.tenant(f.workspaceId,sql=>sql.query('UPDATE connections SET brand_ids=ARRAY[]::uuid[] WHERE id=$1',[summaryGrant.id]));
+  expect((await f.service.execute('workspace.preflight',{},summaryGrant.actor) as typeof owner).brands).toEqual([]);
+  await db.tenant(f.workspaceId,sql=>sql.query('UPDATE connections SET revoked_at=clock_timestamp() WHERE id=$1',[summaryGrant.id]));
+  await expect(f.service.execute('workspace.preflight',{},summaryGrant.actor)).rejects.toMatchObject({code:'connection_revoked'});
+  await db.tenant(f.workspaceId,sql=>sql.query("UPDATE connections SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[connection.id]));
+  await expect(f.service.execute('workspace.preflight',{},connection.actor)).rejects.toMatchObject({code:'connection_revoked'});
+  const noRead=await makeAudienceConnection(db,f.actor,[f.brandId],['audience:summary']);
+  await expect(f.service.execute('workspace.preflight',{}, {...noRead.actor,scopes:['read','audience:summary']})).rejects.toMatchObject({code:'connection_revoked'});
+  const issuerLost=await makeAudienceConnection(db,f.actor,[f.brandId],['read','audience:summary']);
   owners.delete(f.workspaceId);
+  await expect(f.service.execute('workspace.preflight',{},issuerLost.actor)).rejects.toMatchObject({code:'owner_required'});
+  const member=await f.service.execute('workspace.preflight',{}, {...f.actor,owner:false,brandIds:[f.brandId]}) as typeof owner;
+  expect(member.service).toBeNull();expect(member.allowance).toBeNull();expect(member.brands[0]!.confirmed).toBeNull();
   const revoked=await f.call<typeof owner>('workspace.preflight',{});
   expect(revoked.service).toBeNull();expect(revoked.brands[0]!.confirmed).toBeNull();
+});
+
+
+it('observes workspace setup without rehydrating or deactivating provider route caches',async()=>{
+  const f=await factory();
+  const routes=vi.spyOn(f.runtime.infrastructure,'routeCandidates').mockRejectedValue(Error('A setup read must not hydrate provider routes.'));
+  f.runtime.settings.infrastructure='aws';
+  try{await expect(f.call('workspace.preflight',{})).resolves.toMatchObject({canSend:false,reviewRequired:true});expect(routes).not.toHaveBeenCalled();}
+  finally{f.runtime.settings.infrastructure='off';routes.mockRestore();}
 });

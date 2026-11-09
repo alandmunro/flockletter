@@ -7,7 +7,7 @@ import type { Database } from './db.js';
 import type { Actor } from './service.js';
 import type { IdentityProvider } from './auth.js';
 import { requireCondition } from './errors.js';
-import { commands,type CommandName } from '../shared/contracts.js';
+import { commands,type CommandName,type Capability } from '../shared/contracts.js';
 import type { CustomerOperationsStatus } from '../shared/customer-operations.js';
 import { customerSettings } from './customer-settings.js';
 import { CustomerBilling,customerEligibility,customerContactLimit,customerSeatLimit,retentionServiceEndSql,retentionClockSql } from './customer-billing/service.js';
@@ -161,11 +161,19 @@ export class CustomerWorkflows {
   }
   owns(name:string){return prefixes.some(prefix=>name.startsWith(prefix));}
   async preflight(actor:Actor):Promise<WorkspacePreflight> {
-    await this.hydrateInfrastructure(actor.workspaceId);
     const owner=actor.kind==='session'&&actor.owner&&await this.identity.isOwner(actor.userId,actor.workspaceId);
-    const audienceAllowed=owner||actor.kind==='connection'&&actor.scopes.includes('audience:summary');
+    if(actor.kind==='connection')requireCondition(await this.identity.isOwner(actor.userId,actor.workspaceId),403,'owner_required','Current issuing-owner authority is required.');
     const service=await this.billing.eligibility(actor.workspaceId);
     return this.db.tenant(actor.workspaceId,async sql=>{
+      let audienceAllowed=owner,brandIds=actor.brandIds,scopes=actor.scopes;
+      if(actor.kind==='connection') {
+        const grant=(await sql.query<{scopes:Capability[];brand_ids:string[]}>(`SELECT scopes,brand_ids FROM connections
+          WHERE id::text=$1 AND issuer_id=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp()
+          AND 'read'=ANY(scopes) FOR SHARE`,[actor.actorId.slice('connection:'.length),actor.userId])).rows[0];
+        requireCondition(grant,403,'connection_revoked','This connection no longer has current workspace read access.');
+        audienceAllowed=grant.scopes.includes('audience:summary');scopes=grant.scopes;
+        brandIds=grant.brand_ids.filter(id=>actor.brandIds===null||actor.brandIds.includes(id));
+      }
       const observedAt=(await sql.query<{at:Date}>('SELECT clock_timestamp() at')).rows[0]!.at.toISOString();
       const initialized=!!(await sql.query('SELECT FROM workspaces')).rowCount;
       const gaps:WorkspaceSetupGap[]=[];
@@ -176,7 +184,7 @@ export class CustomerWorkflows {
       if(!this.engine)gaps.push({code:'renderer_required',title:'Private renderer needed',detail:'Configure the private mailing renderer before campaign approval.',action:'operations'});
       const brands:WorkspacePreflight['brands']=[];
       for(const brand of (await sql.query<{id:string;name:string}>('SELECT id,name FROM brands ORDER BY name')).rows) {
-        if(actor.brandIds!==null&&!actor.brandIds.includes(brand.id))continue;
+        if(brandIds!==null&&!brandIds.includes(brand.id))continue;
         await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[brand.id]);
         const confirmed=audienceAllowed?(await sql.query<{count:number}>("SELECT count(*)::int count FROM subscribers WHERE state='confirmed'")).rows[0]!.count:null;
         const profile=await senderProfile(sql,brand.id);
@@ -189,7 +197,7 @@ export class CustomerWorkflows {
         brands.push({id:brand.id,name:brand.name,confirmed,senderProfileConfigured:!!profile,senderVerified:liveSender});
       }
       return {initialized,canPrepare:initialized,canSend:false,reviewRequired:true,observedAt,
-        mode:this.settings.delivery,capturedExercise:this.settings.delivery==='capture',rendererConfigured:!!this.engine,scopes:actor.scopes,brandIds:actor.brandIds,
+        mode:this.settings.delivery,capturedExercise:this.settings.delivery==='capture',rendererConfigured:!!this.engine,scopes,brandIds,
         service:owner?{source:service.source,state:service.state,eligible:service.eligible,reasons:service.reasons}:null,
         limits,allowance:owner?service.limits:null,brands,gaps};
     });
