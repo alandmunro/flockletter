@@ -1,6 +1,6 @@
 # Flockletter software requirements
 
-Version 0.6. Release requirements with an authorized foundation workstream. Updated November 7, 2026. D-040 records the preferred delivery provider for evaluation.
+Version 0.7. Release requirements with implementation and production preparation authorized. Updated November 8, 2026. D-046 records the current completion and credential-setup scope.
 
 Flockletter is an open-source mailing SaaS for small retailers and general small businesses that want to build permission-based audiences and send newsletters and announcements. Large enterprises are outside its target market. The hosted service includes delivery and subscription management. Frosty Flamingo Apparel is the first intended customer, with complimentary service; the product must operate independently for other businesses and for self-hosters.
 
@@ -8,7 +8,7 @@ The owner has selected open self-service signup, included delivery, three tiers,
 
 ## Product outcomes
 
-The later D-044 authorizes Flockletter production and staging code parity. It supersedes the earlier staging-only deployment scope above; provider activation, policy decisions and live verification remain separate requirements. See the [release checklist](implementation/RELEASE_PARITY.md).
+D-044 authorizes Flockletter production and staging code parity. The later D-046 additionally authorizes autonomous completion of the remaining work and Resend, Clerk and Render production credential setup, using practical parallel work and appropriate local-model delegation with primary validation. These supersede earlier staging-only implementation/deployment wording for Flockletter. Staging stays on Render Free; each individual move above USD 25 still requires approval. The instruction does not establish completion, approve the proposed lifetime trial-record retention exception, select an unknown Stripe merchant account or establish legal/tax facts. Activation policy and actual live verification remain separate requirements; this documentation enables no operational mode. See the [release checklist](implementation/RELEASE_PARITY.md) and [production preparation](implementation/PRODUCTION_LAUNCH_PREPARATION.md).
 
 The first release should let a legitimate business create an account, understand its plan and limits, verify its sender, import an authorized audience, prepare and preview a campaign, and send or schedule it without routine operator assistance. Customers should be able to understand delivery results and manage billing themselves.
 
