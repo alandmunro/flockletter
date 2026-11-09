@@ -34,11 +34,13 @@ describe('production promotion workflow', () => {
   });
 
   it('checks the commit, staging and the migration gate before anything is deployed, then verifies production', () => {
-    const order = ['Validate release inputs', 'Check out the exact release commit', 'Confirm the commit is on main',
+    const order = ['Validate release inputs', 'Check out promotion tooling from main', 'Confirm the commit is on main',
       'Require the release checks', 'actions/setup-node', 'Verify staging serves', 'Require the protected migration',
       'Confirm the Render service', 'Deploy production', 'Verify production serves'].map(index);
     expect(order.every(i => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(workflow).toContain('ref: main');
+    expect(workflow).toContain('git cat-file -e "${SHA}^{commit}"');
   });
 
   it('has a dry run that does every check and the Render identity check but never deploys', () => {

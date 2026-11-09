@@ -66,17 +66,18 @@ jobs:
           [[ "${MIGRATIONS_APPLIED}" =~ ^(true|false)$ ]] || { echo "::error::migrations_applied must be true or false."; exit 1; }
           [[ -z "${REQUEST_ID}" || "${REQUEST_ID}" =~ ^[0-9a-f]{32}$ ]] || { echo "::error::request_id must be 32 hex characters."; exit 1; }
 
-      - name: Check out the exact release commit
+      - name: Check out promotion tooling from main
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.sha }}
+          # An older staged commit may predate these verification scripts.
+          ref: main
           fetch-depth: 0
           persist-credentials: false
 
       - name: Confirm the commit is on main
         run: |
           set -euo pipefail
-          [ "$(git rev-parse HEAD)" = "${SHA}" ] || { echo "::error::Checkout did not resolve to the requested commit."; exit 1; }
+          git cat-file -e "${SHA}^{commit}" || { echo "::error::The requested commit is not available in this repository."; exit 1; }
           git merge-base --is-ancestor "${SHA}" origin/main || { echo "::error::The requested commit is not on main."; exit 1; }
 
       - name: Require the release checks for this exact commit
