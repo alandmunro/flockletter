@@ -23,6 +23,7 @@ COPY migrations ./migrations
 COPY scripts/apply-migrations.mjs ./scripts/apply-migrations.mjs
 COPY src/shared/runtime-tables.json ./src/shared/runtime-tables.json
 COPY src/server/runtime-boundary.mjs ./src/server/runtime-boundary.mjs
+COPY src/server/test-send-boundary.mjs ./src/server/test-send-boundary.mjs
 COPY selfhost/runtime.mjs ./selfhost/runtime.mjs
 COPY selfhost/drill-data.mjs ./selfhost/drill-data.mjs
 
