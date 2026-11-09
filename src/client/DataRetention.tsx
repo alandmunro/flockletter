@@ -55,8 +55,8 @@ export function DataRetention({ api }: { api: Api }) {
     <section className="card" aria-labelledby="retention-title">
       <h2 id="retention-title">Account data and retention</h2>
       <p>
-        Ordinary account data reaches retention review 90 days after verified service end. A reinstatement
-        or review hold blocks erasure; protected review must complete before deletion. Minimal keyed
+        Ordinary account data is retained for 90 days after verified service end, then purged through
+        protected erasure checks. Reinstatement or an authorized review hold can block erasure. Minimal keyed
         trial-eligibility history is retained indefinitely to prevent repeat trials, including after ordinary
         account erasure. Read the <a href="/privacy">privacy notice and retention exception</a>.
       </p>
