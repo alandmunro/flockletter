@@ -411,6 +411,7 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
                               date: {review.firstChargeAt.slice(0, 10)} (UTC). Cancel before that date to
                               avoid renewal charges. This review expires at {date(review.expiresAt)}.
                             </p>
+                            <p>Read how lifetime trial-eligibility history is retained in the <a href="/privacy">privacy notice</a>.</p>
                             <label>
                               <input
                                 type="checkbox"
