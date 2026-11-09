@@ -225,6 +225,15 @@ export class CustomerDelivery {
     if(row.state==='queued'){const result=await deliveryView(sql,row);return test?{...result,purpose:'test' as const,testSubscriberId:test.subscriberId}:result;}
     requireCondition(row.state==='reviewed',409,'review_required','Prepare a fresh review before approval.');
     requireCondition((await sql.query('SELECT id FROM campaigns WHERE id=$1 AND version=$2',[row.campaign_id,row.version])).rowCount,409,'version_conflict','The campaign changed after review.');
+    if(test) {
+      // The workspace lock makes this check and the new admission atomic across UI/API/MCP.
+      const pending=await sql.query(`SELECT FROM customer_deliveries d JOIN customer_delivery_recipients p
+        ON(p.workspace_id,p.brand_id,p.delivery_id)=(d.workspace_id,d.brand_id,d.id)
+        WHERE d.purpose='test' AND d.brand_id=$1 AND d.campaign_id=$2 AND d.id<>$3 AND p.subscriber_id=$4
+          AND (p.state IN('submitting','uncertain') OR (d.state IN('queued','paused') AND p.state IN('pending','preparing','prepared')))
+        LIMIT 1`,[row.brand_id,row.campaign_id,row.id,test.subscriberId]);
+      requireCondition(!pending.rowCount,409,'test_already_pending','Another test for this campaign and contact is pending or uncertain. Open and resolve that original test before approving a replacement.');
+    }
     const provider=this.options.provider?.(actor.workspaceId,row.brand_id);
     requireCondition(row.mode===this.options.mode&&row.provider_binding===senderFingerprint(provider,await senderProfile(sql,row.brand_id)),409,'sender_changed','The sender configuration changed. Prepare a fresh review.');
     if(row.mode==='ses')requireCondition(await senderEligible(sql,row.brand_id,provider),503,'sender_ineligible','The sender checks must be current before approval.');
