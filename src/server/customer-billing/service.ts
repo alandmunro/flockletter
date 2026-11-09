@@ -122,7 +122,7 @@ function effective(before: Subscription, clock: Date): Subscription {
   }
   return s;
 }
-async function usage(sql: Sql, period: string): Promise<CustomerBillingStatus['usage']> {
+export async function usage(sql: Sql, period: string): Promise<CustomerBillingStatus['usage']> {
   const result = (
     await sql.query<{
       campaigns: number;

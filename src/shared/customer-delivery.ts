@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import {customerPreflightCommands} from './customer-preflight.js';
 import { commandDefinition as command } from './command-definition.js';
 import { normalizedEmail } from './subscriber.js';
 
@@ -7,6 +8,7 @@ const operationKey = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/);
 export const deliveryRecipientStates = ['pending','preparing','prepared','submitting','uncertain','accepted','rejected','excluded','cancelled'] as const;
 export const deliveryFeedbackKinds = ['delivered','hard_bounce','complaint','temporary_bounce'] as const;
 export const customerDeliveryCommands = {
+  ...customerPreflightCommands,
   'delivery.sender':command('Read this brand’s legal sender profile and activation checks.','campaign:send',false,{brandId:id}),
   'delivery.saveSender':command('Save this brand’s sender identity and postal footer. Existing reviewed deliveries require a fresh review.','owner',true,{
     operationKey,brandId:id,fromName:z.string().trim().min(1).max(100).regex(/^[^\p{Cc}\p{Cf}]+$/u),

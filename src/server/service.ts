@@ -375,6 +375,7 @@ export class CommandService {
       }
       case 'campaign.preflight': {
         const draft = await campaign(sql, actor, commands[name].schema.parse(raw).id);
+        if(this.customer){await audienceBrand(sql,actor,draft.brandId);const observed=await this.customer.delivery.preflight(sql,actor,draft);return {...observed,...(observed.audience.visibility!=='available'?{audience:undefined}:{})};}
         const review = preflight(draft);
         const access=await workspaceAccess(sql);
         if(access.plan) review.gaps=review.gaps.filter(gap=>gap.code!=='entitlement_not_active');

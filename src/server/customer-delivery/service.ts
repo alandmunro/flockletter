@@ -1,3 +1,4 @@
+import {customerCampaignPreflight} from './preflight.js';
 import { randomUUID } from 'node:crypto';
 import { customerDeliveryCommands } from '../../shared/customer-delivery.js';
 import type { Campaign,CampaignContent } from '../../shared/contracts.js';
@@ -23,6 +24,15 @@ export class CustomerDelivery {
     authorize(actor,name as keyof typeof customerDeliveryCommands);
     const command=customerDeliveryCommands[name as keyof typeof customerDeliveryCommands];
     const parsed=command.schema.parse(raw);
+    if(name==='delivery.preflight') {
+      const input=customerDeliveryCommands['delivery.preflight'].schema.parse(raw);
+      return this.db.read(actor.workspaceId,async sql=>{
+        await brandScope(sql,actor,input.brandId);
+        const row=(await sql.query<Campaign&{brand_id:string;created_at:Date;updated_at:Date}>('SELECT * FROM campaigns WHERE id=$1 AND brand_id=$2',[input.campaignId,input.brandId])).rows[0];
+        requireCondition(row,404,'campaign_unavailable','Choose an available saved campaign in this brand.');
+        return this.preflight(sql,actor,{...row,brandId:row.brand_id,status:'draft',createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString()},input,true);
+      });
+    }
     if(name==='delivery.status')return this.status(actor,customerDeliveryCommands['delivery.status'].schema.parse(raw).brandId);
     const input=parsed as {operationKey?:string;brandId:string;id?:string};
     let processId:string|undefined;
@@ -91,6 +101,9 @@ export class CustomerDelivery {
     });
     if(processId)await this.worker.tick(actor.workspaceId,processId);
     return result;
+  }
+  preflight(sql:Sql,actor:Actor,campaign:Campaign,input:{expectedVersion?:number;segmentId?:string;dueAt?:string}={},requireSend=false) {
+    return customerCampaignPreflight(sql,actor,campaign,this.options,input,requireSend);
   }
   async status(actor:Actor,brandId?:string) {
     const eligibility=await this.options.billing.eligibility(actor.workspaceId);

@@ -8,6 +8,7 @@ import {
   createCustomerOptOut,
   redeemCustomerOptOut,
   productionConsentEligible,
+  productionConsentEligibleBatch,
 } from '../src/server/customer-audience/service.js';
 import type { AudienceSettingsView } from '../src/shared/customer-audience.js';
 import { makeAudienceConnection } from './helpers/audience-connection.js';
@@ -288,6 +289,7 @@ it('reconciles live confirmation delivery without resending and requires real co
   expect(await db.brand(a.workspace, a.brand, (sql) => productionConsentEligible(sql, subscriber))).toBe(
     false,
   );
+  expect(await db.brand(a.workspace,a.brand,sql=>productionConsentEligibleBatch(sql,[subscriber]))).toEqual([]);
   await db.brand(a.workspace, a.brand, (sql) =>
     sql.query(
       "UPDATE customer_audience_confirmations SET next_check_at=now()-interval '1 minute' WHERE mode='live'",
@@ -300,6 +302,7 @@ it('reconciles live confirmation delivery without resending and requires real co
   expect(await db.brand(a.workspace, a.brand, (sql) => productionConsentEligible(sql, subscriber))).toBe(
     true,
   );
+  expect(await db.brand(a.workspace,a.brand,sql=>productionConsentEligibleBatch(sql,[subscriber]))).toEqual([subscriber]);
 });
 
 const delegatedImport = (brandId: string, address = 'delegated@retailer.test') => ({

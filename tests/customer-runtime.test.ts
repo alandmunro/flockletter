@@ -1,3 +1,6 @@
+import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
+import {createMcpServer} from '../src/mcp/bridge.js';
 import { randomUUID } from 'node:crypto';
 import { beforeAll, afterAll, expect, it, vi } from 'vitest';
 import {makeAudienceConnection} from './helpers/audience-connection.js';
@@ -603,4 +606,46 @@ it('observes workspace setup without rehydrating or deactivating provider route 
   f.runtime.settings.infrastructure='aws';
   try{await expect(f.call('workspace.preflight',{})).resolves.toMatchObject({canSend:false,reviewRequired:true});expect(routes).not.toHaveBeenCalled();}
   finally{f.runtime.settings.infrastructure='off';routes.mockRestore();}
+});
+
+it('shares current campaign preflight across read and delivery scopes without revealing private counts or writing work',async()=>{
+ const f=await factory();
+ await f.call('customerBilling.startTrial',{operationKey:randomUUID(),plan:'starter',simulatedCardConfirmed:true});
+ await f.call('customerBilling.exercisePayment',{operationKey:randomUUID(),result:'succeeded'});
+ const draft=await f.call<{id:string}>('campaign.create',{operationKey:randomUUID(),brandId:f.brandId,content:{title:'Private',subject:'Hello',fromName:'Shop',replyTo:'owner@shop.test',preheader:'',heading:'News',body:'Hello',ctaLabel:'',ctaUrl:'',assetIds:[]}});
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query("INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES($1,$2,$3,'private@shop.test','confirmed')",[f.workspaceId,f.brandId,randomUUID()]));
+ const make=async(scopes:string[])=>{
+  const issued=await f.call<{connection:{id:string};token:string}>('connection.create',{operationKey:randomUUID(),name:'Preflight test',scopes,brandIds:[f.brandId],expiresInDays:1});
+  return {id:issued.connection.id,actor:{...f.actor,kind:'connection' as const,actorId:'connection:'+issued.connection.id,scopes:scopes as Actor['scopes'],brandIds:[f.brandId]}};
+ };
+ const read=await make(['read']),summary=await make(['read','audience:summary']),sender=await make(['read','campaign:send','audience:summary']);
+ const count=()=>db.tenant(f.workspaceId,async sql=>(await sql.query(`SELECT
+  (SELECT count(*)::int FROM operations) operations,(SELECT count(*)::int FROM audit) audit,
+  (SELECT count(*)::int FROM customer_deliveries) deliveries,(SELECT count(*)::int FROM customer_usage_reservations) reservations`)).rows[0]);
+ const routingBefore=(await operator.pool.query('SELECT next_due_at,touched_at,last_pass_at,last_failure_code FROM flockletter_customer_jobs.scopes WHERE workspace_id=$1',[f.workspaceId])).rows;
+ const before=await count();
+ const hidden=await f.service.execute('campaign.preflight',{id:draft.id},read.actor) as {audience?:unknown;allowance?:unknown;gaps:{code:string}[]};
+ expect(hidden.audience).toBeUndefined();expect(hidden.allowance).toBeUndefined();expect(hidden.gaps.map(g=>g.code)).toContain('audience_review_required');
+ await expect(f.service.execute('delivery.preflight',{brandId:f.brandId,campaignId:draft.id},read.actor)).rejects.toMatchObject({code:'scope_required'});
+ const visible=await f.service.execute('campaign.preflight',{id:draft.id},summary.actor) as {audience:unknown;allowance?:unknown;gaps:{code:string}[]};
+ expect(visible.audience).toMatchObject({confirmed:1,selected:1,excluded:0});expect(visible.allowance).toBeUndefined();expect(visible.gaps).toEqual([]);
+ const checks=await f.service.execute('delivery.preflight',{brandId:f.brandId,campaignId:draft.id,expectedVersion:1},sender.actor) as {canSend:boolean;reviewRequired:boolean;audience:unknown;gaps:unknown[]};
+ expect(checks).toMatchObject({canSend:false,reviewRequired:true,audience:{selected:1},gaps:[]});expect(await count()).toEqual(before);
+ expect((await operator.pool.query('SELECT next_due_at,touched_at,last_pass_at,last_failure_code FROM flockletter_customer_jobs.scopes WHERE workspace_id=$1',[f.workspaceId])).rows).toEqual(routingBefore);
+ const bridge=createMcpServer((name,input)=>f.service.execute(name as CommandName,input,sender.actor)),mcp=new Client({name:'preflight-proof',version:'1'}),[ct,st]=InMemoryTransport.createLinkedPair();
+ await bridge.connect(st);await mcp.connect(ct);
+ try {
+  const result=await mcp.callTool({name:'delivery_preflight',arguments:{brandId:f.brandId,campaignId:draft.id,expectedVersion:1}});
+  expect(result.isError).not.toBe(true);expect(JSON.parse((result.content as {text:string}[])[0]!.text)).toMatchObject({canSend:false,reviewRequired:true,audience:{selected:1}});
+ }finally{await mcp.close();await bridge.close();}
+ const foreign=await factory();await expect(f.service.execute('delivery.preflight',{brandId:foreign.brandId,campaignId:draft.id},sender.actor)).rejects.toMatchObject({code:'brand_unavailable'});
+ await db.tenant(f.workspaceId,sql=>sql.query("UPDATE connections SET scopes=ARRAY['read','campaign:send'] WHERE id=$1",[sender.id]));
+ const narrowed=await f.service.execute('campaign.preflight',{id:draft.id},sender.actor) as {audience?:unknown};expect(narrowed.audience).toBeUndefined();
+ await db.tenant(f.workspaceId,sql=>sql.query("UPDATE connections SET scopes=ARRAY['read'] WHERE id=$1",[sender.id]));
+ await expect(f.service.execute('delivery.preflight',{brandId:f.brandId,campaignId:draft.id},sender.actor)).rejects.toMatchObject({code:'connection_revoked'});
+ await db.tenant(f.workspaceId,sql=>sql.query('UPDATE connections SET revoked_at=clock_timestamp() WHERE id=$1',[sender.id]));
+ await expect(f.service.execute('delivery.preflight',{brandId:f.brandId,campaignId:draft.id},sender.actor)).rejects.toMatchObject({code:'connection_revoked'});
+ await db.tenant(f.workspaceId,sql=>sql.query("UPDATE connections SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[read.id]));
+ await expect(f.service.execute('campaign.preflight',{id:draft.id},read.actor)).rejects.toMatchObject({code:'connection_revoked'});
+ owners.delete(f.workspaceId);await expect(f.service.execute('campaign.preflight',{id:draft.id},summary.actor)).rejects.toMatchObject({code:'owner_required'});
 });

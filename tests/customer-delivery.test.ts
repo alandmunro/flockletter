@@ -671,3 +671,112 @@ it('keeps paginated results scoped to the workspace, brand, delivery and current
  for(const raw of [{limit:0},{limit:101},{limit:1.5},{state:'anything'},{after:'invalid'}])
   await expect(f.delivery.execute('delivery.outcomes',{brandId:f.brandId,id:review.id,...raw},f.actor)).rejects.toThrow();
 });
+
+it('delivery.preflight reports ready capture configuration without mutating state', async () => {
+  const f = await factory();
+  const before = await db.tenant(f.workspaceId, async (sql) => {
+    const deliveries = (await sql.query('SELECT count(*)::int AS n FROM customer_deliveries')).rows[0].n;
+    const recipients = (await sql.query('SELECT count(*)::int AS n FROM customer_delivery_recipients')).rows[0].n;
+    const reservations = (await sql.query('SELECT count(*)::int AS n FROM customer_usage_reservations')).rows[0].n;
+    const operations = (await sql.query('SELECT count(*)::int AS n FROM operations')).rows[0].n;
+    const audit = (await sql.query('SELECT count(*)::int AS n FROM audit')).rows[0].n;
+    return { deliveries, recipients, reservations, operations, audit };
+  });
+
+  const result = (await f.delivery.execute(
+    'delivery.preflight',
+    { brandId: f.brandId, campaignId: f.campaign.id, expectedVersion: 1 },
+    f.actor,
+  )) as {
+    campaignId: string; version: number; contentReady: boolean; canSend: boolean; reviewRequired: boolean;
+    mode: string; gaps: { code: string }[]; audience?: { confirmed: number; selected: number; excluded: number };
+    observedAt: string; senderRevision: number | null;
+  };
+
+  expect(result.campaignId).toBe(f.campaign.id);
+  expect(result.version).toBe(1);
+  expect(result.contentReady).toBe(true);
+  expect(result.canSend).toBe(false);
+  expect(result.reviewRequired).toBe(true);
+  expect(result.mode).toBe('capture');
+  expect(result.gaps).toEqual([]);
+  expect(result.audience).toMatchObject({ confirmed: 1, selected: 1, excluded: 0 });
+  expect(typeof result.observedAt).toBe('string');
+
+  const after = await db.tenant(f.workspaceId, async (sql) => {
+    const deliveries = (await sql.query('SELECT count(*)::int AS n FROM customer_deliveries')).rows[0].n;
+    const recipients = (await sql.query('SELECT count(*)::int AS n FROM customer_delivery_recipients')).rows[0].n;
+    const reservations = (await sql.query('SELECT count(*)::int AS n FROM customer_usage_reservations')).rows[0].n;
+    const operations = (await sql.query('SELECT count(*)::int AS n FROM operations')).rows[0].n;
+    const audit = (await sql.query('SELECT count(*)::int AS n FROM audit')).rows[0].n;
+    return { deliveries, recipients, reservations, operations, audit };
+  });
+
+  expect(after.deliveries).toBe(before.deliveries);
+  expect(after.recipients).toBe(before.recipients);
+  expect(after.reservations).toBe(before.reservations);
+  expect(after.operations).toBe(before.operations);
+  expect(after.audit).toBe(before.audit);
+});
+
+it('delivery.preflight returns all configuration gaps without failing on the first', async () => {
+  const f = await factory({ mode: 'off', render: undefined });
+  const admin = new Database(fixture.adminUrl);
+  try {
+    await admin.tenant(f.workspaceId, (sql) =>
+      sql.query("UPDATE campaigns SET content=jsonb_set(content,'{subject}','\"\"'::jsonb) WHERE id=$1", [f.campaign.id]),
+    );
+  } finally {
+    await admin.close();
+  }
+
+  const result = (await f.delivery.execute(
+    'delivery.preflight',
+    { brandId: f.brandId, campaignId: f.campaign.id, expectedVersion: 1 },
+    f.actor,
+  )) as { contentReady: boolean; canSend: boolean; gaps: { code: string }[] };
+
+  expect(result.contentReady).toBe(false);
+  expect(result.canSend).toBe(false);
+  const codes = result.gaps.map((g) => g.code).sort();
+  expect(codes).toEqual(['delivery_off', 'renderer_required', 'subject_missing']);
+});
+
+it('delivery.preflight returns version_conflict gap for mismatched version and rejects missing campaign', async () => {
+  const f = await factory();
+
+  const mismatched = (await f.delivery.execute(
+    'delivery.preflight',
+    { brandId: f.brandId, campaignId: f.campaign.id, expectedVersion: 99 },
+    f.actor,
+  )) as { canSend: boolean; gaps: { code: string }[] };
+
+  expect(mismatched.canSend).toBe(false);
+  expect(mismatched.gaps.map((g) => g.code)).toContain('version_conflict');
+
+  await expect(
+    f.delivery.execute(
+      'delivery.preflight',
+      { brandId: f.brandId, campaignId: randomUUID(), expectedVersion: 1 },
+      f.actor,
+    ),
+  ).rejects.toMatchObject({ code: 'campaign_unavailable' });
+});
+it('preflight observes current SES readiness and independently reports allowance, schedule and sender failures',async()=>{
+ let ready=true;
+ const f=await factory({mode:'ses',provider:()=>({fingerprint:'b'.repeat(64),from:'news@shop.test',ready:async()=>ready,submit:async()=>{throw Error('Read-only checks must never submit.');},lookup:async()=>{throw Error('Read-only checks must never reconcile.');}})});
+ await saveSenderProfile(f.delivery,f.actor,f.brandId);
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query('INSERT INTO sender_domains(workspace_id,brand_id,domain,challenge,verified_at) VALUES($1,$2,$3,$4,clock_timestamp())',[f.workspaceId,f.brandId,'shop.test',randomUUID()]));
+ const input={brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1};
+ expect(await f.delivery.execute('delivery.preflight',input,f.actor)).toMatchObject({gaps:[],senderRevision:1,canSend:false,audience:{selected:1}});
+ ready=false;
+ const result=await f.delivery.execute('delivery.preflight',{...input,dueAt:'2099-01-01T00:00:00Z'},f.actor) as {gaps:{code:string}[]};
+ expect(result.gaps.map(g=>g.code)).toEqual(expect.arrayContaining(['sender_verification_required','invalid_schedule']));
+});
+it('preflight blocks oversized audiences without fabricating exact selected or excluded counts',async()=>{
+ const f=await factory();
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+  SELECT $1,$2,gen_random_uuid(),'synthetic-'||i||'@shop.test','confirmed' FROM generate_series(1,10000) i`,[f.workspaceId,f.brandId]));
+ const result=await f.delivery.execute('delivery.preflight',{brandId:f.brandId,campaignId:f.campaign.id},f.actor) as {audience:unknown;gaps:{code:string}[]};
+ expect(result.audience).toEqual({visibility:'over_limit',confirmed:10001});expect(result.gaps.map(g=>g.code)).toContain('audience_limit');
+});

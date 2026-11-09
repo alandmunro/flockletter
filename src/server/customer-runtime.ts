@@ -12,7 +12,7 @@ import type { CustomerOperationsStatus } from '../shared/customer-operations.js'
 import { customerSettings } from './customer-settings.js';
 import { CustomerBilling,customerEligibility,customerContactLimit,customerSeatLimit,retentionServiceEndSql,retentionClockSql } from './customer-billing/service.js';
 import { customerBillingConfiguration,stripeCustomerProvider } from './customer-billing/provider.js';
-import { CustomerAudience,createCustomerOptOut,productionConsentEligible } from './customer-audience/service.js';
+import { CustomerAudience,createCustomerOptOut,productionConsentEligible,productionConsentEligibleBatch } from './customer-audience/service.js';
 import { CustomerConfirmationFeedback } from './customer-audience/feedback.js';
 import { CustomerConfirmationProvider } from './customer-audience/resend.js';
 import { CustomerTeamLifecycle } from './customer-team/service.js';
@@ -85,7 +85,7 @@ export class CustomerWorkflows {
     this.ses=customerSesRuntime(config.origin,env);
     this.delivery=new CustomerDelivery(db,{mode:settings.delivery,environment:config.environment,origin:config.origin,
       billing:this.billing,eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),isOwner:identity.isOwner,
-      render:this.engine?message=>this.engine!.render(message):undefined,optOut:createCustomerOptOut,liveConsent:productionConsentEligible,
+      render:this.engine?message=>this.engine!.render(message):undefined,optOut:createCustomerOptOut,liveConsent:productionConsentEligible,liveConsentBatch:productionConsentEligibleBatch,
       provider:this.ses?.provider});
     this.infrastructure=new CustomerInfrastructure(db,{mode:settings.infrastructure,environment:config.environment,isOwner:identity.isOwner,
       eligibility:w=>this.billing.eligibility(w),eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),
@@ -212,7 +212,7 @@ export class CustomerWorkflows {
     if(!this.owns(name))return undefined;
     requireCondition(!this.closing,503,'worker_draining','The service is restarting. Retry with the same operation key.');
     const mutation=commands[name].mutation;
-    if(name.startsWith('infrastructure.')||name.startsWith('delivery.'))await this.hydrateInfrastructure(actor.workspaceId);
+    if(name.startsWith('infrastructure.')||name.startsWith('delivery.')&&!['delivery.preflight','delivery.outcomes'].includes(name))await this.hydrateInfrastructure(actor.workspaceId);
     if(mutation)await this.wake(actor.workspaceId);
     let result:unknown;
     if(name==='operations.status')return this.status(actor.workspaceId);
