@@ -47,6 +47,10 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     objectSrc: ["'none'"], baseUri: ["'none'"], formAction: ["'self'"], upgradeInsecureRequests: hosted ? [] : null,
   } }, crossOriginEmbedderPolicy: false, strictTransportSecurity: hosted ? undefined : false }));
   app.get('/healthz', (_req, res) => res.json({ status: 'alive' }));
+  // Exact running commit for release tooling. Public by design: it carries no secrets, and a
+  // release is only verified when the running build matches the reviewed commit.
+  app.get('/api/health/version', (_req, res) => res.set('Cache-Control', 'no-store')
+    .json({ appId: 'flockletter', surface: 'app', environment: config.environment, buildSha: config.buildSha ?? null }));
   app.get('/readyz', async (_req, res) => {
     const gaps = configurationGaps(config);
     if (!service || !auth) gaps.push('service_not_ready');
