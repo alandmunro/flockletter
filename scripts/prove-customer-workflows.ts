@@ -1,5 +1,5 @@
 import {rejectOptionalCookies} from './browser-cookie-choice.js';
-import {proveDeliveryOutcomes} from './prove-delivery-outcomes-flow.js';
+import {proveDeliveryPreflight} from './prove-delivery-preflight-flow.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -247,6 +247,7 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   assert.equal(await audiencePicker.inputValue(),retired.id,'Deleted selection must never silently broaden to all contacts.');
   assert.equal(await button(page,'Review saved campaign').isDisabled(),true);
   await audiencePicker.selectOption(group.id);
+  await proveDeliveryPreflight(page,group.id);
   const reviewRequest=page.waitForRequest(request=>new URL(request.url()).pathname==='/api/v1/commands/delivery.review');
   await waitForCommand(page, 'delivery.review', () => button(page, 'Review saved campaign').click());
   assert.equal((await reviewRequest).postDataJSON().segmentId,group.id,'Normal UI submits the exact selected group.');
@@ -490,8 +491,6 @@ try {
       await page.goto(origin);await rejectOptionalCookies(page);
       await page.getByRole('navigation', { name: 'Main navigation' }).waitFor();
       await journey(page, db, data.brands[0]!.id);
-      await page.setViewportSize(index===0?{width:1280,height:900}:{width:390,height:844});
-      await proveDeliveryOutcomes(page,db,service,customer,actor,data.brands[0]!.id,path.join(screenshotRoot,'09-recipient-outcomes-'+index+'.png'));
       assert.deepEqual(failures, [], 'No browser runtime errors');
     } catch (error) {
       await photo(page, 'failure-phase-' + (index + 1));

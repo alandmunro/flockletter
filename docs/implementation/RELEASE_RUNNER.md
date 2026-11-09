@@ -21,6 +21,8 @@ The release runner supports eight fixed operations: `production.inspect/prepare/
 ## 3. File & Security Boundaries
 
 ### Target Specification (Nonsecret)
+
+Nonsecret does not mean suitable for public sharing: target and plan files identify private infrastructure. Keep them outside Git and ordinary logs, with access limited to approved operators.
 *   **Fields:** `version: 1`, `operation`, `host`, `port` (numeric).
 *   **Fixed Values:**
     *   Database: `flockletter_<environment>`
