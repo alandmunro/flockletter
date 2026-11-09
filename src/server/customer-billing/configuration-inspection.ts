@@ -17,6 +17,7 @@ export type BillingInspectionTarget = {
   origin: string;
   cardConfiguration: string;
   portalConfiguration: string;
+  planPortalConfigurations: Record<CustomerPlan, string>;
   prices: Record<CustomerPlan, string>;
 };
 type Catalogue = Record<CustomerPlan, Stripe.Price>;
@@ -61,23 +62,26 @@ export async function readBillingCatalogue(stripe: Stripe, target: BillingInspec
 }
 
 /** D-049 policy, explicitly bound to a nondefault Flockletter portal. */
-export function billingPortalMatches(portal: Stripe.BillingPortal.Configuration, target: BillingInspectionTarget, catalogue: Catalogue) {
+export function billingPortalMatches(portal: Stripe.BillingPortal.Configuration, target: BillingInspectionTarget, catalogue: Catalogue, plan?: CustomerPlan) {
   const features = portal.features, update = features.subscription_update;
   const products = update.products ?? [];
-  return portal.id === target.portalConfiguration && portal.active && !portal.is_default &&
+  const configuration = plan ? target.planPortalConfigurations[plan] : target.portalConfiguration;
+  return portal.id === configuration && portal.active && !portal.is_default &&
     portal.livemode === target.live && portal.metadata?.fl_application === 'flockletter' &&
+    (plan ? portal.metadata.fl_plan === plan : !portal.metadata.fl_plan) &&
     portal.default_return_url === target.origin + '/' && !portal.login_page.enabled &&
     !features.customer_update.enabled && features.invoice_history.enabled &&
     features.payment_method_update.enabled && features.payment_method_update.payment_method_configuration === target.cardConfiguration &&
     features.subscription_cancel.enabled && features.subscription_cancel.mode === 'at_period_end' &&
     features.subscription_cancel.proration_behavior === 'none' && !features.subscription_pause?.enabled &&
-    update.enabled && same(update.default_allowed_updates, ['price']) &&
+    (plan ? update.enabled && same(update.default_allowed_updates, ['price']) &&
     update.billing_cycle_anchor === 'unchanged' && update.proration_behavior === 'always_invoice' &&
     update.trial_update_behavior === 'continue_trial' &&
     update.schedule_at_period_end.conditions.length === 1 &&
     update.schedule_at_period_end.conditions[0]?.type === 'decreasing_item_amount' &&
     products.length === 1 && products[0]!.product === ref(catalogue.starter.product) &&
-    same(products[0]!.prices, plans.map(plan => target.prices[plan.id])) && !products[0]!.adjustable_quantity?.enabled;
+    same(products[0]!.prices, [target.prices[plan]]) && !products[0]!.adjustable_quantity?.enabled
+    : !update.enabled && update.default_allowed_updates.length === 0 && products.length === 0);
 }
 
 /** Bounded, read-only operator inspection. Results contain no IDs, keys or SDK error text. */
@@ -98,8 +102,13 @@ export async function inspectStripeBillingConfiguration(stripe: Stripe, target: 
       card.card.display_preference.value === 'on';
   });
   await check('portal', async () => {
-    const portal = await stripe.billingPortal.configurations.retrieve(target.portalConfiguration);
-    return Boolean(catalogue && billingPortalMatches(portal, target, catalogue));
+    if (!catalogue) return false;
+    for (const plan of [undefined, 'starter', 'growth', 'pro'] as const) {
+      const id = plan ? target.planPortalConfigurations[plan] : target.portalConfiguration;
+      const portal = await stripe.billingPortal.configurations.retrieve(id, { expand: ['features.subscription_update.products'] });
+      if (!billingPortalMatches(portal, target, catalogue, plan)) return false;
+    }
+    return true;
   });
   await check('webhook', async () => {
     const matches: Stripe.WebhookEndpoint[] = [];

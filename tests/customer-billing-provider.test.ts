@@ -12,6 +12,9 @@ const environment = {
   FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK: 'whsec_fixture',
   FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG: 'pmc_fixture',
   FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG: 'bpc_fixture',
+  FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG:'bpc_starter',
+  FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG:'bpc_growth',
+  FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG:'bpc_pro',
   FLOCKLETTER_CUSTOMER_STARTER_PRICE: 'price_starter',
   FLOCKLETTER_CUSTOMER_GROWTH_PRICE: 'price_growth',
   FLOCKLETTER_CUSTOMER_PRO_PRICE: 'price_pro',
@@ -37,10 +40,10 @@ function billingPrice(plan: CustomerPlan) {
     },
   };
 }
-function billingPortal() {
+function billingPortal(plan?: CustomerPlan) {
   return {
-    id: 'bpc_fixture', active: true, is_default: false, livemode: false,
-    metadata: { fl_application: 'flockletter' },
+    id: plan ? 'bpc_'+plan : 'bpc_fixture', active: true, is_default: false, livemode: false,
+    metadata: { fl_application: 'flockletter', ...(plan ? {fl_plan:plan} : {}) },
     default_return_url: 'https://flockletter.example.test/',
     login_page: { enabled: false },
     features: {
@@ -50,12 +53,12 @@ function billingPortal() {
       subscription_cancel: { enabled: true, mode: 'at_period_end', proration_behavior: 'none' },
       subscription_pause: { enabled: false },
       subscription_update: {
-        enabled: true,
-        default_allowed_updates: ['price'],
+        enabled: Boolean(plan),
+        default_allowed_updates: plan ? ['price'] : [],
         billing_cycle_anchor: 'unchanged', proration_behavior: 'always_invoice',
         trial_update_behavior: 'continue_trial',
         schedule_at_period_end: { conditions: [{ type: 'decreasing_item_amount' }] },
-        products: [{ product: 'prod_flockletter', prices: ['price_starter', 'price_growth', 'price_pro'] }],
+        products: plan ? [{ product: 'prod_flockletter', prices: ['price_'+plan] }] : [],
       },
     },
   };
@@ -457,11 +460,33 @@ it('binds hosted portal sessions to the verified dedicated configuration and rej
   expect(posts()[0]!.body.get('configuration')).toBe('bpc_fixture');
   expect(posts()[0]!.body.get('customer')).toBe('cus_fixture');
   expect(posts()[0]!.body.get('return_url')).toBe('https://flockletter.example.test/');
+  expect(site.calls.find(call => call.url.pathname.endsWith('/bpc_fixture'))!.url.searchParams.get('expand[0]'))
+    .toBe('features.subscription_update.products');
   portal = billingPortal();
   portal.features.subscription_cancel.mode = 'immediately';
   await expect(site.provider.portal('cus_fixture', 'new_portal_operation')).rejects.toThrow(
     'The Flockletter billing provider could not be verified.',
   );
+  expect(posts()).toHaveLength(1);
+});
+
+it.each(['starter', 'growth', 'pro'] as const)('opens only the selected %s destination profile and refuses a retagged profile', async plan => {
+  let portal = billingPortal(plan);
+  const site = fixture(url => {
+    if (url.pathname === '/v1/account') return {id:'acct_fixture'};
+    for (const tier of ['starter','growth','pro'] as const)
+      if(url.pathname === '/v1/prices/price_'+tier) return billingPrice(tier);
+    if(url.pathname === '/v1/billing_portal/configurations/bpc_'+plan) return portal;
+    if(url.pathname === '/v1/billing_portal/sessions') return {id:'bps_fixture',url:'https://billing.stripe.com/p/review'};
+    throw Error('Unexpected provider request');
+  });
+  expect(await site.provider.portal('cus_fixture','destination_operation',plan)).toBe('https://billing.stripe.com/p/review');
+  const posts=()=>site.calls.filter(call=>call.url.pathname==='/v1/billing_portal/sessions');
+  expect(posts()[0]!.body.get('configuration')).toBe('bpc_'+plan);
+  expect(posts()[0]!.body.get('customer')).toBe('cus_fixture');
+  expect(posts()[0]!.body.get('return_url')).toBe('https://flockletter.example.test/');
+  portal = {...portal,metadata:{fl_application:'flockletter',fl_plan:plan==='starter'?'growth':'starter'}};
+  await expect(site.provider.portal('cus_fixture','changed_policy_operation',plan)).rejects.toThrow('could not be verified');
   expect(posts()).toHaveLength(1);
 });
 
