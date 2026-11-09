@@ -5,7 +5,7 @@ import Stripe from 'stripe';
 import { inspectStripeBillingConfiguration, billingProviderEvents } from '../src/server/customer-billing/configuration-inspection.js';
 import {inspectCustomerBillingEnvironment} from '../scripts/inspect-customer-billing.js';
 
-const target = {account:'acct_fixture',live:false,origin:'https://flockletter.example.test',cardConfiguration:'pmc_fixture',portalConfiguration:'bpc_fixture',prices:{starter:'price_starter',growth:'price_growth',pro:'price_pro'}};
+const target = {account:'acct_fixture',live:false,origin:'https://flockletter.example.test',cardConfiguration:'pmc_fixture',portalConfiguration:'bpc_fixture',planPortalConfigurations:{starter:'bpc_starter',growth:'bpc_growth',pro:'bpc_pro'},prices:{starter:'price_starter',growth:'price_growth',pro:'price_pro'}};
 
 function buildFixture(
   mutate?: (endpoint: string, data: Record<string, unknown>) => void, failPath?:string,
@@ -122,6 +122,17 @@ function buildFixture(
     },
   };
 
+  const management = map['/v1/billing_portal/configurations/bpc_fixture'] as {features:{subscription_update:Record<string,unknown>}};
+  for(const plan of ['starter','growth','pro'] as const){
+    const selected = structuredClone(management) as Record<string,unknown>;
+    selected.id = target.planPortalConfigurations[plan];
+    selected.metadata = {fl_application:'flockletter',fl_plan:plan};
+    const features = selected.features as {subscription_update:Record<string,unknown>};
+    features.subscription_update.products = [{product:'prod_flockletter',prices:[target.prices[plan]],adjustable_quantity:{enabled:false}}];
+    map['/v1/billing_portal/configurations/'+target.planPortalConfigurations[plan]]=selected;
+  }
+  management.features.subscription_update = {enabled:false,default_allowed_updates:[],products:[]};
+
   for (const [id, price] of Object.entries(prices)) {
     map[`/v1/prices/${id}`] = price;
   }
@@ -167,6 +178,7 @@ describe('inspectStripeBillingConfiguration', () => {
       origin: 'https://flockletter.example.test',
       cardConfiguration: 'pmc_fixture',
       portalConfiguration: 'bpc_fixture',
+      planPortalConfigurations: {starter:'bpc_starter',growth:'bpc_growth',pro:'bpc_pro'},
       prices: { starter: 'price_starter', growth: 'price_growth', pro: 'price_pro' },
     };
 
@@ -183,7 +195,7 @@ describe('inspectStripeBillingConfiguration', () => {
     ]);
 
     expect(calls.every((call) => call.method === 'GET' && call.host==='api.stripe.com')).toBe(true);
-    expect(calls).toHaveLength(7);
+    expect(calls).toHaveLength(10);
     expect(JSON.stringify(result)).not.toMatch(/acct_|sk_|price_|pmc_|bpc_/);
   });
 });
@@ -210,7 +222,7 @@ it.each([
     if (path === '/v1/prices/price_growth') data.product = {...object(data.product), id: 'prod_foreign'};
   }],
   ['foreign portal product', 'portal', (path: string, data: Record<string, unknown>) => {
-    if (path.includes('/billing_portal/')) object((object(object(data.features).subscription_update).products as unknown[])[0]).product = 'prod_foreign';
+    if (path.endsWith('/bpc_starter')) object((object(object(data.features).subscription_update).products as unknown[])[0]).product = 'prod_foreign';
   }],
   ['wrong portal cancellation', 'portal', (path: string, data: Record<string, unknown>) => {
     if (path.includes('/billing_portal/')) object(object(data.features).subscription_cancel).mode = 'immediately';
@@ -219,7 +231,7 @@ it.each([
     if (path.includes('/billing_portal/')) object(object(data.features).subscription_update).trial_update_behavior = 'end_trial';
   }],
   ['foreign portal price', 'portal', (path: string, data: Record<string, unknown>) => {
-    if (path.includes('/billing_portal/')) object((object(object(data.features).subscription_update).products as unknown[])[0]).prices = ['price_foreign'];
+    if (path.endsWith('/bpc_starter')) object((object(object(data.features).subscription_update).products as unknown[])[0]).prices = ['price_foreign'];
   }],
   ['disabled card', 'payment_methods', (path: string, data: Record<string, unknown>) => {
     if (path.includes('/payment_method_configurations/')) object(object(data.card).display_preference).value = 'off';
@@ -269,6 +281,7 @@ it('redacts failed SDK responses and never logs their provider payload', async (
 const environment:NodeJS.ProcessEnv={APP_ENV:'staging',APP_ORIGIN:target.origin,FLOCKLETTER_CUSTOMER_BILLING:'off',
  FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT:target.account,FLOCKLETTER_CUSTOMER_STRIPE_KEY:'rk_test_SYNTHETIC',
  FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG:target.cardConfiguration,FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG:target.portalConfiguration,
+ FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG:target.planPortalConfigurations.starter,FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG:target.planPortalConfigurations.growth,FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG:target.planPortalConfigurations.pro,
  FLOCKLETTER_CUSTOMER_STARTER_PRICE:target.prices.starter,FLOCKLETTER_CUSTOMER_GROWTH_PRICE:target.prices.growth,FLOCKLETTER_CUSTOMER_PRO_PRICE:target.prices.pro};
 it('inspects with customer billing and live approval off, without requiring a webhook signing secret',async()=>{
  const f=buildFixture(),env={...environment,FLOCKLETTER_LIVE_BILLING_APPROVED:'false'};
@@ -293,6 +306,7 @@ it.each([
  ['APP_ORIGIN','https://flockletter.example.test/alias'],['APP_ORIGIN','https://flockletter.example.test?alias=1'],
  ['APP_ORIGIN','https://user:password@flockletter.example.test'],['APP_ORIGIN',' https://flockletter.example.test'],
  ['FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT',''],['FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG',''],
+ ['FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG',''],['FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG','bpc_fixture'],['FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG','bpc_bad/path'],
  ['FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG','pmc_bad/path'],['FLOCKLETTER_CUSTOMER_STRIPE_KEY','sk_live_SYNTHETIC'],
  ['FLOCKLETTER_CUSTOMER_STRIPE_KEY',' sk_test_SYNTHETIC'],['FLOCKLETTER_CUSTOMER_PRO_PRICE','price_growth'],
  ['FLOCKLETTER_CUSTOMER_STARTER_PRICE','price_bad/path'],['FLOCKLETTER_CUSTOMER_BILLING','stripe_live'],

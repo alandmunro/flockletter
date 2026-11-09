@@ -17,7 +17,7 @@ Before enabling live billing, select the Flockletter merchant account and verify
 - `FLOCKLETTER_CUSTOMER_STRIPE_KEY`: a dedicated matching live key, stored only in the protected service configuration.
 - `FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK`: signing secret for `/api/v1/customer-billing/stripe-events`.
 - `FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG`: a card-enabled `pmc_` payment-method configuration.
-- `FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG`: a dedicated nondefault `bpc_` configuration matching D-049, explicitly used for sessions; never the shared merchant default.
+- `FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG`: a dedicated nondefault management `bpc_` with price changes disabled. The distinct `FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG`, `FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG` and `FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG` each expose only their one destination price under D-049; never use the shared merchant default.
 - `FLOCKLETTER_CUSTOMER_STARTER_PRICE`, `FLOCKLETTER_CUSTOMER_GROWTH_PRICE`, `FLOCKLETTER_CUSTOMER_PRO_PRICE`: three distinct active, live, USD monthly licensed/per-unit prices at 1500/2500/3900 minor units, quantity one.
 - Authenticated feedback for Checkout completion/expiry, subscription changes, paid/failed invoices, refunds, disputes and early fraud warnings; replay and unknown-outcome reconciliation remain required.
 - The selected Billing Portal's actual upgrade, downgrade and cancellation behavior. A portal session alone does not establish those commercial policies.

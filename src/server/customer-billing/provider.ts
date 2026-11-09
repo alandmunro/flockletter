@@ -66,7 +66,7 @@ export type CustomerBillingProvider = {
   createTrial?(intent: ProviderTrialActivation): Promise<ProviderSubscription>;
   lookupTrial?(intent: ProviderTrialActivation): Promise<ProviderSubscription | null>;
   inspectSubscription?(id: string): Promise<ProviderSubscription>;
-  portal(customer: string, key: string): Promise<string>;
+  portal(customer: string, key: string, plan?: CustomerPlan): Promise<string>;
   verify(raw: Buffer, signature: string): ProviderNotice | null;
   resolve(notice: ProviderNotice): Promise<{
     subscription: ProviderSubscription | null;
@@ -102,6 +102,9 @@ export function customerBillingConfiguration(env: NodeJS.ProcessEnv) {
     'FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK',
     'FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG',
     'FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG',
+    'FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG',
+    'FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG',
+    'FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG',
     'FLOCKLETTER_CUSTOMER_STARTER_PRICE',
     'FLOCKLETTER_CUSTOMER_GROWTH_PRICE',
     'FLOCKLETTER_CUSTOMER_PRO_PRICE',
@@ -142,6 +145,11 @@ export function stripeCustomerProvider(
     growth: env.FLOCKLETTER_CUSTOMER_GROWTH_PRICE ?? '',
     pro: env.FLOCKLETTER_CUSTOMER_PRO_PRICE ?? '',
   };
+  const planPortalConfigurations: Record<CustomerPlan, string> = {
+    starter: env.FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG ?? '',
+    growth: env.FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG ?? '',
+    pro: env.FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG ?? '',
+  };
   if (
     !['stripe_test', 'stripe_live'].includes(mode) ||
     !/^acct_[A-Za-z0-9]+$/.test(account) ||
@@ -149,6 +157,8 @@ export function stripeCustomerProvider(
     !webhook.startsWith('whsec_') ||
     !/^pmc_[A-Za-z0-9]+$/.test(card) ||
     !/^bpc_[A-Za-z0-9]+$/.test(portalConfiguration) ||
+    !Object.values(planPortalConfigurations).every(id => /^bpc_[A-Za-z0-9]+$/.test(id)) ||
+    new Set([portalConfiguration, ...Object.values(planPortalConfigurations)]).size !== 4 ||
     !Object.values(prices).every((v) => /^price_[A-Za-z0-9]+$/.test(v)) ||
     new Set(Object.values(prices)).size !== 3 ||
     new URL(origin).origin !== origin ||
@@ -159,7 +169,7 @@ export function stripeCustomerProvider(
   const stripe = clientFactory
     ? clientFactory(key)
     : new Stripe(key, { maxNetworkRetries: 0, timeout: 7000 });
-  const inspectionTarget: BillingInspectionTarget = { account, live, origin, prices, cardConfiguration: card, portalConfiguration };
+  const inspectionTarget: BillingInspectionTarget = { account, live, origin, prices, cardConfiguration: card, portalConfiguration, planPortalConfigurations };
   async function accountCheck() {
     if ((await stripe.accounts.retrieveCurrent()).id !== account) throw invalid();
   }
@@ -523,13 +533,15 @@ export function stripeCustomerProvider(
       }
       throw invalid();
     },
-    async portal(customer, key) {
+    async portal(customer, key, plan) {
       await accountCheck();
       const catalogue = await readBillingCatalogue(stripe, inspectionTarget);
-      const configuration = await stripe.billingPortal.configurations.retrieve(portalConfiguration);
-      if (!billingPortalMatches(configuration, inspectionTarget, catalogue)) throw invalid();
+      const selectedConfiguration = plan ? planPortalConfigurations[plan] : portalConfiguration;
+      if (!selectedConfiguration) throw invalid();
+      const configuration = await stripe.billingPortal.configurations.retrieve(selectedConfiguration, { expand: ['features.subscription_update.products'] });
+      if (!billingPortalMatches(configuration, inspectionTarget, catalogue, plan)) throw invalid();
       const result = await stripe.billingPortal.sessions.create(
-        { customer, return_url: origin + '/', configuration: portalConfiguration },
+        { customer, return_url: origin + '/', configuration: selectedConfiguration },
         { idempotencyKey: 'flockletter-customer-portal-' + key },
       );
       if (new URL(result.url).origin !== 'https://billing.stripe.com') throw invalid();

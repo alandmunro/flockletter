@@ -452,8 +452,10 @@ export class CustomerBilling {
     }
     if (command === 'customerBilling.rejoin')
       return this.rejoin(actor, customerBillingCommands[command].schema.parse(raw));
-    if (command === 'customerBilling.portal')
-      return this.portal(actor, customerBillingCommands[command].schema.parse(raw).operationKey);
+    if (command === 'customerBilling.portal') {
+      const request = customerBillingCommands[command].schema.parse(raw);
+      return this.portal(actor, request.operationKey, request.plan);
+    }
     requireCondition(
       this.options.exerciseEnabled && this.options.environment !== 'production',
       503,
@@ -1092,7 +1094,7 @@ export class CustomerBilling {
       url: result.url,
     };
   }
-  private async portal(actor: Actor, key: string) {
+  private async portal(actor: Actor, key: string, plan?: CustomerPlan) {
     const gateway = this.provider(),
       workspace = actor.workspaceId;
     const intent = await this.locked(workspace, async (sql) => {
@@ -1145,7 +1147,9 @@ export class CustomerBilling {
         'subscription_required',
         'A verified billing subscription is required.',
       );
-      const hash = digest(subscription.provider_customer);
+      // Preserve historical management-operation hashes, while binding each new
+      // destination selection to the same durable operation and retry key.
+      const hash = digest(plan ? JSON.stringify([subscription.provider_customer, plan]) : subscription.provider_customer);
       const previous = (
         await sql.query<{
           request_hash: string;
@@ -1196,7 +1200,7 @@ export class CustomerBilling {
     let url: string;
     await this.requireOwner(actor);
     try {
-      url = await gateway.portal(intent.customer, key);
+      url = await gateway.portal(intent.customer, key, plan);
     } catch {
       throw new AppError(503, 'portal_pending', 'Retry this same portal request.');
     }
