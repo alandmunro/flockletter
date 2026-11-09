@@ -130,11 +130,13 @@ export function PublicPlans({environment}:{environment?:unknown}) {
       <section className="card public-trial" aria-labelledby="trial-heading">
         <h2 id="trial-heading">{formatCount(hostedTrial.days)}-day hosted trial</h2>
         <p>
+          2 campaigns, 1 user, 1 company and 1 brand for the whole trial.{' '}
           {formatCount(hostedTrial.activeContacts)} active contacts and {formatCount(hostedTrial.totalEmails)}{' '}
           total recipient emails for the trial, including test messages.
           {hostedTrial.cardRequired ? ' A card is required before activating the hosted trial.' : ''}
           {' '}{presentation.trialNote}
         </p>
+        <p>Lifetime trial eligibility is checked for the owner, workspace and card. Reopening an account or changing plans does not renew free-trial eligibility. Read how minimal eligibility history is retained in the <a href="/privacy">privacy notice</a>.</p>
       </section>
       <a href="/help">Email support</a>
     </main>
