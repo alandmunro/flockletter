@@ -1,6 +1,7 @@
+import {tmpdir} from 'node:os';
 import {afterAll,beforeAll,expect,it} from 'vitest';
 import {randomBytes} from 'node:crypto';
-import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,realpath,rm,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import pg from 'pg';
@@ -12,7 +13,7 @@ beforeAll(async()=>{
  const password=randomBytes(32).toString('hex');await root.query(`CREATE ROLE fixture_operator LOGIN CREATEDB CREATEROLE NOSUPERUSER PASSWORD '${password}'`);
  for(const environment of ['production','staging'])await root.query(`CREATE DATABASE fixture_${environment}_control OWNER fixture_operator`);
  const url=new URL(fixture.adminUrl);url.username='fixture_operator';url.password=password;administrator=url.href;
- directory=await mkdtemp('/private/tmp/flockletter-release-prewrite-');
+ directory=await mkdtemp(path.join(await realpath(tmpdir()),'flockletter-release-prewrite-'));
 });
 afterAll(async()=>{await root?.end();await fixture?.stop();await rm(directory,{recursive:true,force:true});});
 async function store(name:string,value:unknown){const file=path.join(directory,name);await writeFile(file,JSON.stringify(value),{mode:0o600});return file;}

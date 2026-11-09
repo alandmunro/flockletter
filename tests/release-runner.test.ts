@@ -1,5 +1,6 @@
+import {tmpdir} from 'node:os';
 import {afterAll,beforeAll,expect,it} from 'vitest';
-import {chmod,link,mkdir,mkdtemp,readFile,rm,symlink,writeFile} from 'node:fs/promises';
+import {chmod,link,mkdir,mkdtemp,readFile,realpath,rm,symlink,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {releaseInputPreflight} from '../scripts/release-input.mjs';
@@ -9,7 +10,7 @@ import {executeReleaseFiles} from '../scripts/release-runner.mjs';
 let directory:string,plan:ReleasePlan;
 const target:ReleaseTarget={version:1,operation:'production.inspect',host:'database.example',port:5432,database:'flockletter_production',migrationRole:'flockletter_production_migrator',runtimeRole:'flockletter_production_runtime',sourceDatabase:'fixture_production_control',administratorRole:'fixture_operator'};
 const input={adminUrl:'postgresql://fixture_operator:private-input-marker@database.example/fixture_production_control',expectedHost:target.host,expectedSource:target.sourceDatabase,confirmProduction:true};
-beforeAll(async()=>{directory=await mkdtemp('/private/tmp/flockletter-release-files-');const result=await createReleasePlan(target);expect(result.codes).toBeUndefined();plan=result.plan!;});
+beforeAll(async()=>{directory=await mkdtemp(path.join(await realpath(tmpdir()),'flockletter-release-files-'));const result=await createReleasePlan(target);expect(result.codes).toBeUndefined();plan=result.plan!;});
 afterAll(async()=>{await rm(directory,{recursive:true,force:true});});
 async function store(name:string,value:unknown){const file=path.join(directory,name);await writeFile(file,JSON.stringify(value),{mode:0o600});return file;}
 const bundle=(p:ReleasePlan)=>({ok:true,plan:p,planDigest:releasePlanDigest(p)});
