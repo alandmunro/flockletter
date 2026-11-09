@@ -34,11 +34,26 @@ describe('production promotion workflow', () => {
   });
 
   it('checks the commit, staging and the migration gate before anything is deployed, then verifies production', () => {
-    const order = ['Validate release inputs', 'Check out the exact release commit', 'Confirm the commit is on main',
+    const order = ['Validate release inputs', 'Check out the trusted release tooling', 'Check out the exact release commit', 'Confirm the commit is on main',
       'Require the release checks', 'actions/setup-node', 'Verify staging serves', 'Require the protected migration',
       'Confirm the Render service', 'Deploy production', 'Verify production serves'].map(index);
     expect(order.every(i => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('runs release tooling only from the trusted workflow commit, never from the commit being promoted', () => {
+    const control = workflow.slice(workflow.indexOf('- name: Check out the trusted release tooling'), workflow.indexOf('- name: Check out the exact release commit'));
+    expect(control).toContain('ref: ${{ github.sha }}');
+    expect(control).toContain('path: control');
+    const candidate = workflow.slice(workflow.indexOf('- name: Check out the exact release commit'), workflow.indexOf('- name: Confirm the commit is on main'));
+    expect(candidate).toContain('ref: ${{ inputs.sha }}');
+    expect(candidate).toContain('path: candidate');
+    // every script invocation goes through control/; the candidate is only ever inspected with git
+    expect(workflow).not.toMatch(/(?<!control\/)scripts\/(?:verify-release\.mjs|render-deploy\.sh)/);
+    expect(workflow).toContain('node control/scripts/verify-release.mjs --environment staging');
+    expect(workflow).toContain('control/scripts/render-deploy.sh');
+    expect(workflow).not.toMatch(/\bcd candidate\b|working-directory: candidate/);
+    expect(workflow).toContain('[ "${GITHUB_REF}" = "refs/heads/main" ]');
   });
 
   it('has a dry run that does every check and the Render identity check but never deploys', () => {
