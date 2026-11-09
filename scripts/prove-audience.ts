@@ -270,7 +270,7 @@ async function verify(page: Page, origin: string) {
   await button('Workspace').click();
   const sender = page.locator('section').filter({has: page.getByRole('heading',{name:'Sending domain for '+primary,exact:true})}).last();
   await sender.getByRole('button',{name:'Check delivery setup'}).click();
-  await sender.getByRole('status').filter({hasText:'Customer delivery is disabled'}).waitFor();
+  await sender.getByRole('status').filter({hasText:'Simulator checks do not enable customer delivery. Review Delivery for your workspace’s current eligibility.'}).waitFor();
   const provider = sender.getByRole('listitem').filter({hasText:'Provider route'});
   assert.match(await provider.innerText(),/Action needed/);
   const dkim = sender.getByRole('listitem').filter({hasText:'DKIM signing'});
