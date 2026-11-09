@@ -28,6 +28,8 @@ Use a current brand-scoped connection with `read` and `campaign:send`; additiona
 
 If a response is lost, retain its exact operation key and payload. Retry/reconcile the original intent; do not create a second approval key to work around a daily limit or uncertain send. Revoked authority, expired grants and changed campaign/sender/consent require their normal resolution, not a new bypass. Never place customer addresses, tokens or message bodies in a public playbook or commit.
 
+Approval also rejects a replacement for the same campaign and contact while an earlier test is pending, paused or uncertain, including after navigation, cancellation of an uncertain attempt or a new draft revision. Resolve the original test through history and reconciliation. A completed or proven-unsent canceled test can be followed by another explicitly reviewed test within the remaining daily and email allowances.
+
 ## Browser operation and local evidence
 
 On Delivery, choose the saved campaign, then use **Test one confirmed contact**. The picker lists only the current brand’s confirmed contacts; it has no default recipient and exact-email search only looks up existing records. Review shows the frozen test facts before a distinct **Approve one-recipient test** action. An unknown approval retains the same operation key/payload and blocks a replacement in that view. Owner-only saved details recover the original review; completed tests do not offer a new approval.

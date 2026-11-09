@@ -1,6 +1,6 @@
 # Test-send security and accounting evidence
 
-Applicable requirements: FL-CAM-002/003/004, FL-BIL-001/007, FL-API-001/002 and FL-OPS-001/005/006/007. These checks exercise the approved one-recipient/five-approved-requests policy; they do not enable production sending or establish provider delivery.
+Applicable requirements: FL-CAM-002/003/004/005/006/007/010, FL-USG-001/002/005, FL-BIL-001/007, FL-API-001/002/003 and FL-OPS-001/005/006/007; acceptance case FL-AT-039. These checks exercise the approved one-recipient/five-approved-requests policy; they do not enable production sending or establish provider delivery.
 
 The independent suite uses real disposable PostgreSQL and canonical session commands plus an actual in-memory MCP client/server. Its 20 cases cover:
 
@@ -14,6 +14,6 @@ The independent suite uses real disposable PostgreSQL and canonical session comm
 
 Historical-row tests use only the disposable fixture administrator to age synthetic records, restoring and verifying the exact ALWAYS trigger before restricted-runtime assertions. This is test setup, not a supported restore or privileged product bypass.
 
-Focused verification passed all 20 tests, lint, type checking and self-host drill syntax checking. The supported full logical restore drill now seeds captured accepted and injected unknown test history, compares restored snapshots/usage, checks runtime boundaries and rejects legacy SQL dispatch afterward. Its Docker image copies the additional startup-boundary module. The updated full Docker restore run remains an integration CI gate; it was not completed locally in this workstream. No live provider was called and no production data or settings changed.
+Focused verification passed all 20 tests, lint, type checking and self-host drill syntax checking. The integrated local check passed 105 test files and 722 tests, with two explicitly gated engine tests skipped, plus the production build. The supported full logical restore drill seeds captured accepted and injected unknown test history, compares restored snapshots/usage, checks runtime boundaries and rejects legacy SQL dispatch afterward. Its Docker image copies the additional startup-boundary module. The full Linux Docker restore passed [CI for source `73ca99d`](https://github.com/alandmunro/flockletter/actions/runs/42563702073); it was not completed locally in this workstream. Later release heads must pass their own CI. No live provider was called and no production data or settings changed.
 
 Local Qwen extracted the reusable fixture from the existing delivery test factory (61.12 seconds; 3,572 output characters). Chat removed unwanted code fences/unused imports and reviewed the fixture. Chat handled security/accounting design review, adversarial assertions, integration corrections and the populated restore-drill extension. No token or cost percentage is inferred.

@@ -14,7 +14,7 @@ The staging defaults authorized in `COMPLETE_WORKFLOWS.md` are a 14-day captured
 
 1. Open Subscription and usage. A preparation workspace can select a plan and explicitly start a simulated card-confirmed trial when exercise is enabled.
 2. Review the saved status, eligibility reasons, remaining campaigns/messages, pending downgrade and service-end dates.
-3. Prepare campaigns through the ordinary workflow. Every test message consumes recipient allowance. Test messages consume no campaign slot. A real campaign consumes a slot once the provider accepts at least one recipient.
+3. Prepare campaigns through the ordinary workflow. An approved one-recipient test reserves one email and no campaign slot; acceptance consumes that email, proven nonacceptance releases it, and an unknown outcome retains the reservation. Its separate daily admission is never refunded after approval. See the [test-send playbook](TEST_SEND.md). A broadcast consumes a campaign slot once the provider accepts at least one recipient. Captured exercises use their separate practice ledger.
 4. Use the labeled captured payment controls to simulate success or failure. Advance the workspace-owned exercise clock across day six, day thirty or cancellation. This never changes the host clock or other workspaces.
 5. Resume a future cancellation before its effective end, or recover a closed captured account within its 90-day recovery window. Recovery does not erase its usage ledger. To exercise due retention, advance past effective service end plus 90 days. Retention uses the same verified exercise clock and service-end facts.
 
