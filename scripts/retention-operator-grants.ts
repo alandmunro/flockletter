@@ -2,6 +2,7 @@
 import pg from 'pg';
 import tables from '../src/shared/runtime-tables.json' with {type:'json'};
 const databaseName=process.env.FLOCKLETTER_RETENTION_DATABASE_NAME;
+if(process.env.APP_ENV==='production'||databaseName==='flockletter_production')throw Error('Use the fixed production retention generator with separate role, database and objects phases.');
 const runtime=process.env.FLOCKLETTER_RETENTION_RUNTIME_ROLE,planner=process.env.FLOCKLETTER_RETENTION_PLANNER_ROLE,executor=process.env.FLOCKLETTER_RETENTION_EXECUTOR_ROLE;
 if(!databaseName||!/^flockletter_[a-z0-9_]+$/.test(databaseName)||!runtime||!planner||!executor||new Set([runtime,planner,executor]).size!==3||[runtime,planner,executor].some(role=>!/^flockletter_[a-z0-9_]+$/.test(role)))throw Error('Configure three distinct restricted Flockletter role names.');
 const q=pg.escapeIdentifier,lines=['-- Review and apply as the database owner. Existing roles only; credentials stay outside SQL.','BEGIN;'];

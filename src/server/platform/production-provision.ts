@@ -1,29 +1,14 @@
 import {operatorObjectGrants} from './provision.js';
+import {productionRestrictedRoleGuard,productionRestrictedRoleCreationSql} from '../production-role-provision.js';
 
-export type ProductionOperatorPhase = 'database' | 'objects';
+export type ProductionOperatorPhase = 'role' | 'database' | 'objects';
 const database='flockletter_production',role='flockletter_production_operator';
-const migrator='flockletter_production_migrator',marker='Flockletter production foundation';
 
-/** SQL for review only. No connections, credentials, role creation or LOGIN activation. */
+/** SQL for review only. No connections, credentials or LOGIN activation. */
 export function productionOperatorGrantSql(phase:ProductionOperatorPhase):string {
+ if(phase==='role')return productionRestrictedRoleCreationSql('operator');
  if(phase!=='database'&&phase!=='objects')throw Error('Choose database or objects phase.');
- const identity=phase==='database'
-  ? "current_user::regrole::oid<>(SELECT datdba FROM pg_database WHERE datname=current_database())"
-  : `current_user<>'${migrator}' OR (SELECT shobj_description(oid,'pg_authid') FROM pg_roles WHERE rolname=current_user) IS DISTINCT FROM '${marker}'`;
- const checks=`DO $guard$ BEGIN
- IF current_database()<>'${database}' OR (SELECT shobj_description(oid,'pg_database') FROM pg_database WHERE datname=current_database()) IS DISTINCT FROM '${marker}' THEN
-  RAISE EXCEPTION 'production_database_marker_required'; END IF;
- IF ${identity} THEN RAISE EXCEPTION 'production_release_identity_required'; END IF;
- IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname='${role}' AND NOT rolcanlogin AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolinherit AND shobj_description(oid,'pg_authid')='${marker}') THEN
-  RAISE EXCEPTION 'inactive_restricted_operator_marker_required'; END IF;
- IF EXISTS(SELECT FROM pg_auth_members WHERE member=(SELECT oid FROM pg_roles WHERE rolname='${role}')) OR
-  EXISTS(SELECT FROM pg_stat_activity WHERE usesysid=(SELECT oid FROM pg_roles WHERE rolname='${role}')) OR
-  EXISTS(SELECT FROM pg_database WHERE datdba=(SELECT oid FROM pg_roles WHERE rolname='${role}')) OR
-  EXISTS(SELECT FROM pg_namespace WHERE nspowner=(SELECT oid FROM pg_roles WHERE rolname='${role}')) OR
-  EXISTS(SELECT FROM pg_class WHERE relowner=(SELECT oid FROM pg_roles WHERE rolname='${role}')) OR
-  EXISTS(SELECT FROM pg_proc WHERE proowner=(SELECT oid FROM pg_roles WHERE rolname='${role}')) THEN
-  RAISE EXCEPTION 'operator_ownership_or_membership_refused'; END IF;
- END $guard$;`;
+ const checks=productionRestrictedRoleGuard('operator',phase);
  const grants=phase==='database'
   ? `REVOKE ALL ON DATABASE "${database}" FROM "${role}";\nGRANT CONNECT ON DATABASE "${database}" TO "${role}";`
   : operatorObjectGrants(role);
