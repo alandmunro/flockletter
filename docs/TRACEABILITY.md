@@ -49,6 +49,8 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
+**Production preparation information:** FL-PROD-004 and FL-ONB-002/004 use server-reported environment presentation with neutral failure defaults. Pricing/owner views do not claim a production trial or paid delivery is enabled by account creation; captured components retain their own labels. See [launch preparation](implementation/PRODUCTION_LAUNCH_PREPARATION.md) for configuration, factual owner inputs and synthetic verification scope.
+
 **D-045 cookie choices:** FL-PRV-001 is covered by the preference validation tests and desktop/mobile browser journey in [cookie choices](implementation/COOKIE_CHOICES.md), with an unsaved Studio draft preservation check. Hosted sign-in preservation and deployment evidence are recorded after staging verification. No new optional tracking provider is activated.
 
 **D-044 release parity:** FL-OPS-001/003/004/006 have additional production provisioning/migration coverage in `tests/production-provision.test.ts`: explicit environment/confirmation, fixed isolated identities, full runtime-boundary checks, idempotent migration replay, protected input/output and refusal without repairing foreign permissions or altering foreign rows. Shared-host capacity and live production identity remain external checks. [Release record](implementation/RELEASE_PARITY.md)

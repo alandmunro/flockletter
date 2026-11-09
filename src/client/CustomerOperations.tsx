@@ -69,7 +69,7 @@ export function CustomerOperations({ api }: { api: Api }) {
       )}
 
       <p className="help">
-        Captured exercises cannot prove external provider delivery or billing. Free staging web worker sleeps and dedicated readiness may be missing.
+        Captured outcomes are simulations. Review the worker, workflow modes and activation gaps below for current service readiness.
       </p>
 
       {!status && !loading && <button type="button" className="btn secondary" onClick={()=>void handleRefresh()}>Retry status</button>}

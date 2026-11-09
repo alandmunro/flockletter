@@ -1,4 +1,5 @@
-import { useId } from 'react';
+import { useEffect, useId, useState } from 'react';
+import {sitePresentation} from '../shared/site-presentation.js';
 import './public-plans.css';
 import { plans } from '../shared/contracts.js';
 import { hostedTrial } from '../shared/trial.js';
@@ -85,25 +86,39 @@ export function PlanCards({
   );
 }
 
-export function PublicPlans() {
+export function PublicPricingPage() {
+  const [environment,setEnvironment]=useState<unknown>();
+  useEffect(()=>{
+    const controller=new AbortController();
+    void fetch('/api/config',{signal:controller.signal}).then(async response=>{
+      if(!response.ok) return;
+      const config=await response.json() as {environment?:unknown};
+      if(!controller.signal.aborted) setEnvironment(config.environment);
+    }).catch(()=>{/* Unknown availability never becomes a paid-service claim. */});
+    return ()=>controller.abort();
+  },[]);
+  return <PublicPlans environment={environment}/>;
+}
+
+export function PublicPlans({environment}:{environment?:unknown}) {
+  const presentation=sitePresentation(environment);
   return (
     <main id="main" className="public-plans">
       <header>
         <div>
           <h1 className="page-heading">Plans and pricing</h1>
           <p>
-            Every hosted plan includes delivery. Your subscription shares its allowances across all companies
-            and brands. Prices are in USD before applicable tax.
+            Hosted plans include delivery once activated. Allowances are shared across all companies
+            and brands. Prices below are in USD before applicable tax; review service availability in your workspace.
           </p>
         </div>
         <div className="plan-staging">
           <p>
-            Create a staging workspace to draft and preview campaigns. There is no charge and staging signup
-            does not start a trial.
+            {presentation.pricingNote}
           </p>
           <div className="actions">
             <a className="btn" href="/sign-up">
-              Create a staging account
+              {presentation.accountLabel}
             </a>
             <a className="btn secondary" href="/">
               Sign in
@@ -117,7 +132,8 @@ export function PublicPlans() {
         <p>
           {formatCount(hostedTrial.activeContacts)} active contacts and {formatCount(hostedTrial.totalEmails)}{' '}
           total recipient emails for the trial, including test messages.
-          {hostedTrial.cardRequired ? ' The hosted trial requires a card at signup.' : ''}
+          {hostedTrial.cardRequired ? ' A card is required before activating the hosted trial.' : ''}
+          {' '}{presentation.trialNote}
         </p>
       </section>
       <a href="/help">Email support</a>

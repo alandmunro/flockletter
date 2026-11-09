@@ -31,7 +31,7 @@ describe('public hosted pricing and staging setup', () => {
     }
   });
   it('explains the future card trial and provides working staging account links', () => {
-    const page = renderToStaticMarkup(createElement(PublicPlans));
+    const page = renderToStaticMarkup(createElement(PublicPlans,{environment:'staging'}));
     expect(page.match(/<main\b/g)).toHaveLength(1);
     expect(page.match(/<h1\b/g)).toHaveLength(1);
     for (const phrase of [
@@ -47,6 +47,21 @@ describe('public hosted pricing and staging setup', () => {
     expect(page).toContain('href="/"');
     expect(page).not.toContain('<form');
     expect(page).not.toMatch(/>(?:choose this plan|buy now|start (?:your |a )?(?:14-day )?trial)[^<]*<\/a>/i);
+  });
+  it('describes production preparation without staging labels or claiming live paid signup', () => {
+    const page=renderToStaticMarkup(createElement(PublicPlans,{environment:'production'}));
+    const text=page.replace(/<[^>]+>/g,' ');
+    expect(text).not.toMatch(/staging|simulated/i);
+    expect(text).toContain('Create an account');
+    expect(text).toMatch(/Account creation does not start a trial/);
+    expect(text).toMatch(/before paid service or sending begins/);
+    expect(page).not.toMatch(/>(?:buy now|start (?:your |a )?trial)[^<]*<\/a>/i);
+  });
+  it('uses neutral preparation copy when service environment is unavailable', () => {
+    const page=renderToStaticMarkup(createElement(PublicPlans,{}));
+    expect(page).toMatch(/shown for review/);
+    expect(page).toMatch(/availability must be verified/);
+    expect(page.replace(/<[^>]+>/g,' ')).not.toMatch(/staging/i);
   });
   it('shows upcoming milestones from unknown facts and only exposes available destinations', () => {
     const unknown = renderProgress();

@@ -127,7 +127,7 @@ export function SenderDomain({ api, brand }: { api: Api; brand: Brand }) {
             {report.simulatorConfigured
               ? 'Configured for an AWS simulator test.'
               : 'Setup is incomplete for the AWS simulator.'}{' '}
-            Customer delivery is disabled on staging.
+            Simulator checks do not enable customer delivery. Review Delivery for your workspace’s current eligibility.
           </p>
           {report.providerCheckedAt && (
             <p>Provider checked {new Date(report.providerCheckedAt).toLocaleString()}.</p>
