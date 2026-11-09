@@ -3,6 +3,7 @@ import pg from 'pg';
 import { createInterface } from 'node:readline/promises';
 import { URL, pathToFileURL } from 'node:url';
 import process from 'node:process';
+import { hasSupportedProductionConnectionOptions } from './production-connection.mjs';
 
 const database = 'flockletter_production';
 const migrator = 'flockletter_production_migrator';
@@ -30,8 +31,9 @@ export async function prepareCustomerSchemas(client) {
     if (identity.actor !== identity.database_owner) reject('database_owner_required');
     const role = (
       await client.query(
-        `SELECT oid,rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication AS unsafe,
-      shobj_description(oid,'pg_authid') AS marker FROM pg_roles WHERE rolname=$1`,
+        `SELECT r.oid,rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication
+          OR EXISTS(SELECT FROM pg_auth_members m WHERE m.member=r.oid) AS unsafe,
+      shobj_description(r.oid,'pg_authid') AS marker FROM pg_roles r WHERE rolname=$1`,
         [migrator],
       )
     ).rows[0];
@@ -93,7 +95,7 @@ async function main() {
     !['postgres:', 'postgresql:'].includes(url.protocol) ||
     url.pathname !== `/${database}` ||
     !url.username ||
-    !url.password
+    !url.password || !hasSupportedProductionConnectionOptions(url)
   )
     reject('database_scope_invalid');
   const client = new pg.Client({

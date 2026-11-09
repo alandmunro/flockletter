@@ -5,6 +5,7 @@ import pg from 'pg';
 import { startDatabase } from '../scripts/database-fixture.js';
 import tables from '../src/shared/runtime-tables.json' with { type: 'json' };
 import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
+import { hasSupportedProductionConnectionOptions } from '../scripts/production-connection.mjs';
 
 let fixture: Awaited<ReturnType<typeof startDatabase>>;
 let releaseInput: {adminUrl:string;expectedHost:string;expectedSource:string;runtimePassword:string;migratorPassword:string;confirmProduction:boolean};
@@ -32,6 +33,39 @@ function run(mode: string, input = releaseInput, environment = 'production') {
     env:{...process.env,APP_ENV:environment},
   });
 }
+
+function prepare(adminUrl: string) {
+  return spawnSync(process.execPath, ['scripts/prepare-production-schemas.mjs'], {
+    input: JSON.stringify({adminUrl,expectedDatabase:'flockletter_production',confirmProduction:true})+'\n',
+    encoding:'utf8',timeout:25000,env:{...process.env,APP_ENV:'production'},
+  });
+}
+
+it('rejects connection query overrides and duplicates before connecting, allowing only one supported sslmode', () => {
+  // This is the real driver parser, without a network connection: query fields override URL fields.
+  const overridden=new pg.Client({connectionString:'postgresql://url_user:url_password@url.example/url_db?host=query.example&user=query_user&database=query_db'});
+  expect(overridden).toMatchObject({host:'query.example',user:'query_user',database:'url_db'});
+  const targetUrl=new URL(releaseInput.adminUrl);targetUrl.pathname='/flockletter_production';
+  for(const search of ['?host=query.example','?user=query_user','?database=query_db','?password=private-query-marker',
+    '?port=12345','?sslmode=disable&sslmode=disable','?sslmode=disable&application_name=unexpected',
+    '?sslmode=unsupported','?sslmode=','?options=-csearch_path%3Dpublic','#unexpected']) {
+    for(const url of [new URL(releaseInput.adminUrl),new URL(targetUrl)]) {
+      if(search.startsWith('#')) url.hash=search;else url.search=search;
+      const result=url.pathname==='/flockletter_production'?prepare(url.href):run('apply',{...releaseInput,adminUrl:url.href});
+      expect(result.status).not.toBe(0);
+      expect(result.stdout+result.stderr).not.toContain('private-query-marker');
+      expect(result.stderr).toMatch(/database_scope_invalid|explicitly selected production host/);
+    }
+  }
+  for(const mode of ['disable','no-verify','prefer','require','verify-ca','verify-full']) {
+    const url=new URL(releaseInput.adminUrl);url.searchParams.set('sslmode',mode);
+    expect(hasSupportedProductionConnectionOptions(url)).toBe(true);
+  }
+  const valid=new URL(releaseInput.adminUrl);valid.searchParams.set('sslmode','disable');
+  const inspected=run('inspect',{...releaseInput,adminUrl:valid.href});
+  expect(inspected.status,inspected.stderr).toBe(0);
+  expect(JSON.parse(inspected.stdout).databaseExists).toBe(false);
+});
 
 it('refuses wrong host, staging source, missing confirmation and nonproduction execution', () => {
   for (const input of [
@@ -64,12 +98,36 @@ it('preserves foreign grants and data, then provisions and replays the complete 
     await foreign.query('GRANT SELECT ON unrelated_fixture TO PUBLIC');
     const refused=run('apply');
     expect(refused.status).not.toBe(0);
-    expect(refused.stderr).toContain('foreign database grants the runtime access');
+    expect(refused.stderr).toContain('foreign database grants a Flockletter role access');
     expect((await foreign.query('SELECT id FROM unrelated_fixture')).rows).toEqual([{id:1}]);
     expect((await foreign.query("SELECT has_table_privilege('flockletter_production_runtime','unrelated_fixture','SELECT') allowed")).rows[0].allowed).toBe(true);
     expect((await foreign.query("SELECT rolcanlogin FROM pg_roles WHERE rolname='flockletter_production_runtime'")).rows[0].rolcanlogin).toBe(false);
     // Test-owned fixture cleanup only; the release helper must never repair foreign grants.
     await foreign.query('REVOKE SELECT ON unrelated_fixture FROM PUBLIC');
+    for(const role of ['flockletter_production_migrator','flockletter_production_runtime']) {
+      for(const privilege of ['SELECT','MAINTAIN']) {
+        await foreign.query(`GRANT ${privilege} ON unrelated_fixture TO ${role}`);
+        const refused=run('apply');
+        expect(refused.status).not.toBe(0);
+        expect(refused.stderr).toContain('foreign database grants a Flockletter role access');
+        expect((await foreign.query(`SELECT has_table_privilege($1,'unrelated_fixture',$2) allowed`,[role,privilege])).rows[0].allowed).toBe(true);
+        expect((await foreign.query('SELECT id FROM unrelated_fixture')).rows).toEqual([{id:1}]);
+        expect((await foreign.query('SELECT rolcanlogin FROM pg_roles WHERE rolname=ANY($1)',
+          [['flockletter_production_runtime','flockletter_production_migrator']])).rows).toEqual([{rolcanlogin:false},{rolcanlogin:false}]);
+        await foreign.query(`REVOKE ${privilege} ON unrelated_fixture FROM ${role}`);
+      }
+      for(const [grant,revoke] of [
+        [`GRANT SELECT(id) ON unrelated_fixture TO ${role}`,`REVOKE SELECT(id) ON unrelated_fixture FROM ${role}`],
+        [`GRANT CREATE ON DATABASE fixture_production_control TO ${role}`,`REVOKE CREATE ON DATABASE fixture_production_control FROM ${role}`],
+      ] as const) {
+        await foreign.query(grant);
+        const refused=run('apply');
+        expect(refused.status).not.toBe(0);
+        expect(refused.stderr).toContain('foreign database grants a Flockletter role access');
+        expect((await foreign.query('SELECT id FROM unrelated_fixture')).rows).toEqual([{id:1}]);
+        await foreign.query(revoke);
+      }
+    }
   } finally { await foreign.end(); }
 
   for(let attempt=0;attempt<2;attempt++) {
@@ -80,6 +138,18 @@ it('preserves foreign grants and data, then provisions and replays the complete 
     for(const value of [releaseInput.adminUrl,releaseInput.runtimePassword,releaseInput.migratorPassword])
       expect(result.stdout+result.stderr).not.toContain(value);
   }
+  const ownerUrl=new URL(releaseInput.adminUrl);ownerUrl.pathname='/flockletter_production';
+  const root=new pg.Client({connectionString:fixture.adminUrl});await root.connect();
+  try {
+    await root.query('GRANT flockletter_runtime TO flockletter_production_migrator');
+    const refused=prepare(ownerUrl.href);
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toContain('migrator_marker_invalid');
+    expect((await root.query("SELECT 1 FROM pg_auth_members WHERE member='flockletter_production_migrator'::regrole")).rowCount).toBe(1);
+    await root.query('REVOKE flockletter_runtime FROM flockletter_production_migrator');
+  } finally { await root.end(); }
+  const preparedAgain=prepare(ownerUrl.href);
+  expect(preparedAgain.status,preparedAgain.stderr).toBe(0);
   const runtimeUrl=new URL(String(releaseInput.adminUrl));
   runtimeUrl.pathname='/flockletter_production';runtimeUrl.username='flockletter_production_runtime';
   runtimeUrl.password=String(releaseInput.runtimePassword);
