@@ -1,52 +1,31 @@
-# Proposed Amendment: Flockletter Trial Reuse Protection (Owner Review)
+# Accepted minimal trial-eligibility retention exception
 
-**Status:** DRAFT — NOT ACCEPTED. No business decision is marked as accepted.
-**Scope:** Narrow policy amendment for lifetime trial eligibility enforcement and data retention exceptions.
+**Status:** Owner accepted on November 9, 2026 under D-048. The historical proposal filename is retained for existing links. This records policy; it is not installed configuration, public disclosure, provider/history verification or a hosted-purge result.
 
-## 1. Policy Definition
-*   **Policy ID:** `trial-once-lifetime-v1` (Proposed)
-*   **Version:** 1
-*   **Eligibility Rule:** Lifetime one-trial-per-verified-Clerk-owner and provider-card identity across all workspaces.
-*   **Constraint:** Bounded alternatives (e.g., 365-day refresh) cannot satisfy the current lifetime no-refresh rule. Implementation currently permits bounded logic only for synthetic exercises.
+## Accepted purpose and limits
 
-## 2. Data Retention & Privacy
-*   **Standard Tenant Policy:** All ordinary tenant data remains under the existing 90-day retention policy from effective service end. Legal holds are disclosed separately.
-*   **Narrow Exception:** Global minimal consumed claims are retained indefinitely (`retainUntil=null`) after account purge. This is an explicit, narrow exception to the 90-day rule.
-*   **Unconsumed Reservations:** Their eligibility expires after the existing 35-minute flow; this is not a promise of physical deletion at minute 35. Due-only cleanup runs through the restricted retention mechanism. Attempt records enforce the rolling 24-hour retry limit.
-*   **Data Minimization:** Records are keyed HMAC-SHA256 pseudonymous personal data (not anonymous).
-    *   **Included:** Namespace/key tag, approved policy ID/version/mode/retention days, claim kind, owner/card/workspace keyed digest, random intent UUID, reservation/consumed state, creation timestamp, nullable expiry.
-    *   **Excluded:** Raw IDs, fingerprints, emails, PAN, address, list/message content.
+Retain minimal keyed HMAC owner/card/workspace consumed trial-eligibility history indefinitely beyond ordinary 90-day tenant purge, solely to enforce lifetime one-trial/no-refresh protection. Necessary namespace/key-tag, policy/version/mode, claim kind, intent UUID, state, creation time and nullable-expiry metadata remain linked to those claims. These are **pseudonymous personal data, not anonymous data**.
 
-## 3. Security & Configuration
-*   **HMAC Secret:** Stable in private credential storage. Rotation/reset must preserve history under reviewed migration.
-*   **Configuration Gates:**
-    *   `FLOCKLETTER_TRIAL_HMAC_KEY`: ≥32 characters.
-    *   `FLOCKLETTER_TRIAL_POLICY_ID`: `trial-once-lifetime-v1`.
-    *   `FLOCKLETTER_TRIAL_POLICY_VERSION`: `1`.
-    *   `FLOCKLETTER_TRIAL_RETENTION_APPROVED`: `true` **only** after owner approval.
-    *   `FLOCKLETTER_TRIAL_HISTORY_BASELINE`: `verified-empty` or `reviewed-backfill` **only** after factual provider/history review.
+Raw Clerk/workspace identifiers, provider card fingerprints, email addresses, card numbers, physical addresses and message/list content are excluded from the global exception. Ordinary tenant data retains the existing 90-day policy; other retention clocks, copies, holds and minimal-record rules remain separate. This approval does not authorize broad retention of failed-attempt analytics or a recoverable mailing list.
 
-## 4. Baseline Verification Protocol
-*   **Requirement:** Do NOT guess baseline from empty new DB.
-*   **Procedure:** Inspect actual configured Stripe account, all Flockletter previous trial/subscription/setup history, reconcile existing app mappings and legacy saved agreements.
-*   **Decision Logic:**
-    *   If absolutely no historical actual free trials: Select `verified-empty` and retain dated evidence.
-    *   If history exists: Do NOT select `reviewed-backfill` until authoritative import code, review, and evidence exist.
-    *   **Note:** Current repository has no historical-backfill importer.
+Unconsumed reservation eligibility still expires after 35 minutes. Expiry is not a promise of physical deletion at minute 35; the restricted due-only cleanup applies to expiring records. Consumed lifetime claims and their minimum linked replay metadata have `retainUntil: null`. A bounded synthetic policy does not replace this accepted lifetime rule.
 
-## 5. Owner Decisions Required
-The owner must explicitly select these policies; deployment or credential approval alone does not select them:
+## Configuration and signed evidence
 
-1.  **Eligibility Model:**
-    *   [ ] Approve the Lifetime Narrow Exception (implemented but currently disabled for real trials).
-    *   [ ] Amend to Bounded Retention (e.g., 365 days) — *Requires coding, disclosure, and tests before live use.*
-    *   [ ] Defer Real Trials — Keep new real trials off while paid/complimentary preparation continues.
-2.  **Public Disclosure:**
-    *   [ ] Approve public disclosure of the retention exception and pseudonymous data handling.
-3.  **Infrastructure & Facts:**
-    *   [ ] Identify/Confirm retention signing storage location.
-    *   [ ] Confirm AWS account control for credential management.
-    *   [ ] Supply factual evidence for `FLOCKLETTER_TRIAL_HISTORY_BASELINE`.
+The documented policy reference is `trial-once-lifetime-v1`, version `1`. Use the matching verified namespace/policy configuration; do not silently replace an existing key, policy, baseline or namespace to refresh eligibility. Key rotation requires reviewed migration preserving uniqueness history.
 
----
-*This is an owner-review proposal, not an accepted policy or a statement of live provider verification.*
+The hosted registry requires the stable private HMAC key (at least 32 characters), matching policy ID/version and the retention-approval configuration for the D-048 scope. D-048 supplies the owner policy approval; this document sets no field or secret. The actual provider account/source and historical baseline still require evidence. Existing saved agreements retain their own identity and reconciliation path.
+
+Hosted purge still requires the exact signed minimal-record exception inventory, protected current checkpoint, independent approvals/disposal evidence and restricted executor. Policy acceptance never substitutes for that review or authorizes a customer erasure action. Publish accurate privacy/terms disclosure through the reviewed release process; this document is not evidence that it is published or legally sufficient.
+
+## Historical baseline before real activation
+
+Inspect the actual configured Flockletter Stripe account and its prior trial/subscription/setup history, reconciling app mappings and legacy saved agreements. A fresh empty application database is not evidence of an empty provider history.
+
+- Use the verified-empty baseline only after that factual review establishes no prior actual trials, with dated evidence.
+- If history exists, a reviewed authoritative import and evidence are required before selecting reviewed-backfill. No historical-backfill importer is claimed implemented by this approval.
+- Signed-in provider sessions, an issued key, a new namespace or synthetic tests do not establish the baseline, production readiness or a customer's recurring agreement.
+
+## Remaining independent release work
+
+Verify actual stable key/policy installation, provider identity/history and any necessary backfill, accurate disclosure/publication, legal/tax/customer terms, exact customer price/date acceptance, and protected retention storage/signing/restore evidence. The owner policy is accepted; these are implementation/factual verification gates, not a request to approve the same exception again.

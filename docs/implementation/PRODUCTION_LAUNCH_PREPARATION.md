@@ -21,7 +21,7 @@ Before enabling live billing, select the Flockletter merchant account and verify
 - Authenticated feedback for Checkout completion/expiry, subscription changes, paid/failed invoices, refunds, disputes and early fraud warnings; replay and unknown-outcome reconciliation remain required.
 - The selected Billing Portal's actual upgrade, downgrade and cancellation behavior. A portal session alone does not establish those commercial policies.
 
-New trial setup additionally requires `FLOCKLETTER_TRIAL_HMAC_KEY`, `FLOCKLETTER_TRIAL_POLICY_ID`, positive `FLOCKLETTER_TRIAL_POLICY_VERSION`, the separately approved `FLOCKLETTER_TRIAL_RETENTION_APPROVED=true`, and `FLOCKLETTER_TRIAL_HISTORY_BASELINE=verified-empty` or `reviewed-backfill` after real history review. The minimal lifetime claim exception is still a policy decision; a fresh key cannot erase history or bypass it.
+New trial setup additionally requires `FLOCKLETTER_TRIAL_HMAC_KEY`, `FLOCKLETTER_TRIAL_POLICY_ID`, positive `FLOCKLETTER_TRIAL_POLICY_VERSION`, the separately approved `FLOCKLETTER_TRIAL_RETENTION_APPROVED=true`, and `FLOCKLETTER_TRIAL_HISTORY_BASELINE=verified-empty` or `reviewed-backfill` after real history review. D-048 accepts the minimal lifetime claim exception; a fresh key cannot erase history or establish the baseline. This policy record does not set a flag, install a key or assert those factual checks are complete.
 
 ## Bounded verification before any charge
 
@@ -29,21 +29,22 @@ Account, price and endpoint inspection can establish configuration without accep
 
 Recurring trial activation is a separate current-owner action after the verified card setup. It requires exact price, first-charge date, revision and acceptance. A redirect or webhook cannot create that agreement. A real charge, live recurring commitment or refund requires its own applicable authorization and evidence; a successful synthetic test is not live verification.
 
-## Proposed owner decisions, not accepted production policy
+## Accepted defaults and remaining launch evidence
 
-The current exercise behavior offers a concrete starting point:
+On November 9 the owner accepted D-048/049/050. The table distinguishes that policy from factual setup and release checks; no mode, agreement, payment or entitlement is activated by recording it.
 
-| Topic | Proposed starting policy |
+| Topic | Policy and remaining condition |
 | --- | --- |
-| Plans | Monthly-only USD $15/$25/$39; existing pooled limits; no automatic overages or annual discounts. |
-| Trial | One company, brand and user; two campaigns; 250 contacts and 500 total recipient messages; 14 days after exact acceptance, card required. |
-| Changes | Immediate prorated upgrade only after the selected portal's behavior is verified; downgrade and cancellation at period end. |
-| Failed payment | Suspend sending on day six and close service on day thirty, retaining essential billing, suppression and approved data access. |
-| Refunds | Human review; no automatic refund promise or new guaranteed exchange/credit benefit. |
+| Plans | Existing accepted USD $15/$25/$39 monthly catalogue and pooled limits remain. No annual product, discount or overage charge is activated by this update. |
+| Trial | D-049 accepts one company, brand and user, two campaigns, 250 active contacts and 500 total recipient emails across the complete 14-day trial. Card setup and the customer’s exact recurring price/date acceptance remain required. |
+| Changes | D-049 accepts immediate prorated upgrades only after selected provider/portal behavior is verified; downgrade/cancellation apply at renewal/current service end. Paid allowances use UTC calendar months without resetting consumed usage on plan changes or retries. |
+| Failed payment | D-049 accepts suspension on day six and closure on day thirty from the first failure, retaining essential billing, suppression and approved data access. Repeated failures do not reset the clock. |
+| Refunds | D-049 accepts manual review; no automatic refund promise or authorization of an individual refund. |
 | Sending trust | Verified sender and confirmed recipients; hard bounces/complaints immediately suppress the matching recipient. Start with a bounded FFA pilot and explicit review/hold escalation before general external sending. Numeric workspace/account reputation thresholds still need an accepted operational policy and matching enforcement. |
-| FFA | Operator-issued complimentary entitlement bypasses Stripe/card only; sender, consent, quotas and suppression still apply. Assigned tier and exact pilot recipients require recorded selection. |
+| FFA | D-050 selects Growth at 100% complimentary service: 5 campaigns, 5,000 active contacts/per-campaign recipients, 25,000 recipient emails per UTC month, 3 users/companies/brands, pooled across the subscription. Actual issuance requires the verified FFA workspace and authorized operator with effective date/reason/audit; exact pilot recipients and sending controls remain separate. |
+| Trial record exception | D-048 accepts only indefinite minimal keyed HMAC owner/card/workspace eligibility history plus necessary metadata beyond ordinary 90-day tenant purge. It is pseudonymous personal data, not anonymous data. Stable key/policy configuration, real history baseline, accurate disclosure and protected retention evidence remain required. |
 
-The owner must supply factual business/tax configuration: the selected Stripe merchant account and legal billing entity, applicable registrations and tax obligations, whether prices are tax-exclusive, and the approved terms/refund/privacy documents. US-only SaaS customers and a Colorado DBA do not establish sales-tax obligations or registrations. The current billing adapter does not itself configure Stripe Tax, automatic-tax collection or tax-address/ID collection; do not advertise those as verified or silently turn them on.
+The remaining factual business/tax checks include the selected Flockletter Stripe merchant account and its match to the approved legal business identity, applicable registrations and tax obligations, whether prices are tax-exclusive, and accurate approved/published terms/refund/privacy documents. Signed-in Resend/AWS/Stripe access permits the authorized setup work but does not establish these facts, actual limits/readiness, a trial-history baseline or customer agreement. Billing/retention policy approval is not approval of an alert destination or transport. US-only SaaS customers and a Colorado DBA do not establish sales-tax obligations or registrations. The current billing adapter does not itself configure Stripe Tax, automatic-tax collection or tax-address/ID collection; do not advertise those as verified or silently turn them on.
 
 Production OAuth separately needs the actual provider-owned Google, Apple and Microsoft client/configuration values and approved domains/redirects. The accepted login-method list is not proof those production credentials exist. Email-code sign-in, account linking/recovery and operator MFA need actual hosted verification.
 
