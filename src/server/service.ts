@@ -227,7 +227,7 @@ export class CommandService {
         const initialized = Boolean((await sql.query('SELECT workspace_id FROM workspaces')).rowCount);
         const access=await workspaceAccess(sql);
         const gaps=deliveryGaps().filter(gap=>gap.code!=='entitlement_not_active'||!access.plan);
-        return { initialized, canPrepare: initialized, canSend: false, scopes: actor.scopes, brandIds: actor.brandIds, limits, gaps: [...(!initialized ? [{ code: 'workspace_not_initialized', title: 'Name your workspace and first brand', detail: 'A workspace owner must complete setup in the dashboard.' }] : []), ...gaps] };
+        return { initialized, canPrepare: initialized, canSend: false, reviewRequired:true, mode:'off',capturedExercise:false,rendererConfigured:false,service:null,allowance:null,brands:[], observedAt:(await sql.query<{at:Date}>('SELECT clock_timestamp() at')).rows[0]!.at.toISOString(), scopes: actor.scopes, brandIds: actor.brandIds, limits, gaps: [...(!initialized ? [{ code: 'workspace_not_initialized', title: 'Name your workspace and first brand', detail: 'A workspace owner must complete setup in the dashboard.' }] : []), ...gaps].map(gap=>({...gap,action:gap.code==='workspace_not_initialized'?'settings':'operations'})) };
       }
       case 'workspace.get': {
         const workspace = (await sql.query<{ name: string }>('SELECT name FROM workspaces')).rows[0];
@@ -375,6 +375,7 @@ export class CommandService {
       }
       case 'campaign.preflight': {
         const draft = await campaign(sql, actor, commands[name].schema.parse(raw).id);
+        if(this.customer){await audienceBrand(sql,actor,draft.brandId);const observed=await this.customer.delivery.preflight(sql,actor,draft);return {...observed,...(observed.audience.visibility!=='available'?{audience:undefined}:{})};}
         const review = preflight(draft);
         const access=await workspaceAccess(sql);
         if(access.plan) review.gaps=review.gaps.filter(gap=>gap.code!=='entitlement_not_active');

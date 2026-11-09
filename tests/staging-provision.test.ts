@@ -13,6 +13,7 @@ let releaseInput: {
   expectedSource: string;
   runtimePassword: string;
   migratorPassword: string;
+  confirmStaging: boolean;
 };
 const secret = () => randomBytes(32).toString('hex');
 
@@ -40,6 +41,7 @@ beforeAll(async () => {
     expectedSource: source,
     runtimePassword: secret(),
     migratorPassword: secret(),
+    confirmStaging: true,
   };
 });
 afterAll(async () => {
@@ -51,13 +53,15 @@ function run(mode: string, input = releaseInput) {
     input: JSON.stringify(input) + '\n',
     encoding: 'utf8',
     timeout: 25000,
+    env:{...process.env,APP_ENV:'staging'},
   });
 }
 function prepareSchemas(adminUrl: string, expectedDatabase = 'flockletter_staging') {
   return spawnSync(process.execPath, ['scripts/prepare-customer-schemas.mjs'], {
-    input: JSON.stringify({ adminUrl, expectedDatabase }) + '\n',
+    input: JSON.stringify({ adminUrl, expectedDatabase, confirmStaging:true }) + '\n',
     encoding: 'utf8',
     timeout: 25000,
+    env:{...process.env,APP_ENV:'staging'},
   });
 }
 
@@ -71,6 +75,20 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
   const preparedInspection = JSON.parse(run('inspect').stdout);
   expect(preparedInspection.databaseExists).toBe(true);
   expect(preparedInspection.rolesPresent).toEqual([]);
+  const foreign=new pg.Client({connectionString:releaseInput.adminUrl});await foreign.connect();
+  try{
+    await foreign.query('CREATE TABLE unrelated_staging_fixture(id integer)');
+    await foreign.query('INSERT INTO unrelated_staging_fixture VALUES(1)');
+    await foreign.query('GRANT SELECT ON unrelated_staging_fixture TO PUBLIC');
+    expect(run('apply').stderr).toContain('foreign database grants a Flockletter role access');
+    await foreign.query('REVOKE SELECT ON unrelated_staging_fixture FROM PUBLIC');
+    await foreign.query('GRANT SELECT(id) ON unrelated_staging_fixture TO flockletter_staging_migrator');
+    const refused=run('apply');expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toContain('foreign database grants a Flockletter role access');
+    expect((await foreign.query('SELECT id FROM unrelated_staging_fixture')).rows).toEqual([{id:1}]);
+    expect((await foreign.query("SELECT rolcanlogin FROM pg_roles WHERE rolname IN('flockletter_staging_runtime','flockletter_staging_migrator')")).rows).toEqual([{rolcanlogin:false},{rolcanlogin:false}]);
+    await foreign.query('REVOKE SELECT(id) ON unrelated_staging_fixture FROM flockletter_staging_migrator');
+  }finally{await foreign.end();}
   for (let attempt = 0; attempt < 2; attempt++) {
     const result = run('apply');
     expect(result.status, result.stderr).toBe(0);

@@ -1,5 +1,9 @@
+import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
+import {createMcpServer} from '../src/mcp/bridge.js';
 import { randomUUID } from 'node:crypto';
-import { beforeAll, afterAll, expect, it } from 'vitest';
+import { beforeAll, afterAll, expect, it, vi } from 'vitest';
+import {makeAudienceConnection} from './helpers/audience-connection.js';
 import { startDatabase } from '../scripts/database-fixture.js';
 import { Database } from '../src/server/db.js';
 import { loadConfig } from '../src/server/config.js';
@@ -557,4 +561,91 @@ it('uses the shared processor for captured support and due retention without del
   expect(retention.cases[0]).toMatchObject({ source: 'exercise', state: 'due' });
   expect((await f.call<{ brands: unknown[] }>('workspace.get', {})).brands).toHaveLength(1);
   expect((await f.call<CustomerOperationsStatus>('operations.status', {})).worker.lastFailure).toBeNull();
+});
+
+it('shares truthful setup facts while withholding billing and audience facts outside their grants',async()=>{
+  const f=await factory();await trial(f);await audience(f);
+  const owner=await f.call<import('../src/shared/workspace-preflight.js').WorkspacePreflight>('workspace.preflight',{});
+  expect(owner).toMatchObject({canSend:false,reviewRequired:true,capturedExercise:true,
+    service:{source:'exercise',state:'trialing',eligible:true},brands:[{id:f.brandId,confirmed:1,senderVerified:false}]});
+  expect(owner.gaps).toEqual(expect.arrayContaining([expect.objectContaining({code:'sender_profile_required',action:'delivery'})]));
+  const connection=await makeAudienceConnection(db,f.actor,[f.brandId],['read']);
+  const read=await f.service.execute('workspace.preflight',{},connection.actor) as typeof owner;
+  expect(read.service).toBeNull();expect(read.allowance).toBeNull();expect(read.brands[0]!.confirmed).toBeNull();
+  expect(read.gaps.some(gap=>gap.code==='confirmed_audience_required')).toBe(false);
+  const summaryGrant=await makeAudienceConnection(db,f.actor,[f.brandId],['read','audience:summary']);
+  const summary=await f.service.execute('workspace.preflight',{},summaryGrant.actor) as typeof owner;
+  expect(summary.brands[0]!.confirmed).toBe(1);expect(summary.service).toBeNull();
+  const restricted=await f.service.execute('workspace.preflight',{}, {...summaryGrant.actor,brandIds:[]}) as typeof owner;
+  expect(restricted.brands).toEqual([]);
+  // Cached summary authority must disappear when the saved grant narrows.
+  await db.tenant(f.workspaceId,sql=>sql.query("UPDATE connections SET scopes=ARRAY['read']::text[] WHERE id=$1",[summaryGrant.id]));
+  const narrowed=await f.service.execute('workspace.preflight',{},summaryGrant.actor) as typeof owner;
+  expect(narrowed.brands[0]!.confirmed).toBeNull();expect(narrowed.scopes).toEqual(['read']);
+  await db.tenant(f.workspaceId,sql=>sql.query('UPDATE connections SET brand_ids=ARRAY[]::uuid[] WHERE id=$1',[summaryGrant.id]));
+  expect((await f.service.execute('workspace.preflight',{},summaryGrant.actor) as typeof owner).brands).toEqual([]);
+  await db.tenant(f.workspaceId,sql=>sql.query('UPDATE connections SET revoked_at=clock_timestamp() WHERE id=$1',[summaryGrant.id]));
+  await expect(f.service.execute('workspace.preflight',{},summaryGrant.actor)).rejects.toMatchObject({code:'connection_revoked'});
+  await db.tenant(f.workspaceId,sql=>sql.query("UPDATE connections SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[connection.id]));
+  await expect(f.service.execute('workspace.preflight',{},connection.actor)).rejects.toMatchObject({code:'connection_revoked'});
+  const noRead=await makeAudienceConnection(db,f.actor,[f.brandId],['audience:summary']);
+  await expect(f.service.execute('workspace.preflight',{}, {...noRead.actor,scopes:['read','audience:summary']})).rejects.toMatchObject({code:'connection_revoked'});
+  const issuerLost=await makeAudienceConnection(db,f.actor,[f.brandId],['read','audience:summary']);
+  owners.delete(f.workspaceId);
+  await expect(f.service.execute('workspace.preflight',{},issuerLost.actor)).rejects.toMatchObject({code:'owner_required'});
+  const member=await f.service.execute('workspace.preflight',{}, {...f.actor,owner:false,brandIds:[f.brandId]}) as typeof owner;
+  expect(member.service).toBeNull();expect(member.allowance).toBeNull();expect(member.brands[0]!.confirmed).toBeNull();
+  const revoked=await f.call<typeof owner>('workspace.preflight',{});
+  expect(revoked.service).toBeNull();expect(revoked.brands[0]!.confirmed).toBeNull();
+});
+
+
+it('observes workspace setup without rehydrating or deactivating provider route caches',async()=>{
+  const f=await factory();
+  const routes=vi.spyOn(f.runtime.infrastructure,'routeCandidates').mockRejectedValue(Error('A setup read must not hydrate provider routes.'));
+  f.runtime.settings.infrastructure='aws';
+  try{await expect(f.call('workspace.preflight',{})).resolves.toMatchObject({canSend:false,reviewRequired:true});expect(routes).not.toHaveBeenCalled();}
+  finally{f.runtime.settings.infrastructure='off';routes.mockRestore();}
+});
+
+it('shares current campaign preflight across read and delivery scopes without revealing private counts or writing work',async()=>{
+ const f=await factory();
+ await f.call('customerBilling.startTrial',{operationKey:randomUUID(),plan:'starter',simulatedCardConfirmed:true});
+ await f.call('customerBilling.exercisePayment',{operationKey:randomUUID(),result:'succeeded'});
+ const draft=await f.call<{id:string}>('campaign.create',{operationKey:randomUUID(),brandId:f.brandId,content:{title:'Private',subject:'Hello',fromName:'Shop',replyTo:'owner@shop.test',preheader:'',heading:'News',body:'Hello',ctaLabel:'',ctaUrl:'',assetIds:[]}});
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query("INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES($1,$2,$3,'private@shop.test','confirmed')",[f.workspaceId,f.brandId,randomUUID()]));
+ const make=async(scopes:string[])=>{
+  const issued=await f.call<{connection:{id:string};token:string}>('connection.create',{operationKey:randomUUID(),name:'Preflight test',scopes,brandIds:[f.brandId],expiresInDays:1});
+  return {id:issued.connection.id,actor:{...f.actor,kind:'connection' as const,actorId:'connection:'+issued.connection.id,scopes:scopes as Actor['scopes'],brandIds:[f.brandId]}};
+ };
+ const read=await make(['read']),summary=await make(['read','audience:summary']),sender=await make(['read','campaign:send','audience:summary']);
+ const count=()=>db.tenant(f.workspaceId,async sql=>(await sql.query(`SELECT
+  (SELECT count(*)::int FROM operations) operations,(SELECT count(*)::int FROM audit) audit,
+  (SELECT count(*)::int FROM customer_deliveries) deliveries,(SELECT count(*)::int FROM customer_usage_reservations) reservations`)).rows[0]);
+ const routingBefore=(await operator.pool.query('SELECT next_due_at,touched_at,last_pass_at,last_failure_code FROM flockletter_customer_jobs.scopes WHERE workspace_id=$1',[f.workspaceId])).rows;
+ const before=await count();
+ const hidden=await f.service.execute('campaign.preflight',{id:draft.id},read.actor) as {audience?:unknown;allowance?:unknown;gaps:{code:string}[]};
+ expect(hidden.audience).toBeUndefined();expect(hidden.allowance).toBeUndefined();expect(hidden.gaps.map(g=>g.code)).toContain('audience_review_required');
+ await expect(f.service.execute('delivery.preflight',{brandId:f.brandId,campaignId:draft.id},read.actor)).rejects.toMatchObject({code:'scope_required'});
+ const visible=await f.service.execute('campaign.preflight',{id:draft.id},summary.actor) as {audience:unknown;allowance?:unknown;gaps:{code:string}[]};
+ expect(visible.audience).toMatchObject({confirmed:1,selected:1,excluded:0});expect(visible.allowance).toBeUndefined();expect(visible.gaps).toEqual([]);
+ const checks=await f.service.execute('delivery.preflight',{brandId:f.brandId,campaignId:draft.id,expectedVersion:1},sender.actor) as {canSend:boolean;reviewRequired:boolean;audience:unknown;gaps:unknown[]};
+ expect(checks).toMatchObject({canSend:false,reviewRequired:true,audience:{selected:1},gaps:[]});expect(await count()).toEqual(before);
+ expect((await operator.pool.query('SELECT next_due_at,touched_at,last_pass_at,last_failure_code FROM flockletter_customer_jobs.scopes WHERE workspace_id=$1',[f.workspaceId])).rows).toEqual(routingBefore);
+ const bridge=createMcpServer((name,input)=>f.service.execute(name as CommandName,input,sender.actor)),mcp=new Client({name:'preflight-proof',version:'1'}),[ct,st]=InMemoryTransport.createLinkedPair();
+ await bridge.connect(st);await mcp.connect(ct);
+ try {
+  const result=await mcp.callTool({name:'delivery_preflight',arguments:{brandId:f.brandId,campaignId:draft.id,expectedVersion:1}});
+  expect(result.isError).not.toBe(true);expect(JSON.parse((result.content as {text:string}[])[0]!.text)).toMatchObject({canSend:false,reviewRequired:true,audience:{selected:1}});
+ }finally{await mcp.close();await bridge.close();}
+ const foreign=await factory();await expect(f.service.execute('delivery.preflight',{brandId:foreign.brandId,campaignId:draft.id},sender.actor)).rejects.toMatchObject({code:'brand_unavailable'});
+ await db.tenant(f.workspaceId,sql=>sql.query("UPDATE connections SET scopes=ARRAY['read','campaign:send'] WHERE id=$1",[sender.id]));
+ const narrowed=await f.service.execute('campaign.preflight',{id:draft.id},sender.actor) as {audience?:unknown};expect(narrowed.audience).toBeUndefined();
+ await db.tenant(f.workspaceId,sql=>sql.query("UPDATE connections SET scopes=ARRAY['read'] WHERE id=$1",[sender.id]));
+ await expect(f.service.execute('delivery.preflight',{brandId:f.brandId,campaignId:draft.id},sender.actor)).rejects.toMatchObject({code:'connection_revoked'});
+ await db.tenant(f.workspaceId,sql=>sql.query('UPDATE connections SET revoked_at=clock_timestamp() WHERE id=$1',[sender.id]));
+ await expect(f.service.execute('delivery.preflight',{brandId:f.brandId,campaignId:draft.id},sender.actor)).rejects.toMatchObject({code:'connection_revoked'});
+ await db.tenant(f.workspaceId,sql=>sql.query("UPDATE connections SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[read.id]));
+ await expect(f.service.execute('campaign.preflight',{id:draft.id},read.actor)).rejects.toMatchObject({code:'connection_revoked'});
+ owners.delete(f.workspaceId);await expect(f.service.execute('campaign.preflight',{id:draft.id},summary.actor)).rejects.toMatchObject({code:'owner_required'});
 });

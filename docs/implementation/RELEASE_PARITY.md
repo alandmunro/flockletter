@@ -12,11 +12,13 @@ Production preparation is not production verification. Record each resulting dep
 
 ## Protected production release commands
 
+Prefer the [protected file release runner](RELEASE_RUNNER.md), which binds a separately supplied target specification and exact source before reading private input, then sends JSON directly to a fixed child. This avoids browser-terminal credential pasting. Legacy interactive `PRIVATE_INPUT_READY` tags only correlate a process; they do not authenticate it or prove that a later browser action still targets that process.
+
 Use an echo-disabled, history-disabled private release shell on Render's internal network, pinned to the reviewed commit. The Postgres external firewall remains closed. Do not place administrator or migration credentials in web-service settings, shell arguments or logs.
 
 `APP_ENV=production node scripts/provision-production.mjs inspect <operation-tag>` reads a protected JSON line containing `adminUrl`, `expectedHost`, `expectedSource` and `confirmProduction: true`. The source must match the exact reviewed host/database and its production designation; fixed target names and ownership markers prevent adoption of unrelated resources. `prepare` creates only the new Flockletter database with connections disabled. `apply` additionally accepts distinct 32-byte random hex `runtimePassword` and `migratorPassword`, audits capacity and effective foreign grants, prepares the two private namespaces, applies migrations and verifies the restricted runtime. Reuse the same private inputs on retries. Existing role secrets are never silently rotated.
 
-For later releases, `APP_ENV=production node scripts/migrate-production.mjs <operation-tag> --pair-stdin` accepts `migrationUrl` and `runtimeUrl` on the protected input stream. It requires the exact Flockletter production database/roles and the same host/port, checks the actual migration identity, then rechecks runtime permissions. It cannot fall back to a web-service credential. The staging commands remain separately scoped and unchanged.
+For later releases, `APP_ENV=production node scripts/migrate-production.mjs <operation-tag> --pair-stdin` accepts `migrationUrl` and `runtimeUrl` on the protected input stream. It requires the exact Flockletter production database/roles and the same host/port, checks the actual migration identity, then rechecks runtime permissions. It cannot fall back to a web-service credential. Staging remains separately scoped; direct provisioning now explicitly requires `APP_ENV=staging` and `confirmStaging: true`, and uses the same guarded options, early input validation and read-only foreign audit as production.
 
 ## Promotion checklist
 

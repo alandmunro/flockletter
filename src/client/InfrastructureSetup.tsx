@@ -10,29 +10,21 @@ export function InfrastructureSetup({ api, brands }: { api: Api; brands: Brand[]
   const [busy, setBusy] = useState(false);
   const pending = useRef<Map<string, string>>(new Map());
 
-  const reload = useCallback(
-    async (id: string) => {
-      if (!id) return;
-      setData(await api.call<InfrastructureStatus>('infrastructure.status', { brandId: id }));
-    },
-    [api],
-  );
-
-  useEffect(() => {
-    let active = true;
-    setData(undefined);
-    setError('');
-    if (!brandId) return;
-    api
-      .call<InfrastructureStatus>('infrastructure.status', { brandId })
-      .then((value) => active && setData(value))
-      .catch((e: unknown) => {
-        if (active) setError(e instanceof Error ? e.message : 'Failed to load infrastructure status.');
-      });
-    return () => {
-      active = false;
-    };
-  }, [api, brandId]);
+  const selected=useRef(brandId),request=useRef(0);
+  selected.current=brandId;
+  const reload = useCallback(async(id:string)=>{
+    if(!id)return;
+    const current=++request.current;setBusy(true);setError('');setData(undefined);
+    try{
+      const value=await api.call<InfrastructureStatus>('infrastructure.status',{brandId:id});
+      if(current===request.current&&selected.current===id)setData(value);
+    }catch(error){if(current===request.current&&selected.current===id)setError(error instanceof Error?error.message:'Refresh failed.');}
+    finally{if(current===request.current&&selected.current===id)setBusy(false);}
+  },[api]);
+  useEffect(()=>{
+    void reload(brandId);
+    return()=>{request.current++;};
+  },[reload,brandId]);
 
   async function act(name: CommandName, input: Record<string, unknown>) {
     const signature = JSON.stringify([name, input]);

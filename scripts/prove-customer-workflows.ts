@@ -1,4 +1,5 @@
 import {rejectOptionalCookies} from './browser-cookie-choice.js';
+import {proveDeliveryPreflight} from './prove-delivery-preflight-flow.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -246,6 +247,7 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   assert.equal(await audiencePicker.inputValue(),retired.id,'Deleted selection must never silently broaden to all contacts.');
   assert.equal(await button(page,'Review saved campaign').isDisabled(),true);
   await audiencePicker.selectOption(group.id);
+  await proveDeliveryPreflight(page,group.id);
   const reviewRequest=page.waitForRequest(request=>new URL(request.url()).pathname==='/api/v1/commands/delivery.review');
   await waitForCommand(page, 'delivery.review', () => button(page, 'Review saved campaign').click());
   assert.equal((await reviewRequest).postDataJSON().segmentId,group.id,'Normal UI submits the exact selected group.');

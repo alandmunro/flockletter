@@ -48,13 +48,13 @@ it('rejects connection query overrides and duplicates before connecting, allowin
   const targetUrl=new URL(releaseInput.adminUrl);targetUrl.pathname='/flockletter_production';
   for(const search of ['?host=query.example','?user=query_user','?database=query_db','?password=private-query-marker',
     '?port=12345','?sslmode=disable&sslmode=disable','?sslmode=disable&application_name=unexpected',
-    '?sslmode=unsupported','?sslmode=','?options=-csearch_path%3Dpublic','#unexpected']) {
+    '?sslmode=unsupported','?sslmode=','?options=-csearch_path%3Dpublic','#unexpected','#']) {
     for(const url of [new URL(releaseInput.adminUrl),new URL(targetUrl)]) {
       if(search.startsWith('#')) url.hash=search;else url.search=search;
       const result=url.pathname==='/flockletter_production'?prepare(url.href):run('apply',{...releaseInput,adminUrl:url.href});
       expect(result.status).not.toBe(0);
       expect(result.stdout+result.stderr).not.toContain('private-query-marker');
-      expect(result.stderr).toMatch(/database_scope_invalid|explicitly selected production host/);
+      expect(result.stderr).toMatch(/database_scope_invalid|admin_url_invalid/);
     }
   }
   for(const mode of ['disable','no-verify','prefer','require','verify-ca','verify-full']) {

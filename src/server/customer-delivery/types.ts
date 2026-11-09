@@ -35,6 +35,7 @@ export type DeliveryOptions = {
   render?:(message:DeliveryEnvelope)=>Promise<void>;
   optOut?:(sql:Sql,workspace:string,brand:string,subscriber:string,origin:string)=>Promise<{url:string}>;
   liveConsent?:(sql:Sql,subscriber:string)=>Promise<boolean>;
+  liveConsentBatch?:(sql:Sql,subscribers:string[])=>Promise<string[]>;
   now?:()=>Date;
 };
 

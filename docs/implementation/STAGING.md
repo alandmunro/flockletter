@@ -46,7 +46,7 @@ The local test suite already exercises real database isolation and the HTTP/MCP 
 
 ## Operator bootstrap and private URL
 
-Run `scripts/provision-staging.mjs` from a private release process on the existing staging database network. Disable terminal echo and supply the administration connection, exact host and source database as one JSON line on standard input using `adminUrl`, `expectedHost` and `expectedSource`. Keep the cluster administrator connection out of web service settings.
+Prefer the [protected release runner](RELEASE_RUNNER.md). Direct `APP_ENV=staging node scripts/provision-staging.mjs` runs from a private release process on the existing staging database network. Disable terminal echo and supply the administration connection, exact host and source database as one JSON line on standard input using `adminUrl`, `expectedHost`, `expectedSource` and `confirmStaging: true`. The source must contain an explicit staging token and no production/dev/test token. Apply mode validates both distinct 64-hex role secrets before connecting; existing secrets are reused on retries. Keep the cluster administrator connection out of web service settings.
 
 1. Run `inspect` to check the staging host, permissions, database and role ownership markers, and connection headroom.
 2. Run `prepare` to create the dedicated logical database with connections disabled and remove public database privileges. This step can finish before any application credentials are issued.

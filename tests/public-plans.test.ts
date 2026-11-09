@@ -84,7 +84,8 @@ describe('public hosted pricing and staging setup', () => {
       hasDraft: true,
     });
     expect(after).toContain('A campaign draft is saved');
-    expect(after).toContain('Complimentary');
+    expect(after).toContain('Not checked');
+    expect(after).not.toContain('Complimentary');
     expect(after).toContain('type="button"');
     expect(after).toContain('Open campaigns');
   });

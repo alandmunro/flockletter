@@ -29,11 +29,13 @@ for(const environment of ['production','staging'] as const)it(`validates both ${
   // runtime URLs must be refused before even the valid migration connection runs.
   await owner.query('GRANT SELECT(workspace_id) ON public.workspaces TO PUBLIC');
   for(const target of ['migration','runtime'] as const){
-   for(const option of ['host=invalid.example','user=invalid_role','password=private-query-marker',
+   for(const option of ['host=invalid.example','user=invalid_role','password=private-query-marker','credential-percent','credential-control',
     'database=unrelated','port=1','sslmode=disable&sslmode=disable','sslmode=unsupported',
-    'sslmode=disable&application_name=unexpected','#unexpected']){
+    'sslmode=disable&application_name=unexpected','#unexpected','#']){
     const changed=new URL(target==='migration'?migration:runtime);changed.search='';
-    if(option.startsWith('#'))changed.hash=option;else changed.search='?'+option;
+    if(option==='credential-percent')changed.password='invalid%';
+    else if(option==='credential-control')changed.password='invalid%00';
+    else if(option.startsWith('#'))changed.hash=option;else changed.search='?'+option;
     const result=command(target==='migration'?changed.href:migration.href,target==='runtime'?changed.href:runtime.href);
     expect(result.status).not.toBe(0);
     expect(result.stdout+result.stderr).not.toContain('private-query-marker');

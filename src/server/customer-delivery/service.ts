@@ -1,3 +1,4 @@
+import {customerCampaignPreflight} from './preflight.js';
 import { randomUUID } from 'node:crypto';
 import { customerDeliveryCommands } from '../../shared/customer-delivery.js';
 import type { Campaign,CampaignContent } from '../../shared/contracts.js';
@@ -6,10 +7,11 @@ import type { Database,Sql } from '../db.js';
 import { contentGaps,digest,renderPreview } from '../content.js';
 import { requireCondition } from '../errors.js';
 import { listmonkReference } from '../campaign/listmonk-callback.js';
-import { brandScope,deliveryRow,deliveryView,locked,audit } from './storage.js';
+import { brandScope,deliveryRow,deliveryView,deliveryViews,locked,audit } from './storage.js';
 import type { DeliveryOptions,DeliveryRow } from './types.js';
 import { CustomerDeliveryWorker } from './worker.js';
 import { senderProfile,senderFingerprint,senderEligible,legalFooter } from './sender.js';
+import { deliveryOutcomes } from './outcomes.js';
 
 export class CustomerDelivery {
   readonly worker:CustomerDeliveryWorker;
@@ -22,6 +24,15 @@ export class CustomerDelivery {
     authorize(actor,name as keyof typeof customerDeliveryCommands);
     const command=customerDeliveryCommands[name as keyof typeof customerDeliveryCommands];
     const parsed=command.schema.parse(raw);
+    if(name==='delivery.preflight') {
+      const input=customerDeliveryCommands['delivery.preflight'].schema.parse(raw);
+      return this.db.read(actor.workspaceId,async sql=>{
+        await brandScope(sql,actor,input.brandId);
+        const row=(await sql.query<Campaign&{brand_id:string;created_at:Date;updated_at:Date}>('SELECT * FROM campaigns WHERE id=$1 AND brand_id=$2',[input.campaignId,input.brandId])).rows[0];
+        requireCondition(row,404,'campaign_unavailable','Choose an available saved campaign in this brand.');
+        return this.preflight(sql,actor,{...row,brandId:row.brand_id,status:'draft',createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString()},input,true);
+      });
+    }
     if(name==='delivery.status')return this.status(actor,customerDeliveryCommands['delivery.status'].schema.parse(raw).brandId);
     const input=parsed as {operationKey?:string;brandId:string;id?:string};
     let processId:string|undefined;
@@ -35,7 +46,7 @@ export class CustomerDelivery {
         403,'connection_revoked','This connection no longer has current delivery access.');
       if(name==='delivery.list') {
         const rows=(await sql.query<DeliveryRow>('SELECT * FROM customer_deliveries WHERE brand_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100',[input.brandId])).rows;
-        return Promise.all(rows.map(row=>deliveryView(sql,row)));
+        return deliveryViews(sql,rows);
       }
       if(name==='delivery.sender') {
         const provider=this.options.provider?.(actor.workspaceId,input.brandId);
@@ -91,6 +102,9 @@ export class CustomerDelivery {
     if(processId)await this.worker.tick(actor.workspaceId,processId);
     return result;
   }
+  preflight(sql:Sql,actor:Actor,campaign:Campaign,input:{expectedVersion?:number;segmentId?:string;dueAt?:string}={},requireSend=false) {
+    return customerCampaignPreflight(sql,actor,campaign,this.options,input,requireSend);
+  }
   async status(actor:Actor,brandId?:string) {
     const eligibility=await this.options.billing.eligibility(actor.workspaceId);
     let senderVerified:boolean|null=null;
@@ -108,6 +122,10 @@ export class CustomerDelivery {
       eligible:eligibility.eligible,eligibility,brandId:brandId??null,senderVerified,gaps};
   }
   private async read(name:string,raw:unknown,actor:Actor,sql:Sql) {
+    if(name==='delivery.outcomes') {
+      const input=customerDeliveryCommands['delivery.outcomes'].schema.parse(raw);
+      return deliveryOutcomes(sql,await deliveryRow(sql,input.id,input.brandId),input);
+    }
     if(name==='delivery.report') {
       const input=customerDeliveryCommands['delivery.report'].schema.parse(raw);
       return deliveryView(sql,await deliveryRow(sql,input.id,input.brandId));

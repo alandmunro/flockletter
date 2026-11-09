@@ -142,6 +142,12 @@ export async function productionConsentEligible(sql: Sql, subscriberId: string) 
   ).rows[0]!;
   return !row.exercise || row.live;
 }
+/** The same exercise-vs-live provenance rule as productionConsentEligible, evaluated in one scoped query. */
+export async function productionConsentEligibleBatch(sql:Sql,ids:string[]) {
+ return (await sql.query<{id:string}>(`SELECT s.id FROM subscribers s WHERE s.id=ANY($1::uuid[]) AND (
+  NOT EXISTS(SELECT FROM subscriber_consent_events e WHERE e.subscriber_id=s.id AND e.event='confirmed' AND e.source='customer-exercise-confirmation')
+  OR EXISTS(SELECT FROM subscriber_consent_events e WHERE e.subscriber_id=s.id AND e.event='confirmed' AND e.source='customer-live-confirmation'))`,[ids])).rows.map(row=>row.id);
+}
 async function factualEvent(
   sql: Sql,
   workspace: string,

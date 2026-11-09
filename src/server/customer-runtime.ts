@@ -1,3 +1,4 @@
+import type {WorkspacePreflight,WorkspaceSetupGap} from '../shared/workspace-preflight.js';
 import { trialRegistryFromEnvironment } from './customer-abuse/registry.js';
 import {readWorkerHeartbeat,runWorkerHeartbeat} from './customer-worker-heartbeat.js';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -6,12 +7,12 @@ import type { Database } from './db.js';
 import type { Actor } from './service.js';
 import type { IdentityProvider } from './auth.js';
 import { requireCondition } from './errors.js';
-import { commands,type CommandName } from '../shared/contracts.js';
+import { commands,type CommandName,type Capability } from '../shared/contracts.js';
 import type { CustomerOperationsStatus } from '../shared/customer-operations.js';
 import { customerSettings } from './customer-settings.js';
 import { CustomerBilling,customerEligibility,customerContactLimit,customerSeatLimit,retentionServiceEndSql,retentionClockSql } from './customer-billing/service.js';
 import { customerBillingConfiguration,stripeCustomerProvider } from './customer-billing/provider.js';
-import { CustomerAudience,createCustomerOptOut,productionConsentEligible } from './customer-audience/service.js';
+import { CustomerAudience,createCustomerOptOut,productionConsentEligible,productionConsentEligibleBatch } from './customer-audience/service.js';
 import { CustomerConfirmationFeedback } from './customer-audience/feedback.js';
 import { CustomerConfirmationProvider } from './customer-audience/resend.js';
 import { CustomerTeamLifecycle } from './customer-team/service.js';
@@ -84,7 +85,7 @@ export class CustomerWorkflows {
     this.ses=customerSesRuntime(config.origin,env);
     this.delivery=new CustomerDelivery(db,{mode:settings.delivery,environment:config.environment,origin:config.origin,
       billing:this.billing,eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),isOwner:identity.isOwner,
-      render:this.engine?message=>this.engine!.render(message):undefined,optOut:createCustomerOptOut,liveConsent:productionConsentEligible,
+      render:this.engine?message=>this.engine!.render(message):undefined,optOut:createCustomerOptOut,liveConsent:productionConsentEligible,liveConsentBatch:productionConsentEligibleBatch,
       provider:this.ses?.provider});
     this.infrastructure=new CustomerInfrastructure(db,{mode:settings.infrastructure,environment:config.environment,isOwner:identity.isOwner,
       eligibility:w=>this.billing.eligibility(w),eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),
@@ -159,29 +160,46 @@ export class CustomerWorkflows {
     return null;
   }
   owns(name:string){return prefixes.some(prefix=>name.startsWith(prefix));}
-  async preflight(actor:Actor) {
+  async preflight(actor:Actor):Promise<WorkspacePreflight> {
+    const owner=actor.kind==='session'&&actor.owner&&await this.identity.isOwner(actor.userId,actor.workspaceId);
+    if(actor.kind==='connection')requireCondition(await this.identity.isOwner(actor.userId,actor.workspaceId),403,'owner_required','Current issuing-owner authority is required.');
     const service=await this.billing.eligibility(actor.workspaceId);
     return this.db.tenant(actor.workspaceId,async sql=>{
+      let audienceAllowed=owner,brandIds=actor.brandIds,scopes=actor.scopes;
+      if(actor.kind==='connection') {
+        const grant=(await sql.query<{scopes:Capability[];brand_ids:string[]}>(`SELECT scopes,brand_ids FROM connections
+          WHERE id::text=$1 AND issuer_id=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp()
+          AND 'read'=ANY(scopes) FOR SHARE`,[actor.actorId.slice('connection:'.length),actor.userId])).rows[0];
+        requireCondition(grant,403,'connection_revoked','This connection no longer has current workspace read access.');
+        audienceAllowed=grant.scopes.includes('audience:summary');scopes=grant.scopes;
+        brandIds=grant.brand_ids.filter(id=>actor.brandIds===null||actor.brandIds.includes(id));
+      }
+      const observedAt=(await sql.query<{at:Date}>('SELECT clock_timestamp() at')).rows[0]!.at.toISOString();
       const initialized=!!(await sql.query('SELECT FROM workspaces')).rowCount;
-      const gaps:{code:string;title:string;detail:string;brandId?:string}[]=[];
-      if(!initialized)gaps.push({code:'workspace_not_initialized',title:'Create your workspace',detail:'Name the workspace and first brand.'});
-      if(!service.eligible)for(const reason of service.reasons)gaps.push({code:'service_activation_required',title:'Review subscription access',detail:reason});
-      if(this.settings.delivery==='off')gaps.push({code:'delivery_off',title:'Delivery is not configured',detail:'A platform operator must configure the delivery mode.'});
-      if(!this.engine)gaps.push({code:'renderer_required',title:'Private renderer needed',detail:'Configure the private mailing renderer before campaign approval.'});
-      const brands=[];
+      const gaps:WorkspaceSetupGap[]=[];
+      if(!initialized)gaps.push({code:'workspace_not_initialized',title:'Create your workspace',detail:'Name the workspace and first brand.',action:'settings'});
+      if(owner&&!service.eligible)for(const reason of service.reasons)gaps.push({code:'service_activation_required',title:'Review subscription access',detail:reason,action:'subscription'});
+      if(!owner)gaps.push({code:'owner_service_review_required',title:'Owner service review',detail:'A current workspace owner reviews subscription access.',action:'subscription'});
+      if(this.settings.delivery==='off')gaps.push({code:'delivery_off',title:'Delivery is not configured',detail:'A platform operator must configure the delivery mode.',action:'operations'});
+      if(!this.engine)gaps.push({code:'renderer_required',title:'Private renderer needed',detail:'Configure the private mailing renderer before campaign approval.',action:'operations'});
+      const brands:WorkspacePreflight['brands']=[];
       for(const brand of (await sql.query<{id:string;name:string}>('SELECT id,name FROM brands ORDER BY name')).rows) {
-        if(actor.brandIds!==null&&!actor.brandIds.includes(brand.id))continue;
+        if(brandIds!==null&&!brandIds.includes(brand.id))continue;
         await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[brand.id]);
-        const confirmed=(await sql.query<{count:number}>("SELECT count(*)::int count FROM subscribers WHERE state='confirmed'")).rows[0]!.count;
+        const confirmed=audienceAllowed?(await sql.query<{count:number}>("SELECT count(*)::int count FROM subscribers WHERE state='confirmed'")).rows[0]!.count:null;
         const profile=await senderProfile(sql,brand.id);
-        const liveSender=this.settings.delivery==='ses'&&await senderEligible(sql,brand.id,this.ses?.provider(actor.workspaceId,brand.id));
-        if(!confirmed)gaps.push({code:'confirmed_audience_required',title:'Confirm subscribers',detail:'Add contacts with permission and complete email confirmation.',brandId:brand.id});
-        if(this.settings.delivery==='ses'&&!liveSender)gaps.push({code:'sender_verification_required',title:'Verify this sender',detail:'Complete the legal sender profile, current DNS proof and provider setup.',brandId:brand.id});
+        let liveSender=false,unavailable=false;
+        if(this.settings.delivery==='ses')try{liveSender=await senderEligible(sql,brand.id,this.ses?.provider(actor.workspaceId,brand.id));}catch{unavailable=true;}
+        if(confirmed===0)gaps.push({code:'confirmed_audience_required',title:'Confirm subscribers',detail:'Add contacts with permission and complete email confirmation.',brandId:brand.id,action:'audience'});
+        if(confirmed===null)gaps.push({code:'audience_review_required',title:'Audience review',detail:'An owner or an explicitly granted audience-summary connection must inspect audience totals.',brandId:brand.id,action:'audience'});
+        if(!profile)gaps.push({code:'sender_profile_required',title:'Complete sender identity',detail:'Save this brand’s recognizable sender and required postal footer.',brandId:brand.id,action:'delivery'});
+        if(this.settings.delivery==='ses'&&!liveSender)gaps.push({code:unavailable?'sender_verification_unavailable':'sender_verification_required',title:unavailable?'Refresh sender verification':'Verify this sender',detail:unavailable?'The latest sender/provider check could not complete. Retry before reviewing delivery.':'Complete the legal sender profile, current DNS proof and provider setup.',brandId:brand.id,action:'delivery'});
         brands.push({id:brand.id,name:brand.name,confirmed,senderProfileConfigured:!!profile,senderVerified:liveSender});
       }
-      return {initialized,canPrepare:initialized,canSend:false,reviewRequired:true,
-        mode:this.settings.delivery,capturedExercise:this.settings.delivery==='capture',scopes:actor.scopes,brandIds:actor.brandIds,
-        limits,allowance:service.limits,brands,gaps};
+      return {initialized,canPrepare:initialized,canSend:false,reviewRequired:true,observedAt,
+        mode:this.settings.delivery,capturedExercise:this.settings.delivery==='capture',rendererConfigured:!!this.engine,scopes,brandIds,
+        service:owner?{source:service.source,state:service.state,eligible:service.eligible,reasons:service.reasons}:null,
+        limits,allowance:owner?service.limits:null,brands,gaps};
     });
   }
   async wake(workspace:string) {
@@ -194,7 +212,7 @@ export class CustomerWorkflows {
     if(!this.owns(name))return undefined;
     requireCondition(!this.closing,503,'worker_draining','The service is restarting. Retry with the same operation key.');
     const mutation=commands[name].mutation;
-    if(name.startsWith('infrastructure.')||name.startsWith('delivery.'))await this.hydrateInfrastructure(actor.workspaceId);
+    if(name.startsWith('infrastructure.')||name.startsWith('delivery.')&&!['delivery.preflight','delivery.outcomes'].includes(name))await this.hydrateInfrastructure(actor.workspaceId);
     if(mutation)await this.wake(actor.workspaceId);
     let result:unknown;
     if(name==='operations.status')return this.status(actor.workspaceId);

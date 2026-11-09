@@ -6,6 +6,8 @@ import type { DeliveryView,DeliveryMode } from '../shared/customer-delivery.js';
 import type { CustomerBillingStatus } from '../shared/customer-billing.js';
 import type { SegmentDirectory } from '../shared/segments.js';
 import { SenderProfilePanel } from './SenderProfilePanel.js';
+import { DeliveryOutcomes } from './DeliveryOutcomes.js';
+import type { CustomerCampaignPreflight } from '../shared/customer-preflight.js';
 
 type Status={mode:DeliveryMode;eligible:boolean;eligibility:CustomerBillingStatus;gaps:string[]};
 type Captured={to:string;subject:string;html:string;text:string;images:{sha256:string;mime:string;base64:string}[]};
@@ -30,20 +32,25 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
   const [status,setStatus]=useState<Status|null>(null),[campaigns,setCampaigns]=useState<Campaign[]>([]),[deliveries,setDeliveries]=useState<DeliveryView[]>([]),[groups,setGroups]=useState<SegmentDirectory|null>(null);
   const [campaignId,setCampaignId]=useState(''),[schedule,setSchedule]=useState(''),[segmentId,setSegmentId]=useState('');
   const [busy,setBusy]=useState(''),[loaded,setLoaded]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const [outcomeRevision,setOutcomeRevision]=useState(0);
+  const [checks,setChecks]=useState<CustomerCampaignPreflight|null>(null);
   const [review,setReview]=useState<DeliveryView|null>(null),[reviewAudience,setReviewAudience]=useState(''),[capture,setCapture]=useState<{deliveryId:string;recipientId:string;message:Captured}|null>(null);
-  const pending=useRef(new Map<string,{signature:string;key:string}>()),acting=useRef(false);
+  const pending=useRef(new Map<string,{signature:string;key:string}>()),acting=useRef(false),context=useRef(0);
   const read=useCallback(async()=>{
     const [s,cs,ds,gs]=await Promise.all([api.call<Status>('delivery.status',{brandId:brand.id}),api.call<Campaign[]>('campaign.list',{}),api.call<DeliveryView[]>('delivery.list',{brandId:brand.id}),api.call<SegmentDirectory>('segment.list',{brandId:brand.id})]);
     return {s,cs:cs.filter(item=>item.brandId===brand.id),ds,gs};
   },[api,brand.id]);
   const apply=useCallback((data:Awaited<ReturnType<typeof read>>)=>{
     setStatus(data.s);setCampaigns(data.cs);setDeliveries(data.ds);setGroups(data.gs);setLoaded(true);
+    setOutcomeRevision(value=>value+1);
+    setChecks(null);
     setCampaignId(id=>data.cs.some(item=>item.id===id)?id:data.cs[0]?.id??'');
   },[]);
   useEffect(()=>{
+    context.current++;
     let active=true;
     void read().then(data=>{if(active)apply(data);}).catch(error=>{if(active)setError(explain(error));});
-    return ()=>{active=false;};
+    return ()=>{active=false;context.current++;};
   },[read,apply]);
   const working=deliveries.some(item=>item.state==='queued'||item.uncertain>0||item.submitting>0);
   useEffect(()=>{
@@ -57,11 +64,14 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
     if(acting.current)return;acting.current=true;setBusy('refresh');setError('');
     try{apply(await read());}catch(error){setError(explain(error));}finally{acting.current=false;setBusy('');}
   }
-  async function mutate<T>(name:CommandName,input:Record<string,unknown>,slot:string,after?:(result:T)=>void) {
+  async function mutate<T>(name:CommandName,input:Record<string,unknown>,slot:string,after?:(result:T)=>void,before?:()=>Promise<boolean>) {
     if(acting.current)return;acting.current=true;setBusy(slot);setError('');setNotice('');
+    const current=context.current;
     const signature=JSON.stringify([name,input]),previous=pending.current.get(slot);
     const key=previous?.signature===signature?previous.key:operationKey();pending.current.set(slot,{signature,key});
     try {
+      if(before&&!await before())return;
+      if(current!==context.current)return;
       const result=await api.call<T>(name,{...input,operationKey:key});pending.current.delete(slot);after?.(result);
       setNotice('Saved. The results below show the recorded outcome.');
       try{apply(await read());}catch(error){setError('Your action was saved. Refresh the results: '+explain(error));}
@@ -71,10 +81,15 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
   const missingGroup=segmentId!==''&&!selectedGroup;
   async function reviewSaved() {
     const campaign=campaigns.find(item=>item.id===campaignId);if(!campaign)return;
+    setReview(null);setChecks(null);
     if(missingGroup){setError('Selected group unavailable. Choose an available audience.');return;}
     let dueAt:string|undefined;
     if(schedule){const date=new Date(schedule);if(!Number.isFinite(date.getTime())){setError('Choose a valid date and time.');return;}dueAt=date.toISOString();}
-    await mutate<DeliveryView>('delivery.review',{brandId:brand.id,campaignId,expectedVersion:campaign.version,...(segmentId?{segmentId}:{}),...(dueAt?{dueAt}:{})},'review',result=>{setReview(result);setReviewAudience(selectedGroup?.name??'All confirmed contacts');});
+    const input={brandId:brand.id,campaignId,expectedVersion:campaign.version,...(segmentId?{segmentId}:{}),...(dueAt?{dueAt}:{})};
+    await mutate<DeliveryView>('delivery.review',input,'review',result=>{setReview(result);setReviewAudience(selectedGroup?.name??'All confirmed contacts');},async()=>{
+      const observed=await api.call<CustomerCampaignPreflight>('delivery.preflight',input);setChecks(observed);
+      return observed.gaps.length===0;
+    });
   }
   async function preview(deliveryId:string,recipientId:string) {
     if(acting.current)return;acting.current=true;setBusy('preview');setError('');
@@ -90,18 +105,22 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
       {!!status?.gaps.length&&<ul>{status.gaps.map(gap=><li key={gap}>{gap}</li>)}</ul>}
       {!status?.eligible&&<div className="notice"><strong>Service activation needed</strong><ul>{status?.eligibility.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul><p>Open Subscription to review your plan or start a captured trial.</p></div>}
       <fieldset disabled={!!busy}>
-        <div className="field"><label htmlFor="delivery-campaign">Saved campaign</label><select id="delivery-campaign" value={campaignId} onChange={event=>{setCampaignId(event.target.value);setReview(null);}}>
+        <div className="field"><label htmlFor="delivery-campaign">Saved campaign</label><select id="delivery-campaign" value={campaignId} onChange={event=>{setCampaignId(event.target.value);setReview(null);setChecks(null);}}>
           {campaigns.map(item=><option key={item.id} value={item.id}>{item.content.subject||item.content.title||'Untitled'} · version {item.version}</option>)}</select></div>
-        <div className="field"><label htmlFor="delivery-audience">Audience</label><select id="delivery-audience" value={segmentId} onChange={event=>{setSegmentId(event.target.value);setReview(null);}}>
+        <div className="field"><label htmlFor="delivery-audience">Audience</label><select id="delivery-audience" value={segmentId} onChange={event=>{setSegmentId(event.target.value);setReview(null);setChecks(null);}}>
           <option value="">All confirmed contacts</option>
           {missingGroup&&<option value={segmentId} disabled>Selected group unavailable</option>}
           {groups?.items.map(group=><option key={group.id} value={group.id}>{group.name} · {group.counts.confirmed} confirmed</option>)}</select>
           {missingGroup?<p className="help" role="status">Selected group unavailable. Choose an available audience.</p>:<p className="help">Review freezes the eligible recipients in this audience. Later group additions are not added to that review.</p>}
         </div>
         {!campaigns.length&&<p>Create and save a campaign before reviewing delivery.</p>}
-        <div className="field"><label htmlFor="delivery-time">Schedule in your local time, optional</label><input id="delivery-time" type="datetime-local" value={schedule} onChange={event=>{setSchedule(event.target.value);setReview(null);}}/></div>
+        <div className="field"><label htmlFor="delivery-time">Schedule in your local time, optional</label><input id="delivery-time" type="datetime-local" value={schedule} onChange={event=>{setSchedule(event.target.value);setReview(null);setChecks(null);}}/></div>
         <button className="btn" disabled={!campaignId||status?.mode==='off'||missingGroup} onClick={()=>void reviewSaved()}>{busy==='review'?'Reviewing…':'Review saved campaign'}</button>
       </fieldset>
+      {checks&&checks.gaps.length>0&&<section aria-label="Delivery preparation gaps" className="notice">
+        <h3>Resolve these items before review</h3><ul>{checks.gaps.map((gap,index)=><li key={gap.code+'-'+index}><strong>{gap.title}</strong>: {gap.detail}</li>)}</ul>
+        <p className="help">Checked {new Date(checks.observedAt).toLocaleString()}. This check has not created or approved a delivery.</p>
+      </section>}
       {review&&<p role="status">{reviewAudience} · Reviewed version {review.version}: {review.selected} confirmed recipients and {review.excluded} excluded. Approve this review below.</p>}
     </>}
   </section>
@@ -120,7 +139,9 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
         {['reviewed','queued','paused'].includes(item.state)&&<button className="btn secondary" disabled={!!busy} onClick={()=>void mutate('delivery.cancel',{brandId:brand.id,id:item.id},'cancel:'+item.id)}>Cancel remaining work</button>}
       </div>
       {item.mode==='capture'&&<div className="actions">{item.recipients.filter(person=>person.state==='accepted').map((person,index)=><button className="btn secondary" key={person.id} disabled={!!busy} onClick={()=>void preview(item.id,person.id)}>View captured email {index+1}</button>)}</div>}
-      {item.selected>50&&<p className="help">Showing the first 50 recipient outcomes. Totals include the entire reviewed audience.</p>}
+      {item.selected>50&&<p className="help">Quick previews show the first 50 recipients. Open recipient outcomes to inspect the full audience.</p>}
+      <DeliveryOutcomes api={api} brandId={brand.id} deliveryId={item.id} refreshKey={String(outcomeRevision)}
+        onPreview={item.mode==='capture'?person=>void preview(item.id,person):undefined}/>
     </article>)}
   </section>
   {capture&&<section className="card"><h2>Captured email</h2><p>{capture.message.subject} · To {capture.message.to}</p>
