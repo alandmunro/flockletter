@@ -1,3 +1,4 @@
+import {rejectOptionalCookies} from './browser-cookie-choice.js';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {once} from 'node:events';
@@ -29,7 +30,7 @@ try{
  const ticket=await customer.support.execute('support.create',{operationKey:randomUUID(),subject:'Plan question',topic:'plans',text:'Which plans are available?'},actor) as SupportTicket;
  server.on('request',createApp(config,service,auth,platform));
  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
- await page.goto(origin+'/operator?ticket='+encodeURIComponent(ticket.id));await page.getByRole('heading',{name:'Platform control room',exact:true}).waitFor();
+ await page.goto(origin+'/operator?ticket='+encodeURIComponent(ticket.id));await rejectOptionalCookies(page);await page.getByRole('heading',{name:'Platform control room',exact:true}).waitFor();
  await page.waitForFunction(expected=>(document.querySelector('input[pattern="org_[A-Za-z0-9_-]+"]') as HTMLInputElement|null)?.value===expected,actor.workspaceId);
  assert.equal(await page.getByLabel('Workspace ID',{exact:true}).inputValue(),actor.workspaceId);
  assert.equal(await page.getByLabel('Exact conversation, delivery or retention job ID',{exact:true}).inputValue(),ticket.id);

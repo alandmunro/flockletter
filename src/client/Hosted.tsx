@@ -29,5 +29,5 @@ function Hosted({ environment,setupGaps }: SetupProps) {
 }
 
 export default function HostedPortal({publishableKey,...setup}:{publishableKey:string}&SetupProps) {
-  return <ClerkProvider publishableKey={publishableKey}><Hosted {...setup}/></ClerkProvider>;
+  return <ClerkProvider publishableKey={publishableKey} telemetry={false}><Hosted {...setup}/></ClerkProvider>;
 }

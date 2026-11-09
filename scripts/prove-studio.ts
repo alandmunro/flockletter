@@ -1,3 +1,4 @@
+import {rejectOptionalCookies} from './browser-cookie-choice.js';
 import { verifyStudioImageUpload } from './check-studio-image.js';
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
@@ -43,7 +44,7 @@ async function scrollFits(page: Page) {
   );
 }
 async function editorJourney(page: Page, site: Awaited<ReturnType<typeof startStudioProof>>) {
-  await page.goto(site.origin);
+  await page.goto(site.origin);await rejectOptionalCookies(page);
   await button(page, 'Campaigns').click();
   await page.getByRole('combobox', { name: /^Brand for new campaign/ }).selectOption(site.brandId);
   await page.getByRole('button', { name: /New campaign/ }).click();
@@ -51,6 +52,10 @@ async function editorJourney(page: Page, site: Awaited<ReturnType<typeof startSt
   await page.getByLabel('Subject', { exact: true }).fill('Our November newsletter');
   await page.getByLabel('From name', { exact: true }).fill('Trail Post');
   await page.getByLabel('Reply-to', { exact: true }).fill('owner@example.test');
+  await button(page, 'Cookie choices').click();
+  await button(page, 'Reject optional cookies').click();
+  assert.equal(await page.getByLabel('Title', {exact:true}).inputValue(),title,'Cookie withdrawal preserves unsaved campaign edits');
+  assert.equal(await page.getByLabel('Subject', {exact:true}).inputValue(),'Our November newsletter');
   await button(page, 'Edit heading block').first().click();
   await editText(page, 'Heading text', 'Trailhead dispatch');
   await button(page, 'Edit paragraph block').first().click();
@@ -258,7 +263,7 @@ async function legacyJourney(page: Page, site: Awaited<ReturnType<typeof startSt
       assetIds: [site.back.asset.id, site.front.asset.id],
     }),
   );
-  await page.goto(site.origin);
+  await page.goto(site.origin);await rejectOptionalCookies(page);
   await button(page, 'Campaigns').click();
   await button(page, 'Edit Original Alpine Tee').click();
   await button(page, 'Open Newsletter Studio').click();
@@ -309,7 +314,7 @@ async function unknownJourney(page: Page, site: Awaited<ReturnType<typeof startS
   await site.db.tenant(site.owner.workspaceId, (sql) =>
     sql.query('UPDATE campaigns SET content=$1 WHERE id=$2', [JSON.stringify(future), original.id]),
   );
-  await page.goto(site.origin);
+  await page.goto(site.origin);await rejectOptionalCookies(page);
   await button(page, 'Campaigns').click();
   await button(page, 'Edit Imported future document').click();
   await page

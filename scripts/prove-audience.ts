@@ -1,3 +1,4 @@
+import {rejectOptionalCookies} from './browser-cookie-choice.js';
 import assert from 'node:assert/strict';
 import { verifyPracticeImport } from './check-practice-import.js';
 import { verifyWorkspaceActivity } from './check-workspace-activity.js';
@@ -307,6 +308,8 @@ try {
       const config=loadConfig({APP_ENV:'local',APP_ORIGIN:origin,LOCAL_TEST_IDENTITY:'true',DATABASE_URL:fixture.url});
       server.on('request',createApp(config,service,new Authenticator(db,localIdentity())));
       page.setDefaultTimeout(8000);
+      await page.goto(origin);
+      await rejectOptionalCookies(page);
       await journey(page,origin);
     } finally {
       await page.close();

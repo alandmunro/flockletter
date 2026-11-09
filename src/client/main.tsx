@@ -5,6 +5,8 @@ import { OperatorPortal } from './OperatorPortal.js';
 import { SetupStatus } from './SetupStatus.js';
 import { PublicPlans } from './PublicPlans.js';
 import {Help} from './Help.js';
+import {CookieControls} from './CookieControls.js';
+import {Privacy} from './Privacy.js';
 import './app.css';
 
 type PublicConfig = { environment: string; localIdentity: boolean; clerkPublishableKey: string | null; setupGaps: string[]; sendingEnabled: false };
@@ -21,5 +23,5 @@ function Root() {
   }
   return <><Header /><main className="main"><SetupStatus environment={config.environment} gaps={config.setupGaps}/></main></>;
 }
-const publicPage=window.location.pathname==='/pricing'?<PublicPlans/>:window.location.pathname==='/help'?<Help/>:null;
-createRoot(document.getElementById('root')!).render(<StrictMode>{publicPage?<><Header/>{publicPage}</>:<Root/>}</StrictMode>);
+const publicPage=window.location.pathname==='/pricing'?<PublicPlans/>:window.location.pathname==='/help'?<Help/>:['/privacy','/policies/privacy','/cookies'].includes(window.location.pathname)?<Privacy/>:null;
+createRoot(document.getElementById('root')!).render(<StrictMode>{publicPage?<><Header/>{publicPage}</>:<Root/>}<CookieControls/></StrictMode>);

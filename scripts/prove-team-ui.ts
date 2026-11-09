@@ -1,3 +1,4 @@
+import {rejectOptionalCookies} from './browser-cookie-choice.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -125,7 +126,7 @@ async function memberPage(browser: Browser, origin: string, member: FixtureMembe
   await page.route(origin + '/api/v1/**', (route) =>
     route.continue({ headers: { ...route.request().headers(), authorization: 'Bearer ' + member.token } }),
   );
-  await page.goto(origin);
+  await page.goto(origin);await rejectOptionalCookies(page);
   return page;
 }
 async function assertMemberNavigation(page: Page) {
@@ -337,7 +338,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(8000);
   const button = (name: string) => page.getByRole('button', { name, exact: true });
-  await page.goto(origin);
+  await page.goto(origin);await rejectOptionalCookies(page);
   await page.route('**/api/v1/commands/team.invitations', (route) => route.abort('failed'));
   await button('Team').click();
   const roster = page.getByRole('table', { name: 'Team roster' });

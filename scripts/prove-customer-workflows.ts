@@ -1,3 +1,4 @@
+import {rejectOptionalCookies} from './browser-cookie-choice.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -461,7 +462,7 @@ try {
         'request',
         createApp(config, service, new Authenticator(db, identity, customer.billing.options)),
       );
-      await page.goto(origin);
+      await page.goto(origin);await rejectOptionalCookies(page);
       await page.getByRole('navigation', { name: 'Main navigation' }).waitFor();
       await journey(page, db, data.brands[0]!.id);
       assert.deepEqual(failures, [], 'No browser runtime errors');
