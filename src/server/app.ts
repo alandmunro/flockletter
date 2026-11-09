@@ -39,6 +39,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     : [];
   app.use(helmet({ contentSecurityPolicy: { directives: {
     defaultSrc: ["'self'"], scriptSrc: ["'self'", ...clerkScriptAndFrameHosts],
+    fontSrc: ["'self'"],
     connectSrc: ["'self'", ...(clerkOrigin ? [clerkOrigin, 'https://*.protect.clerk.com:*'] : [])],
     workerSrc: clerkOrigin ? ["'self'", 'blob:'] : ["'self'"],
     imgSrc: ["'self'", 'blob:', 'data:', 'https://img.clerk.com'],
