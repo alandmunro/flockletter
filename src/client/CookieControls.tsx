@@ -21,7 +21,11 @@ export function CookieControls() {
       if(disposed) return;
       clearTimeout(timer);
       let saved: CookieChoice|null = null;
-      try { saved=savedCookieChoice(localStorage.getItem(COOKIE_PREFERENCE_KEY)); }
+      try {
+        const raw=localStorage.getItem(COOKIE_PREFERENCE_KEY);
+        saved=savedCookieChoice(raw);
+        if(raw !== null && !saved) localStorage.removeItem(COOKIE_PREFERENCE_KEY);
+      }
       catch { /* No persisted permission when browser storage cannot be read. */ }
       setChoice(saved);
       setReady(true);

@@ -54,6 +54,7 @@ try {
   await other.locator('[data-cookie-preferences-ready="true"]').waitFor();
   await other.evaluate(({key,record})=>localStorage.setItem(key,record),{key:COOKIE_PREFERENCE_KEY,record:JSON.stringify(newCookieChoice('accept',Date.now()-COOKIE_PREFERENCE_MS))});
   await banner.waitFor();
+  assert.equal(await page.evaluate(key=>localStorage.getItem(key),COOKIE_PREFERENCE_KEY),null,'Expired browser records are removed');
   await other.reload();await other.getByRole('button',{name:'Reject optional cookies',exact:true}).click();
   await banner.waitFor({state:'hidden'});
 
