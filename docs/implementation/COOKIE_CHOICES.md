@@ -10,6 +10,8 @@ The necessary browser preference contains only the notice version, choice, times
 
 No optional website analytics or advertising provider is configured. Accept all covers the uses described in the current notice and grants no unnamed or future purpose. The shared purpose allowlist is empty and the optional-cookie guard denies all purposes, including when an acceptance exists. A future provider needs a new notice/purpose revision plus reviewed loader, server-side collection and withdrawal enforcement; this UI is not permission to activate one. Global Privacy Control and Do Not Track are treated conservatively as optional tracking denied.
 
+The browser Clerk provider explicitly sets `telemetry={false}`, using the installed SDK's supported option, so optional SDK usage telemetry is disabled as well. Necessary sign-in and session verification remain enabled. [Clerk telemetry reference](https://clerk.com/docs/guides/how-clerk-works/security/clerk-telemetry)
+
 Changing a cookie choice does not reload the page, clear Clerk cookies, alter workspace membership, invalidate a campaign, change a subscription or grant email consent. It is a browser preference, not a tenant command; UI/API/MCP workspace grants cannot substitute for a visitor's choice. Login-free newsletter confirmation/unsubscribe pages and upstream Clerk pages retain their separate purposes and authority.
 
 The public notice describes Flockletter's actual sign-in and preference storage and directs account-data questions to the existing support address. No apparel shopping/purchase disclosures, provider IDs, cart cookies or FFA consent records are copied. FFA itself is unchanged.
