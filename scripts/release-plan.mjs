@@ -52,8 +52,9 @@ export async function verifyReleaseSourceFile(file){
 }
 
 /** Correlates the exact reviewed release source; not remote identity attestation. */
+export const releaseBoundaryFiles=Object.freeze(['package.json','package-lock.json','src/server/runtime-boundary.mjs','src/server/test-send-boundary.mjs','src/shared/runtime-tables.json']);
 export async function releaseSourceFingerprint(){
- const files=['package.json','package-lock.json','src/server/runtime-boundary.mjs','src/shared/runtime-tables.json'];
+ const files=[...releaseBoundaryFiles];
  for(const [directory,suffix] of [['scripts','.mjs'],['migrations','.sql']]){
   for(const name of (await readdir(path.join(releaseRoot,directory))).sort())if(name.endsWith(suffix))files.push(directory+'/'+name);
  }

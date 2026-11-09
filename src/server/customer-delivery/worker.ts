@@ -1,3 +1,4 @@
+import {sameTestDay,testRecipient} from './test-send.js';
 import { randomUUID } from 'node:crypto';
 import type { Database,Sql } from '../db.js';
 import { digest } from '../content.js';
@@ -24,16 +25,26 @@ export class CustomerDeliveryWorker {
   }
   async tick(workspace:string,deliveryId?:string):Promise<{processed:boolean}> {
     const work=await locked(this.db,workspace,async(sql):Promise<Work|undefined>=>{
-      const found=(await sql.query<PersonRow&{delivery_state:string;due_at:Date}>(`
-        SELECT p.*,d.state delivery_state,d.due_at FROM customer_delivery_recipients p
+      const found=(await sql.query<PersonRow&{delivery_state:string;due_at:Date;purpose:'broadcast'|'test'}>(`
+        SELECT p.*,d.state delivery_state,d.due_at,d.purpose FROM customer_delivery_recipients p
         JOIN customer_deliveries d ON(d.workspace_id,d.brand_id,d.id)=(p.workspace_id,p.brand_id,p.delivery_id)
         WHERE ($1::uuid IS NULL OR d.id=$1) AND
-          ((p.state IN('pending','prepared') AND d.state='queued' AND d.due_at<=$2) OR
+          ((d.purpose='test' AND d.state='paused' AND d.test_day<(clock_timestamp() AT TIME ZONE 'UTC')::date AND p.state IN('pending','preparing','prepared')) OR
+           (p.state IN('pending','prepared') AND d.state='queued' AND d.due_at<=$2) OR
            (p.state='preparing' AND d.state='queued' AND p.next_check_at<=$2) OR
            (p.state IN('submitting','uncertain') AND (p.next_check_at IS NULL OR p.next_check_at<=$2)))
         ORDER BY coalesce(p.next_check_at,d.due_at),p.id LIMIT 1 FOR UPDATE OF p`,[deliveryId??null,this.now()])).rows[0];
       if(!found)return;
       const kind=found.state==='prepared'?'submit':found.state==='submitting'||found.state==='uncertain'?'reconcile':'render';
+      if(found.purpose==='test'&&kind!=='reconcile') {
+        const row=await deliveryRow(sql,found.delivery_id,found.brand_id);
+        if(!await sameTestDay(sql,row)) {
+          await sql.query("UPDATE customer_deliveries SET state='blocked',reason='test_day_expired' WHERE id=$1 AND state IN('queued','paused')",[row.id]);
+          await sql.query("UPDATE customer_delivery_recipients SET state='cancelled',reason='test_day_expired' WHERE delivery_id=$1 AND state IN('pending','preparing','prepared')",[row.id]);
+          await this.settle(sql,row);return;
+        }
+        if(kind==='submit')await sql.query("SELECT set_config('app.customer_test_dispatch','v1',true)");
+      }
       const claim=kind==='render'?randomUUID():null;
       if(kind==='render'&&found.render_attempts>=3) {
         await sql.query("UPDATE customer_delivery_recipients SET state='rejected',reason='renderer_failed' WHERE id=$1",[found.id]);
@@ -54,6 +65,10 @@ export class CustomerDeliveryWorker {
     if((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount)return 'workspace_erased';
     if(row.state!=='queued')return row.reason??'cancelled_by_owner';
     if(row.mode!==this.options.mode)return 'delivery_configuration_changed';
+    if(row.purpose==='test') {
+      if(!await sameTestDay(sql,row))return 'test_day_expired';
+      if(!(await testRecipient(sql,row,undefined,this.options)).matches)return 'test_snapshot_invalid';
+    }
     if(!this.options.render)return 'renderer_unavailable';
     const provider=this.options.provider?.(row.workspace_id,row.brand_id);
     if(profileFingerprint(row.sender_profile)!==profileFingerprint(await senderProfile(sql,row.brand_id)))return 'delivery_configuration_changed';
@@ -181,7 +196,7 @@ export class CustomerDeliveryWorker {
       if(outcome==='accepted')await sql.query("UPDATE customer_delivery_recipients SET state='accepted',message_id=coalesce($2,message_id),reason=NULL,next_check_at=NULL WHERE id=$1",[p.id,messageId??null]);
       else if(outcome==='rejected')await sql.query("UPDATE customer_delivery_recipients SET state='rejected',reason='provider_rejected',next_check_at=NULL WHERE id=$1",[p.id]);
       else if(outcome==='not_submitted')await sql.query("UPDATE customer_delivery_recipients SET state=$2,reason='verified_not_submitted',next_check_at=NULL WHERE id=$1",
-        [p.id,['queued','paused'].includes(row.state)&&p.attempts<3?'prepared':'cancelled']);
+        [p.id,['queued','paused'].includes(row.state)&&p.attempts<3&&await sameTestDay(sql,row)?'prepared':'cancelled']);
       else await sql.query("UPDATE customer_delivery_recipients SET state='uncertain',reason='provider_unknown',next_check_at=$2 WHERE id=$1",[p.id,new Date(this.now().getTime()+30000)]);
       if(outcome==='accepted'&&row.mode==='capture')await this.feedback(sql,row,p.id,'delivered','capture-'+p.id);
       await this.settle(sql,row);

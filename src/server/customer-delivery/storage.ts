@@ -22,7 +22,7 @@ export async function brandScope(sql:Sql,actor:Actor,brand:string) {
   await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[brand]);
 }
 export async function deliveryRow(sql:Sql,id:string,brand:string):Promise<DeliveryRow> {
-  const row=(await sql.query<DeliveryRow>('SELECT * FROM customer_deliveries WHERE id=$1 AND brand_id=$2 FOR UPDATE',[id,brand])).rows[0];
+  const row=(await sql.query<DeliveryRow>('SELECT *,test_day::text AS test_day FROM customer_deliveries WHERE id=$1 AND brand_id=$2 FOR UPDATE',[id,brand])).rows[0];
   requireCondition(row,404,'delivery_unavailable','This delivery is unavailable for this brand.');
   return row;
 }

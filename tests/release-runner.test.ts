@@ -4,7 +4,7 @@ import {chmod,link,mkdir,mkdtemp,readFile,realpath,rm,symlink,writeFile} from 'n
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {releaseInputPreflight} from '../scripts/release-input.mjs';
-import {createReleasePlan,privateEnvelopeGaps,readProtectedReleaseFile,releasePlanDigest,releasePlanGaps,releaseSourceFingerprint,targetSpecGaps,verifyReleaseSourceFile,type ReleasePlan,type ReleaseTarget} from '../scripts/release-plan.mjs';
+import {createReleasePlan,privateEnvelopeGaps,readProtectedReleaseFile,releaseBoundaryFiles,releasePlanDigest,releasePlanGaps,releaseSourceFingerprint,targetSpecGaps,verifyReleaseSourceFile,type ReleasePlan,type ReleaseTarget} from '../scripts/release-plan.mjs';
 import {executeReleaseFiles} from '../scripts/release-runner.mjs';
 
 let directory:string,plan:ReleasePlan;
@@ -79,4 +79,9 @@ it('provides strict fixed CLI dispatch and a useful public plan without reading 
   const invalid=spawnSync(process.execPath,['scripts/release-runner.mjs',...args],{encoding:'utf8'});
   expect(invalid.status).not.toBe(0);expect(invalid.stdout+invalid.stderr).not.toContain('unexpected-private-marker');
  }
+});
+
+it('binds the imported test-send readiness guard into the protected release source fingerprint',()=>{
+ expect(releaseBoundaryFiles).toEqual(expect.arrayContaining(['src/server/runtime-boundary.mjs','src/server/test-send-boundary.mjs']));
+ expect(Object.isFrozen(releaseBoundaryFiles)).toBe(true);
 });

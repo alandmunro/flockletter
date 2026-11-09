@@ -67,6 +67,7 @@ export function mapDeliveryViews(
     }));
 
     return {
+      purpose:row.purpose,testDay:row.test_day,testAdmittedAt:row.test_admitted_at?.toISOString()??null,
       id: row.id,
       brandId: row.brand_id,
       campaignId: row.campaign_id,

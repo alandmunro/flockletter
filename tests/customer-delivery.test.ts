@@ -1,3 +1,4 @@
+import type {TestDeliveryReview,TestDeliveryDetails} from '../src/shared/customer-test-send.js';
 import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -837,4 +838,122 @@ it('keeps mapper routing tuples separate when delivery identifiers coincide acro
  const groups=[{...base,state:'pending',feedback:null,n:1},{...base,brand_id:randomUUID(),state:'accepted',feedback:'complaint',n:9},{...base,workspace_id:'org_foreign',state:'accepted',feedback:'hard_bounce',n:7}];
  const outcomes=[{...base,id:randomUUID(),state:'pending',feedback:null,reason:null,attempts:0},{...base,workspace_id:'org_foreign',id:randomUUID(),state:'accepted',feedback:'complaint',reason:'foreign',attempts:3}];
  const report=mapDeliveryViews([row],groups,outcomes)[0]!;expect(report).toMatchObject({pending:1,accepted:0,complained:0,hardBounced:0});expect(report.recipients).toHaveLength(1);expect(JSON.stringify(report)).not.toContain('foreign');
+});
+
+it('freezes one confirmed contact as an immediate test review without touching the broadcast campaign', async () => {
+  const f = await factory();
+  const reviewed = (await f.delivery.execute(
+    'delivery.reviewTest',
+    {
+      operationKey: randomUUID(),
+      brandId: f.brandId,
+      campaignId: f.campaign.id,
+      expectedVersion: 1,
+      subscriberId: f.subscriberId,
+    },
+    f.actor,
+  )) as TestDeliveryReview;
+
+  expect(reviewed.purpose).toBe('test');
+  expect(reviewed.selected).toBe(1);
+  expect(reviewed.testSubscriberId).toBe(f.subscriberId);
+  expect(reviewed.subject.startsWith('[TEST]')).toBe(true);
+
+  const campaign = (await f.core.execute('campaign.get', { id: f.campaign.id }, f.actor)) as {
+    content:{subject:string};
+    version: number;
+  };
+  expect(campaign.content.subject).toBe('Trail news');
+  expect(campaign.version).toBe(1);
+
+  const listed = (await f.delivery.execute('delivery.list', { brandId: f.brandId }, f.actor)) as DeliveryView[];
+  const listedTest = listed.find((d) => d.id === reviewed.id);
+  expect(listedTest).toBeDefined();
+  expect(JSON.stringify(listedTest)).not.toContain(f.subscriberId);
+
+  const report = (await f.delivery.execute(
+    'delivery.report',
+    { brandId: f.brandId, id: reviewed.id },
+    f.actor,
+  )) as DeliveryView;
+  expect(JSON.stringify(report)).not.toContain(f.subscriberId);
+});
+
+it('captures an accepted test email with [TEST] subject prefix and consumes one usage credit', async () => {
+  const f = await factory();
+  const reviewed = (await f.delivery.execute(
+    'delivery.reviewTest',
+    {
+      operationKey: randomUUID(),
+      brandId: f.brandId,
+      campaignId: f.campaign.id,
+      expectedVersion: 1,
+      subscriberId: f.subscriberId,
+    },
+    f.actor,
+  )) as TestDeliveryReview;
+
+  const details = (await f.delivery.execute(
+    'delivery.testDetails',
+    { brandId: f.brandId, id: reviewed.id },
+    f.actor,
+  )) as TestDeliveryDetails;
+  expect(details.recipient.eligible).toBe(true);
+  expect(details.canApprove).toBe(true);
+
+  await f.delivery.execute(
+    'delivery.approveTest',
+    {
+      operationKey: randomUUID(),
+      brandId: f.brandId,
+      id: reviewed.id,
+      expectedVersion: 1,
+      subscriberId: f.subscriberId,
+    },
+    f.actor,
+  );
+
+  await f.delivery.worker.tick(f.workspaceId, reviewed.id);
+  expect(f.renderCalls).toEqual(['reader@campaign.test']);
+
+  await f.delivery.worker.tick(f.workspaceId, reviewed.id);
+  const recipients = (
+    await db.tenant(f.workspaceId, (sql) =>
+      sql.query('SELECT id FROM customer_delivery_recipients WHERE delivery_id=$1', [reviewed.id]),
+    )
+  ).rows[0]!;
+
+  const message = (await f.delivery.execute(
+    'delivery.message',
+    { brandId: f.brandId, id: reviewed.id, recipientId: recipients.id },
+    f.actor,
+  )) as { subject: string; html: string };
+
+  expect(message.subject.startsWith('[TEST]')).toBe(true);
+  expect(message.html).toContain('Unsubscribe from this newsletter');
+
+  const finalReport = (await f.delivery.execute(
+    'delivery.report',
+    { brandId: f.brandId, id: reviewed.id },
+    f.actor,
+  )) as DeliveryView;
+
+  expect(finalReport.state).toBe('completed');
+  expect(finalReport.accepted).toBe(1);
+
+  const status = await billing.status(f.workspaceId);
+  expect(status.usage.emails).toBe(1);
+  expect(status.usage.campaigns).toBe(0);
+  expect(status.usage.reservedEmails).toBe(0);
+
+  expect(finalReport.testDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+});
+
+it('observes canonical one-recipient test preflight and UTC budget without requiring a campaign slot',async()=>{
+ const f=await factory();
+ await db.brand(f.workspaceId,f.brandId,async sql=>{
+  for(let i=0;i<2;i++){const key='fixture-exhaust-campaign-'+i;await billing.reserve(sql,f.workspaceId,{operationKey:key,campaignId:f.campaign.id,brandId:f.brandId,recipients:1});await billing.settle(sql,f.workspaceId,key,{accepted:1,excluded:0});}
+ });
+ const checked=await f.delivery.execute('delivery.preflight',{brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1,purpose:'test',subscriberId:f.subscriberId},f.actor) as {purpose:string;gaps:unknown[];testBudget:{day:string;limit:number;used:number;remaining:number}};
+ expect(checked).toMatchObject({purpose:'test',gaps:[],testBudget:{limit:5,used:0,remaining:5}});expect(checked.testBudget.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 });

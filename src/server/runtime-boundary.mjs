@@ -1,3 +1,4 @@
+import {verifyTestSendBoundary} from './test-send-boundary.mjs';
 import tables from '../shared/runtime-tables.json' with { type: 'json' };
 
 const normalize = (expression) => expression?.replace(/[\s()]/g, '');
@@ -131,6 +132,7 @@ export async function verifyRuntimeBoundary(client, expected = {}) {
   if(guards.rowCount!==guarded.length)throw Error('Every runtime insert needs the immutable private erasure guard.');
   const privateGuards=await client.query(`SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_trigger t ON t.tgrelid=c.oid WHERE n.nspname||'.'||c.relname=ANY(ARRAY['flockletter_customer_jobs.scopes','flockletter_customer_jobs.support_reply_routes','flockletter_retention_control.platform_records','flockletter_customer_jobs.confirmation_routes']) AND t.tgname='flockletter_retention_insert_guard' AND t.tgenabled='A' AND t.tgtype=7 AND t.tgfoid=to_regprocedure('public.flockletter_retention_insert_guard()')`);
   if(privateGuards.rowCount!==4)throw Error('Private customer routing and operator metadata need erasure guards.');
+  await verifyTestSendBoundary(client);
   return {
     database: identity.database,
     role: identity.role,

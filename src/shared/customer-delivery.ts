@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import {customerTestSendCommands} from './customer-test-send.js';
 import {customerPreflightCommands} from './customer-preflight.js';
 import { commandDefinition as command } from './command-definition.js';
 import { normalizedEmail } from './subscriber.js';
@@ -9,6 +10,7 @@ export const deliveryRecipientStates = ['pending','preparing','prepared','submit
 export const deliveryFeedbackKinds = ['delivered','hard_bounce','complaint','temporary_bounce'] as const;
 export const customerDeliveryCommands = {
   ...customerPreflightCommands,
+  ...customerTestSendCommands,
   'delivery.sender':command('Read this brand’s legal sender profile and activation checks.','campaign:send',false,{brandId:id}),
   'delivery.saveSender':command('Save this brand’s sender identity and postal footer. Existing reviewed deliveries require a fresh review.','owner',true,{
     operationKey,brandId:id,fromName:z.string().trim().min(1).max(100).regex(/^[^\p{Cc}\p{Cf}]+$/u),
@@ -16,7 +18,7 @@ export const customerDeliveryCommands = {
     postalAddress:z.string().trim().min(10).max(500).regex(/^[^\p{Cc}\p{Cf}]+$/u),
   }),
   'delivery.status': command('View delivery mode, workspace usage and current sender checks for an optional authorized brand.', 'campaign:send', false, {brandId:id.optional()}),
-  'delivery.list': command('List this brand’s reviewed campaigns and delivery outcomes.', 'campaign:send', false, {brandId:id}),
+  'delivery.list': command('List this brand’s reviewed campaigns and delivery outcomes.', 'campaign:send', false, {brandId:id,purpose:z.enum(['broadcast','test']).optional()}),
   'delivery.review': command('Freeze the saved draft and confirmed audience before approval.', 'campaign:send', true, {
     operationKey,brandId:id,campaignId:id,expectedVersion:z.number().int().positive(),
     segmentId:id.optional(),dueAt:z.iso.datetime({offset:true}).optional(),
@@ -47,6 +49,7 @@ export type DeliveryOutcomesPage = {
 };
 export type CustomerSenderProfile={fromName:string;fromEmail:string;replyTo:string;organization:string;postalAddress:string;revision:number};
 export type DeliveryView = {
+  purpose:'broadcast'|'test';testDay:string|null;testAdmittedAt:string|null;
   senderProfile?:CustomerSenderProfile|null;
   id:string; brandId:string; campaignId:string; version:number; subject:string;
   state:string; mode:DeliveryMode; dueAt:string; selected:number; excluded:number;

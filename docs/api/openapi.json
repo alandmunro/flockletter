@@ -4082,11 +4082,268 @@
                     "type": "string",
                     "format": "date-time",
                     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "purpose": {
+                    "default": "broadcast",
+                    "type": "string",
+                    "enum": [
+                      "broadcast",
+                      "test"
+                    ]
+                  },
+                  "subscriberId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                   }
                 },
                 "required": [
                   "brandId",
                   "campaignId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/delivery.reviewTest": {
+      "post": {
+        "operationId": "delivery_reviewTest",
+        "summary": "Freeze one confirmed brand contact and the saved campaign as a separate immediate test; never approves a broadcast.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "campaign:send",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  },
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "campaignId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "expectedVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "subscriberId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "operationKey",
+                  "brandId",
+                  "campaignId",
+                  "expectedVersion",
+                  "subscriberId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/delivery.approveTest": {
+      "post": {
+        "operationId": "delivery_approveTest",
+        "summary": "Approve exactly this one-recipient test review. Uses one of five approved test requests per workspace UTC day, including cancelled or rejected tests.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "campaign:send",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  },
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "expectedVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "subscriberId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "operationKey",
+                  "brandId",
+                  "id",
+                  "expectedVersion",
+                  "subscriberId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/delivery.testDetails": {
+      "post": {
+        "operationId": "delivery_testDetails",
+        "summary": "Restore the exact test review and current recipient eligibility in the owner session. Not available to delegated connections.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "owner",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "brandId",
+                  "id"
                 ],
                 "additionalProperties": false
               }
@@ -4372,6 +4629,13 @@
                     "type": "string",
                     "format": "uuid",
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "enum": [
+                      "broadcast",
+                      "test"
+                    ]
                   }
                 },
                 "required": [

@@ -7,6 +7,7 @@ import type { CustomerBillingStatus } from '../shared/customer-billing.js';
 import type { SegmentDirectory } from '../shared/segments.js';
 import { SenderProfilePanel } from './SenderProfilePanel.js';
 import { DeliveryOutcomes } from './DeliveryOutcomes.js';
+import {CustomerTestSendPanel} from './CustomerTestSendPanel.js';
 import type { CustomerCampaignPreflight } from '../shared/customer-preflight.js';
 
 type Status={mode:DeliveryMode;eligible:boolean;eligibility:CustomerBillingStatus;gaps:string[]};
@@ -33,11 +34,13 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
   const [campaignId,setCampaignId]=useState(''),[schedule,setSchedule]=useState(''),[segmentId,setSegmentId]=useState('');
   const [busy,setBusy]=useState(''),[loaded,setLoaded]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const [outcomeRevision,setOutcomeRevision]=useState(0);
+  const [testRestoreId,setTestRestoreId]=useState<string|null>(null);
+  const consumeTestRestore=useCallback(()=>setTestRestoreId(null),[]);
   const [checks,setChecks]=useState<CustomerCampaignPreflight|null>(null);
   const [review,setReview]=useState<DeliveryView|null>(null),[reviewAudience,setReviewAudience]=useState(''),[capture,setCapture]=useState<{deliveryId:string;recipientId:string;message:Captured}|null>(null);
   const pending=useRef(new Map<string,{signature:string;key:string}>()),acting=useRef(false),context=useRef(0);
   const read=useCallback(async()=>{
-    const [s,cs,ds,gs]=await Promise.all([api.call<Status>('delivery.status',{brandId:brand.id}),api.call<Campaign[]>('campaign.list',{}),api.call<DeliveryView[]>('delivery.list',{brandId:brand.id}),api.call<SegmentDirectory>('segment.list',{brandId:brand.id})]);
+    const [s,cs,ds,gs]=await Promise.all([api.call<Status>('delivery.status',{brandId:brand.id}),api.call<Campaign[]>('campaign.list',{}),api.call<DeliveryView[]>('delivery.list',{brandId:brand.id,purpose:'broadcast'}),api.call<SegmentDirectory>('segment.list',{brandId:brand.id})]);
     return {s,cs:cs.filter(item=>item.brandId===brand.id),ds,gs};
   },[api,brand.id]);
   const apply=useCallback((data:Awaited<ReturnType<typeof read>>)=>{
@@ -56,7 +59,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
   useEffect(()=>{
     if(!working)return;
     let active=true;
-    const timer=setInterval(()=>{if(acting.current)return;void api.call<DeliveryView[]>('delivery.list',{brandId:brand.id})
+    const timer=setInterval(()=>{if(acting.current)return;void api.call<DeliveryView[]>('delivery.list',{brandId:brand.id,purpose:'broadcast'})
       .then(rows=>{if(active)setDeliveries(rows);}).catch(error=>{if(active)setError(explain(error));});},5000);
     return ()=>{active=false;clearInterval(timer);};
   },[api,brand.id,working]);
@@ -124,6 +127,8 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
       {review&&<p role="status">{reviewAudience} · Reviewed version {review.version}: {review.selected} confirmed recipients and {review.excluded} excluded. Approve this review below.</p>}
     </>}
   </section>
+  <CustomerTestSendPanel api={api} brandId={brand.id} draft={campaigns.find(campaign=>campaign.id===campaignId)??null}
+    restoreId={testRestoreId} onSelectTest={(id,test)=>{setCampaignId(id);setReview(null);setTestRestoreId(test);}} onRestoreConsumed={consumeTestRestore} onChanged={refresh}/>
   <section className="card"><h2>Delivery history</h2>{loaded&&!deliveries.length&&<p>No reviewed deliveries yet.</p>}
     {deliveries.map(item=><article className="delivery-record" key={item.id}>
       <h3>{item.subject}</h3><p>Version {item.version} · {item.state} · {new Date(item.dueAt).toLocaleString()}</p>
@@ -132,7 +137,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
       <p className="help">{item.pending+item.preparing+item.submitting} processing · {item.hardBounced} hard bounces · {item.complained} complaints</p>
       {item.reason&&<p className="notice">{item.state==='paused'?'Paused: ':'Action needed: '}{item.reason.replaceAll('_',' ')}. {item.state==='paused'?'The reviewed recipients and reserved allowance are held. Resume when the cause is resolved.':'Preserve uncertain outcomes for reconciliation. A blocked review needs a fresh review after its cause is fixed.'}</p>}
       <div className="actions">
-        {item.state==='reviewed'&&<button className="btn" disabled={!!busy} onClick={()=>void mutate('delivery.approve',{brandId:brand.id,id:item.id},'approve:'+item.id)}>{item.mode==='capture'?'Approve captured delivery':'Approve customer delivery'}</button>}
+        {item.state==='reviewed'&&item.purpose!=='test'&&<button className="btn" disabled={!!busy} onClick={()=>void mutate('delivery.approve',{brandId:brand.id,id:item.id},'approve:'+item.id)}>{item.mode==='capture'?'Approve captured delivery':'Approve customer delivery'}</button>}
         {['queued','paused','cancelled','blocked'].includes(item.state)&&<button className="btn secondary" disabled={!!busy} onClick={()=>void mutate('delivery.process',{brandId:brand.id,id:item.id},'process:'+item.id)}>Process or reconcile</button>}
         {item.state==='queued'&&<button className="btn secondary" disabled={!!busy} onClick={()=>void mutate('delivery.pause',{brandId:brand.id,id:item.id},'pause:'+item.id)}>Pause future submissions</button>}
         {item.state==='paused'&&<button className="btn" disabled={!!busy} onClick={()=>void mutate('delivery.resume',{brandId:brand.id,id:item.id},'resume:'+item.id)}>Resume unchanged delivery</button>}
