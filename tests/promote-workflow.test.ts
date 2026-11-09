@@ -24,17 +24,33 @@ describe('production promotion workflow', () => {
 
   it('pins third-party actions to commit SHAs and exposes the Render key only to the deploy step', () => {
     for (const line of workflow.split('\n').filter(l => /uses:/.test(l))) expect(line).toMatch(/@[0-9a-f]{40} # v\d+/);
-    expect(workflow.match(/secrets\./g)).toHaveLength(1);
+    // Only the read-only identity check and the deploy step receive the key.
+    expect(workflow.match(/secrets\./g)).toHaveLength(2);
+    const identity = workflow.slice(workflow.indexOf('- name: Confirm the Render service'), workflow.indexOf('- name: Deploy production'));
     const deploy = workflow.slice(workflow.indexOf('- name: Deploy production'), workflow.indexOf('- name: Verify production'));
+    expect(identity).toContain('secrets.RENDER_API_KEY');
     expect(deploy).toContain('secrets.RENDER_API_KEY');
+    expect(identity).not.toMatch(/-X POST|--request POST|render-deploy/);
   });
 
   it('checks the commit, staging and the migration gate before anything is deployed, then verifies production', () => {
     const order = ['Validate release inputs', 'Check out the exact release commit', 'Confirm the commit is on main',
       'Require the release checks', 'actions/setup-node', 'Verify staging serves', 'Require the protected migration',
-      'Deploy production', 'Verify production serves'].map(index);
+      'Confirm the Render service', 'Deploy production', 'Verify production serves'].map(index);
     expect(order.every(i => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('has a dry run that does every check and the Render identity check but never deploys', () => {
+    expect(workflow).toContain('dry_run:');
+    const deploy = workflow.slice(workflow.indexOf('- name: Deploy production'), workflow.indexOf('- name: Verify production'));
+    const verify = workflow.slice(workflow.indexOf('- name: Verify production'), workflow.indexOf('- name: Dry run finished'));
+    expect(deploy).toContain("if: ${{ env.DRY_RUN != 'true' }}");
+    expect(verify).toContain("if: ${{ env.DRY_RUN != 'true' }}");
+    const identity = workflow.slice(workflow.indexOf('- name: Confirm the Render service'), workflow.indexOf('- name: Deploy production'));
+    expect(identity).not.toContain('DRY_RUN');  // the identity check always runs
+    expect(identity).toContain('.serviceDetails.url');
+    expect(identity).toContain('web_service');
   });
 
   it('asks the CI and restore-drill workflows directly and refuses unknown or changed migrations without confirmation', () => {

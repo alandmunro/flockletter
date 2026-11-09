@@ -27,6 +27,12 @@ on:
         description: Mission Control release correlation ID (optional for manual runs)
         required: false
         type: string
+      dry_run:
+        description: Run every check, including a read-only Render identity check, but stop before deploying
+        required: false
+        type: choice
+        default: 'false'
+        options: ['false', 'true']
 
 concurrency:
   group: flockletter-production
@@ -46,6 +52,7 @@ jobs:
     env:
       SHA: ${{ inputs.sha }}
       MIGRATIONS_APPLIED: ${{ inputs.migrations_applied }}
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
       STAGING_URL: ${{ vars.FLOCKLETTER_STAGING_URL || 'https://flockletter-staging.onrender.com' }}
       PRODUCTION_URL: ${{ vars.FLOCKLETTER_PRODUCTION_URL || 'https://flockletter-production.onrender.com' }}
       PRODUCTION_ALIAS_URL: ${{ vars.FLOCKLETTER_PRODUCTION_ALIAS_URL || 'https://preview.flockletter.frostyflamingosoftware.com' }}
@@ -109,7 +116,23 @@ jobs:
             exit 1
           fi
 
+      - name: Confirm the Render service is Flockletter production
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_PRODUCTION_SERVICE_ID: ${{ vars.RENDER_PRODUCTION_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          [[ "${RENDER_PRODUCTION_SERVICE_ID}" =~ ^srv-[a-z0-9]{20}$ ]] || { echo "::error::Repository variable RENDER_PRODUCTION_SERVICE_ID is missing or malformed."; exit 1; }
+          # Read-only. Refuse to deploy to anything that is not the Flockletter production web service.
+          service="$(curl -fsS --max-time 30 -H "Authorization: Bearer ${RENDER_API_KEY}" "https://api.render.com/v1/services/${RENDER_PRODUCTION_SERVICE_ID}")" \
+            || { echo "::error::Render rejected the API key or the service id (read-only check failed)."; exit 1; }
+          [ "$(jq -r '.type' <<<"${service}")" = "web_service" ] || { echo "::error::The Render service is not a web service."; exit 1; }
+          [ "$(jq -r '.repo' <<<"${service}")" = "https://github.com/${{ github.repository }}" ] || { echo "::error::The Render service does not deploy this repository."; exit 1; }
+          [ "$(jq -r '.serviceDetails.url // empty' <<<"${service}")" = "${PRODUCTION_URL}" ] || { echo "::error::The Render service is not the one serving ${PRODUCTION_URL}."; exit 1; }
+          echo "Render service $(jq -r '.name' <<<"${service}") is the Flockletter production web service."
+
       - name: Deploy production
+        if: ${{ env.DRY_RUN != 'true' }}
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_PRODUCTION_SERVICE_ID: ${{ vars.RENDER_PRODUCTION_SERVICE_ID }}
@@ -119,7 +142,13 @@ jobs:
           scripts/render-deploy.sh "${RENDER_PRODUCTION_SERVICE_ID}" "${SHA}"
 
       - name: Verify production serves the exact release on both addresses
+        if: ${{ env.DRY_RUN != 'true' }}
         run: |
           node scripts/verify-release.mjs --environment production \
             --url "${PRODUCTION_URL}" --url "${PRODUCTION_ALIAS_URL}" \
             --expected-sha "${SHA}" --timeout-ms 300000
+
+      - name: Dry run finished without deploying
+        if: ${{ env.DRY_RUN == 'true' }}
+        run: |
+          echo "Dry run finished: every gate passed and the Render service identity is confirmed. Nothing was deployed."
