@@ -7,7 +7,7 @@ import {digest} from '../content.js';
 /** UTC admission clock is database-owned and independent of billing exercise offsets. */
 export async function testBudget(sql:Sql):Promise<TestBudget> {
  const row=(await sql.query<{day:string;used:number}>(`WITH observed AS MATERIALIZED(SELECT clock_timestamp() at)
-  SELECT to_char(at AT TIME ZONE 'UTC','YYYY-MM-DD') day,
+  SELECT to_char(at AT TIME ZONE 'UTC','YYYY-MM-DD') AS "day",
   (SELECT count(*)::int FROM customer_deliveries WHERE purpose='test' AND test_day=(observed.at AT TIME ZONE 'UTC')::date) used FROM observed`)).rows[0]!;
  return {...row,limit:5,remaining:Math.max(0,5-row.used)};
 }

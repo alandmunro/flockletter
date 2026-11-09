@@ -948,3 +948,12 @@ it('captures an accepted test email with [TEST] subject prefix and consumes one 
 
   expect(finalReport.testDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 });
+
+it('observes canonical one-recipient test preflight and UTC budget without requiring a campaign slot',async()=>{
+ const f=await factory();
+ await db.brand(f.workspaceId,f.brandId,async sql=>{
+  for(let i=0;i<2;i++){const key='fixture-exhaust-campaign-'+i;await billing.reserve(sql,f.workspaceId,{operationKey:key,campaignId:f.campaign.id,brandId:f.brandId,recipients:1});await billing.settle(sql,f.workspaceId,key,{accepted:1,excluded:0});}
+ });
+ const checked=await f.delivery.execute('delivery.preflight',{brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1,purpose:'test',subscriberId:f.subscriberId},f.actor) as {purpose:string;gaps:unknown[];testBudget:{day:string;limit:number;used:number;remaining:number}};
+ expect(checked).toMatchObject({purpose:'test',gaps:[],testBudget:{limit:5,used:0,remaining:5}});expect(checked.testBudget.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+});
