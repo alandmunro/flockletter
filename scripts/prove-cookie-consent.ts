@@ -35,7 +35,9 @@ try {
   await page.setViewportSize({width:390,height:844});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Cookie notice fits a phone');
   await page.screenshot({path:path.join(screenshots,'flockletter-cookies-mobile.png')});
+  const beforeDismiss=await page.evaluate(()=>scrollY);
   await reject.click();await banner.waitFor({state:'hidden'});
+  assert.equal(await page.evaluate(()=>scrollY),beforeDismiss,'Dismissing consent must not jump to the footer');
   let raw=await page.evaluate(key=>localStorage.getItem(key),COOKIE_PREFERENCE_KEY);
   assert.equal(savedCookieChoice(raw)?.choice,'reject');
   await page.reload();await page.locator('[data-cookie-preferences-ready="true"]').waitFor();

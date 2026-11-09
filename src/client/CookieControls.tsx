@@ -72,7 +72,7 @@ export function CookieControls() {
   function close() {
     manualOpen.current=false;
     setOpen(false);
-    document.querySelector<HTMLButtonElement>('.cookie-controls > button')?.focus();
+    document.querySelector<HTMLButtonElement>('.cookie-controls > button')?.focus({preventScroll:true});
   }
   return <div data-cookie-preferences-ready={ready}><CookieNotice open={open} decision={choice?.choice??null} error={error}
     onChoose={choose} onClose={close} signal={signal}/></div>;
