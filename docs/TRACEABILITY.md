@@ -96,3 +96,5 @@ D-042 adds the seven customer workflows with canonical UI/API/MCP operations and
 | FL-AUD-005, FL-OPS-004/006 | Signed protected checkpoint/inventory/approval, separate planner/executor roles, exact external disposal and restore quarantine; actual disposable SQL purge, current-version/signature/role/restore tests. No live S3 or hosted customer purge claimed. |
 
 See [remaining integrations](implementation/PLATFORM_COMPLETION.md), [hosted retention](implementation/HOSTED_RETENTION.md) and [trial abuse](implementation/TRIAL_ABUSE.md) for configuration and limitations.
+
+FL-CAM-007, FL-API-001/003 and FL-OPS-006: paginated recipient outcome reporting replaces the operational first50-only limitation while preserving the legacy report. Disposable PostgreSQL/MCP cases verify full traversal, late uncertain outcomes, separate feedback filters, no write/reservation, foreign brand/delivery/cursor denial and revocation. The customer browser proof exercises normal paging, retry, late-response rejection and phone layout. [Outcome report scope](implementation/DELIVERY_OUTCOMES.md). These are captured checks, not live mail evidence.

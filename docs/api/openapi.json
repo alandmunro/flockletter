@@ -4789,6 +4789,110 @@
         }
       }
     },
+    "/api/v1/commands/delivery.outcomes": {
+      "post": {
+        "operationId": "delivery_outcomes",
+        "summary": "Page through this delivery’s recipient outcomes, with optional state and feedback filters. Read-only; never retries a submission.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "campaign:send",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "after": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "limit": {
+                    "default": 25,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "preparing",
+                      "prepared",
+                      "submitting",
+                      "uncertain",
+                      "accepted",
+                      "rejected",
+                      "excluded",
+                      "cancelled"
+                    ]
+                  },
+                  "feedback": {
+                    "type": "string",
+                    "enum": [
+                      "delivered",
+                      "hard_bounce",
+                      "complaint",
+                      "temporary_bounce"
+                    ]
+                  }
+                },
+                "required": [
+                  "brandId",
+                  "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
     "/api/v1/commands/delivery.process": {
       "post": {
         "operationId": "delivery_process",

@@ -6,6 +6,7 @@ import type { DeliveryView,DeliveryMode } from '../shared/customer-delivery.js';
 import type { CustomerBillingStatus } from '../shared/customer-billing.js';
 import type { SegmentDirectory } from '../shared/segments.js';
 import { SenderProfilePanel } from './SenderProfilePanel.js';
+import { DeliveryOutcomes } from './DeliveryOutcomes.js';
 
 type Status={mode:DeliveryMode;eligible:boolean;eligibility:CustomerBillingStatus;gaps:string[]};
 type Captured={to:string;subject:string;html:string;text:string;images:{sha256:string;mime:string;base64:string}[]};
@@ -30,6 +31,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
   const [status,setStatus]=useState<Status|null>(null),[campaigns,setCampaigns]=useState<Campaign[]>([]),[deliveries,setDeliveries]=useState<DeliveryView[]>([]),[groups,setGroups]=useState<SegmentDirectory|null>(null);
   const [campaignId,setCampaignId]=useState(''),[schedule,setSchedule]=useState(''),[segmentId,setSegmentId]=useState('');
   const [busy,setBusy]=useState(''),[loaded,setLoaded]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const [outcomeRevision,setOutcomeRevision]=useState(0);
   const [review,setReview]=useState<DeliveryView|null>(null),[reviewAudience,setReviewAudience]=useState(''),[capture,setCapture]=useState<{deliveryId:string;recipientId:string;message:Captured}|null>(null);
   const pending=useRef(new Map<string,{signature:string;key:string}>()),acting=useRef(false);
   const read=useCallback(async()=>{
@@ -38,6 +40,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
   },[api,brand.id]);
   const apply=useCallback((data:Awaited<ReturnType<typeof read>>)=>{
     setStatus(data.s);setCampaigns(data.cs);setDeliveries(data.ds);setGroups(data.gs);setLoaded(true);
+    setOutcomeRevision(value=>value+1);
     setCampaignId(id=>data.cs.some(item=>item.id===id)?id:data.cs[0]?.id??'');
   },[]);
   useEffect(()=>{
@@ -120,7 +123,9 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
         {['reviewed','queued','paused'].includes(item.state)&&<button className="btn secondary" disabled={!!busy} onClick={()=>void mutate('delivery.cancel',{brandId:brand.id,id:item.id},'cancel:'+item.id)}>Cancel remaining work</button>}
       </div>
       {item.mode==='capture'&&<div className="actions">{item.recipients.filter(person=>person.state==='accepted').map((person,index)=><button className="btn secondary" key={person.id} disabled={!!busy} onClick={()=>void preview(item.id,person.id)}>View captured email {index+1}</button>)}</div>}
-      {item.selected>50&&<p className="help">Showing the first 50 recipient outcomes. Totals include the entire reviewed audience.</p>}
+      {item.selected>50&&<p className="help">Quick previews show the first 50 recipients. Open recipient outcomes to inspect the full audience.</p>}
+      <DeliveryOutcomes api={api} brandId={brand.id} deliveryId={item.id} refreshKey={String(outcomeRevision)}
+        onPreview={item.mode==='capture'?person=>void preview(item.id,person):undefined}/>
     </article>)}
   </section>
   {capture&&<section className="card"><h2>Captured email</h2><p>{capture.message.subject} · To {capture.message.to}</p>

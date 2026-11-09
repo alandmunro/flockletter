@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { beforeAll, afterAll, expect, it } from 'vitest';
 import { startDatabase } from '../scripts/database-fixture.js';
 import { Database } from '../src/server/db.js';
 import { CommandService, authorize, type Actor } from '../src/server/service.js';
 import { CustomerBilling, customerEligibility } from '../src/server/customer-billing/service.js';
 import { createCustomerOptOut } from '../src/server/customer-audience/service.js';
-import type { DeliveryView } from '../src/shared/customer-delivery.js';
+import type { DeliveryView,DeliveryOutcomesPage } from '../src/shared/customer-delivery.js';
+import { createMcpServer } from '../src/mcp/bridge.js';
 import { CustomerDelivery } from '../src/server/customer-delivery/service.js';
 import type { DeliveryOptions } from '../src/server/customer-delivery/types.js';
 import { saveSenderProfile, addCampaignPhoto } from './helpers/delivery-profile.js';
@@ -604,4 +607,67 @@ it('freezes only the selected group and never adds later group members to the re
  const selected=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT subscriber_id FROM customer_delivery_recipients WHERE delivery_id=$1',[review.id])).rows);
  expect(selected).toEqual([{subscriber_id:f.subscriberId}]);
  expect(await f.delivery.execute('delivery.report',{brandId:f.brandId,id:review.id},f.actor)).toMatchObject({state:'completed',selected:1,accepted:1,excluded:1});
+});
+
+it('pages beyond the first50 outcomes without writes or exposing subscriber/provider details',async()=>{
+ const f=await factory();
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+  SELECT $1,$2,gen_random_uuid(),'person-'||n||'@shop.test','confirmed' FROM generate_series(1,60) n`,[f.workspaceId,f.brandId]));
+ const review=await f.delivery.execute('delivery.review',{operationKey:randomUUID(),brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1},f.actor) as DeliveryView;
+ expect(review.selected).toBe(61);expect(review.recipients).toHaveLength(50);
+ const ids=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query<{id:string}>('SELECT id FROM customer_delivery_recipients WHERE delivery_id=$1 ORDER BY id',[review.id])).rows.map(x=>x.id));
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query("UPDATE customer_delivery_recipients SET state='uncertain',attempts=1,reason='provider_unknown' WHERE id=$1",[ids.at(-1)]));
+ const fingerprint=()=>db.tenant(f.workspaceId,async sql=>(await sql.query(`SELECT
+  (SELECT count(*)::int FROM operations) operations,(SELECT count(*)::int FROM audit) audit,
+  (SELECT count(*)::int FROM customer_usage_reservations) reservations,
+  (SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM customer_delivery_recipients p) recipients`)).rows[0]);
+ const before=await fingerprint(),found:string[]=[];
+ let after:string|undefined;
+ do {
+  const page=await f.delivery.execute('delivery.outcomes',{brandId:f.brandId,id:review.id,limit:25,...(after?{after}:{})},f.actor) as DeliveryOutcomesPage;
+  expect(page).toMatchObject({total:61,mode:'capture',brandId:f.brandId,deliveryId:review.id});
+  expect(page.items.length).toBeLessThanOrEqual(25);expect(Number.isFinite(Date.parse(page.observedAt))).toBe(true);
+  for(const person of page.items)expect(Object.keys(person).sort()).toEqual(['attempts','feedback','id','reason','state']);
+  found.push(...page.items.map(p=>p.id));after=page.nextCursor??undefined;
+ }while(after);
+ expect(found).toEqual(ids);expect(new Set(found).size).toBe(61);expect(await fingerprint()).toEqual(before);
+ const uncertain=await f.delivery.execute('delivery.outcomes',{brandId:f.brandId,id:review.id,state:'uncertain'},f.actor) as DeliveryOutcomesPage;
+ expect(uncertain).toMatchObject({total:1,nextCursor:null,items:[{id:ids.at(-1),state:'uncertain',reason:'provider_unknown',attempts:1}]});
+});
+
+it('filters feedback separately and accepts an unchanged cursor when its feedback changes',async()=>{
+ const f=await factory();
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+  VALUES($1,$2,gen_random_uuid(),'second@shop.test','confirmed')`,[f.workspaceId,f.brandId]));
+ const review=await f.delivery.execute('delivery.review',{operationKey:randomUUID(),brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1},f.actor) as DeliveryView;
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query("UPDATE customer_delivery_recipients SET state='accepted',feedback='delivered',attempts=1 WHERE delivery_id=$1",[review.id]));
+ const first=await f.delivery.execute('delivery.outcomes',{brandId:f.brandId,id:review.id,state:'accepted',feedback:'delivered',limit:1},f.actor) as DeliveryOutcomesPage;
+ expect(first.total).toBe(2);expect(first.nextCursor).toBe(first.items[0]!.id);
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query("UPDATE customer_delivery_recipients SET feedback='complaint' WHERE id=$1",[first.nextCursor]));
+ const next=await f.delivery.execute('delivery.outcomes',{brandId:f.brandId,id:review.id,feedback:'delivered',after:first.nextCursor},f.actor) as DeliveryOutcomesPage;
+ expect(next).toMatchObject({total:1,nextCursor:null});expect(next.items).toHaveLength(1);expect(next.items[0]!.id).not.toBe(first.nextCursor);
+ const empty=await f.delivery.execute('delivery.outcomes',{brandId:f.brandId,id:review.id,state:'uncertain',feedback:'delivered'},f.actor) as DeliveryOutcomesPage;
+ expect(empty).toMatchObject({total:0,items:[],nextCursor:null});
+});
+
+it('keeps paginated results scoped to the workspace, brand, delivery and current connection',async()=>{
+ const f=await factory(),other=await factory();
+ const review=await f.delivery.execute('delivery.review',{operationKey:randomUUID(),brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1},f.actor) as DeliveryView;
+ const foreign=await other.delivery.execute('delivery.review',{operationKey:randomUUID(),brandId:other.brandId,campaignId:other.campaign.id,expectedVersion:1},other.actor) as DeliveryView;
+ await expect(f.delivery.execute('delivery.outcomes',{brandId:other.brandId,id:foreign.id},f.actor)).rejects.toMatchObject({code:'brand_unavailable'});
+ await expect(f.delivery.execute('delivery.outcomes',{brandId:f.brandId,id:foreign.id},f.actor)).rejects.toMatchObject({code:'delivery_unavailable'});
+ await expect(f.delivery.execute('delivery.outcomes',{brandId:f.brandId,id:review.id,after:foreign.recipients[0]!.id},f.actor)).rejects.toMatchObject({code:'outcome_cursor_unavailable'});
+ await expect(f.delivery.execute('delivery.outcomes',{brandId:f.brandId,id:review.id},{...f.actor,brandIds:[]})).rejects.toMatchObject({code:'brand_unavailable'});
+ const sender=await makeAudienceConnection(db,f.actor,[f.brandId],['read','campaign:send']);
+ const bridge=createMcpServer((name,input)=>f.delivery.execute(name,input,sender.actor)),mcp=new Client({name:'recipient-outcomes',version:'1'});
+ const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();await bridge.connect(serverTransport);await mcp.connect(clientTransport);
+ try {
+  const tool=(await mcp.listTools()).tools.find(x=>x.name==='delivery_outcomes');expect(tool?.annotations?.readOnlyHint).toBe(true);
+  const response=await mcp.callTool({name:'delivery_outcomes',arguments:{brandId:f.brandId,id:review.id,limit:1}});
+  expect(response.isError).not.toBe(true);expect(JSON.parse((response.content as {text:string}[])[0]!.text)).toMatchObject({total:1,items:[{id:review.recipients[0]!.id}]});
+  await db.tenant(f.workspaceId,sql=>sql.query('UPDATE connections SET revoked_at=now() WHERE id=$1',[sender.id]));
+  const denied=await mcp.callTool({name:'delivery_outcomes',arguments:{brandId:f.brandId,id:review.id}});expect(denied.isError).toBe(true);
+ }finally{await mcp.close();await bridge.close();}
+ for(const raw of [{limit:0},{limit:101},{limit:1.5},{state:'anything'},{after:'invalid'}])
+  await expect(f.delivery.execute('delivery.outcomes',{brandId:f.brandId,id:review.id,...raw},f.actor)).rejects.toThrow();
 });

@@ -1,4 +1,5 @@
 import {rejectOptionalCookies} from './browser-cookie-choice.js';
+import {proveDeliveryOutcomes} from './prove-delivery-outcomes-flow.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -489,6 +490,8 @@ try {
       await page.goto(origin);await rejectOptionalCookies(page);
       await page.getByRole('navigation', { name: 'Main navigation' }).waitFor();
       await journey(page, db, data.brands[0]!.id);
+      await page.setViewportSize(index===0?{width:1280,height:900}:{width:390,height:844});
+      await proveDeliveryOutcomes(page,db,service,customer,actor,data.brands[0]!.id,path.join(screenshotRoot,'09-recipient-outcomes-'+index+'.png'));
       assert.deepEqual(failures, [], 'No browser runtime errors');
     } catch (error) {
       await photo(page, 'failure-phase-' + (index + 1));

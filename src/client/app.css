@@ -13,3 +13,7 @@
 .customer-capture-preview{display:block;width:100%;min-height:540px;border:1px solid var(--border,#e5d4db);border-radius:12px;background:white}.delivery-record{padding:1.5rem 0;border-top:1px solid var(--border,#e5d4db)}.message-text{white-space:pre-wrap;overflow-wrap:anywhere}.delivery-record .actions{margin:1rem 0}
 
 .operator-table-wrap{max-width:100%;overflow-x:auto}.operator-health{width:100%;border-collapse:collapse;text-align:left;margin-top:1rem}.operator-health th,.operator-health td{padding:.75rem;border-bottom:1px solid var(--border,#f4c4d0);vertical-align:top}.operator-workspace-button{font:inherit;color:var(--burgundy,#6c092c);background:none;border:0;padding:0;text-align:left;cursor:pointer;text-decoration:underline;overflow-wrap:anywhere}.preserve-whitespace{white-space:pre-wrap;overflow-wrap:anywhere}
+/* Recipient identifiers must wrap without making delivery reports wider than a phone. */
+.delivery-outcomes { margin-top: 1rem; }
+.delivery-outcome-list { padding-left: 1.25rem; overflow-wrap: anywhere; }
+.delivery-outcome-list > li { padding: .5rem 0; border-bottom: 1px solid var(--border, #e9dce2); }

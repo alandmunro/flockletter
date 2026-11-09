@@ -10,6 +10,7 @@ import { brandScope,deliveryRow,deliveryView,locked,audit } from './storage.js';
 import type { DeliveryOptions,DeliveryRow } from './types.js';
 import { CustomerDeliveryWorker } from './worker.js';
 import { senderProfile,senderFingerprint,senderEligible,legalFooter } from './sender.js';
+import { deliveryOutcomes } from './outcomes.js';
 
 export class CustomerDelivery {
   readonly worker:CustomerDeliveryWorker;
@@ -108,6 +109,10 @@ export class CustomerDelivery {
       eligible:eligibility.eligible,eligibility,brandId:brandId??null,senderVerified,gaps};
   }
   private async read(name:string,raw:unknown,actor:Actor,sql:Sql) {
+    if(name==='delivery.outcomes') {
+      const input=customerDeliveryCommands['delivery.outcomes'].schema.parse(raw);
+      return deliveryOutcomes(sql,await deliveryRow(sql,input.id,input.brandId),input);
+    }
     if(name==='delivery.report') {
       const input=customerDeliveryCommands['delivery.report'].schema.parse(raw);
       return deliveryView(sql,await deliveryRow(sql,input.id,input.brandId));
