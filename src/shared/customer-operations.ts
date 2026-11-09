@@ -8,9 +8,14 @@ export const customerOperationsCommands = {
 export type CustomerOperationsStatus = {
   environment:string;
   exercise:boolean;
-  worker:{running:boolean;dedicated:boolean;lastPass:string|null;lastFailure:string|null};
+  worker:{running:boolean;dedicated:boolean;lastPass:string|null;lastFailure:string|null;
+    localProcessRunning?:boolean;heartbeat?:CustomerWorkerHeartbeat};
   modes:{billing:string;delivery:string;audience:string;team:string;support:string;retention:string;infrastructure?:string};
   gaps:{area:string;code:string;detail:string}[];
   queue:{delivery:number;confirmations:number;team:number;support:number;retention:number;unknown:number;infrastructure?:number};
   safeguards:{externalDelivery:boolean;realCharges:boolean;hostedErasure:false;openTracking:false;clickTracking:false};
+};
+export type CustomerWorkerHeartbeat = {
+  kind:'embedded'|'dedicated';state:'fresh'|'stale'|'unknown'|'stopped';
+  observedAt:string;startedAt:string|null;lastHeartbeat:string|null;stoppedAt:string|null;freshnessSeconds:number;
 };

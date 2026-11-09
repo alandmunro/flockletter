@@ -101,10 +101,10 @@ export async function verifyRuntimeBoundary(client, expected = {}) {
     throw Error('Customer worker routing and retention control require their restricted private boundaries.');
   const privateTables=await client.query(`SELECT EXISTS(SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='flockletter_customer_jobs' AND c.relkind IN ('r','p','v','m','f') AND
-    (has_table_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR
-     has_any_column_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,REFERENCES'))) AS unsafe`);
+    (has_table_privilege(current_user,c.oid,$1) OR
+     has_any_column_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,REFERENCES'))) AS unsafe`,[operations.join(',')]);
   if(privateTables.rows[0]?.unsafe)throw Error('Private worker capacity and routing tables must not be accessible to runtime credentials.');
-  const signatures=['wake(text,timestamp with time zone)','snooze(text,timestamp with time zone)','due_scopes()','record_pass(text,text)','scope_status(text)','claim_provisioning_budget(text,uuid,uuid,integer)','trial_claim(text,text,text,text,integer,integer,text,uuid,text,text,text)','register_support_reply_route(text,uuid,text,text,timestamp with time zone)','resolve_support_reply_route(text)','register_confirmation_route(text,uuid,uuid,text,text,timestamp with time zone)','resolve_confirmation_route(text)'];
+  const signatures=['worker_heartbeat(text,uuid)','worker_stop(text,uuid)','worker_liveness(text)','wake(text,timestamp with time zone)','snooze(text,timestamp with time zone)','due_scopes()','record_pass(text,text)','scope_status(text)','claim_provisioning_budget(text,uuid,uuid,integer)','trial_claim(text,text,text,text,integer,integer,text,uuid,text,text,text)','register_support_reply_route(text,uuid,text,text,timestamp with time zone)','resolve_support_reply_route(text)','register_confirmation_route(text,uuid,uuid,text,text,timestamp with time zone)','resolve_confirmation_route(text)'];
   const routines=await client.query(`SELECT p.oid::regprocedure::text signature,p.prosecdef,
     p.proconfig=ARRAY['search_path=pg_catalog']::text[] AS fixed_path,
     p.proowner<>current_user::regrole::oid AS different_owner,

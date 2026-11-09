@@ -345,7 +345,7 @@ async function phaseTwo(page: Page, db: Database) {
   await waitForCommand(page, 'operations.process', () => button(page, 'Run saved jobs').click());
   await noAlerts(page);
   const failure = await page
-    .getByText('Last Failure', { exact: true })
+    .getByText('Last failure', { exact: true })
     .evaluate((node) => node.nextElementSibling?.textContent);
   assert.equal(failure, '—', 'Saved customer jobs complete without hidden worker failures.');
   await photo(page, '08-operations');

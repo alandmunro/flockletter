@@ -11,7 +11,7 @@ export function customerSettings(config:Config,env:NodeJS.ProcessEnv=process.env
     support:mode('FLOCKLETTER_CUSTOMER_SUPPORT',['off','capture','live']),
     retention:mode('FLOCKLETTER_CUSTOMER_RETENTION',['off','capture','live']),
     infrastructure:mode('FLOCKLETTER_CUSTOMER_INFRASTRUCTURE',['off','capture','aws']),
-    dedicated:env.FLOCKLETTER_CUSTOMER_WORKER==='dedicated',
+    dedicated:z.enum(['embedded','dedicated']).parse(env.FLOCKLETTER_CUSTOMER_WORKER??'embedded')==='dedicated',
     renderer:env.FLOCKLETTER_PRIVATE_ENGINE==='embedded',
     provisioningMonthlyLimit:z.coerce.number().int().min(0).max(20).parse(env.FLOCKLETTER_INFRASTRUCTURE_MONTHLY_LIMIT??'0'),
     engineCount:z.coerce.number().int().min(1).max(5).parse(env.FLOCKLETTER_CUSTOMER_ENGINE_COUNT??'1'),

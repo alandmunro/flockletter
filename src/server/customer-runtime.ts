@@ -1,4 +1,5 @@
 import { trialRegistryFromEnvironment } from './customer-abuse/registry.js';
+import {readWorkerHeartbeat,runWorkerHeartbeat} from './customer-worker-heartbeat.js';
 import { setTimeout as pause } from 'node:timers/promises';
 import type { Config } from './config.js';
 import type { Database } from './db.js';
@@ -250,7 +251,11 @@ export class CustomerWorkflows {
     if(this.observe)await this.observe({workspaceId:workspace,status:await this.status(workspace)});
   }
   async run(signal:AbortSignal) {
+    if(this.running)throw Error('The customer worker is already running.');
     this.running=true;
+    const heartbeatStop=new AbortController();
+    const heartbeat=runWorkerHeartbeat(this.db,this.settings.dedicated?'dedicated':'embedded',
+      AbortSignal.any([signal,heartbeatStop.signal])).catch(()=>console.error('The customer worker heartbeat stopped unexpectedly.'));
     try {
       while(!signal.aborted) {
         try {
@@ -263,9 +268,10 @@ export class CustomerWorkflows {
         }catch{console.error('The customer scheduler needs review.');}
         try{await pause(3000,undefined,{signal});}catch{if(!signal.aborted)throw Error('Worker timer failed.');}
       }
-    }finally{this.running=false;}
+    }finally{this.running=false;heartbeatStop.abort();await heartbeat;}
   }
   async status(workspace:string):Promise<CustomerOperationsStatus> {
+    const heartbeat=await readWorkerHeartbeat(this.db,this.settings.dedicated?'dedicated':'embedded');
     const recorded=await this.db.tenant(workspace,async sql=>(await sql.query<{last_pass_at:Date|null;last_failure_code:string|null}>(
       'SELECT * FROM flockletter_customer_jobs.scope_status($1)',[workspace])).rows[0]);
     const queue=await this.db.tenant(workspace,async sql=>{
@@ -287,6 +293,8 @@ export class CustomerWorkflows {
       };
     });
     const modes=this.settings,gaps:CustomerOperationsStatus['gaps']=[];
+    if(heartbeat.state!=='fresh')gaps.push({area:'operations',code:'worker_heartbeat_'+heartbeat.state,
+      detail:'Worker liveness is '+heartbeat.state+'. Check the worker process and the separate queue-pass history.'});
     for(const area of ['billing','delivery','audience','team','support','retention','infrastructure'] as const)if(modes[area]==='off')
       gaps.push({area,code:'not_configured',detail:'Configure this workflow before activation.'});
     if(modes.delivery!=='off'&&!this.engine)gaps.push({area:'delivery',code:'private_renderer_required',detail:'Enable the private Listmonk renderer.'});
@@ -296,7 +304,8 @@ export class CustomerWorkflows {
     const billing=customerBillingConfiguration(this.env);
     for(const key of billing.missing)gaps.push({area:'billing',code:'configuration_required',detail:'Configure '+key+'.'});
     return {environment:this.config.environment,exercise:Object.values(modes).some(value=>value==='capture'||value==='exercise'),
-      worker:{running:this.running,dedicated:modes.dedicated,lastPass:recorded?.last_pass_at?.toISOString()??null,lastFailure:recorded?.last_failure_code??null},
+      worker:{running:heartbeat.state==='fresh',dedicated:modes.dedicated,localProcessRunning:this.running,heartbeat,
+        lastPass:recorded?.last_pass_at?.toISOString()??null,lastFailure:recorded?.last_failure_code??null},
       modes:{billing:modes.billing,delivery:modes.delivery,audience:modes.audience,team:modes.team,support:modes.support,retention:modes.retention,infrastructure:modes.infrastructure},
       gaps,queue,safeguards:{externalDelivery:modes.delivery==='ses',realCharges:modes.billing==='stripe_live',hostedErasure:false,openTracking:false,clickTracking:false}};
   }

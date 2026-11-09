@@ -49,6 +49,8 @@ Later evidence must identify the implementation revision, environment, input sce
 
 ## Evidence status
 
+**Dedicated-worker liveness:** FL-ONB-004 and FL-OPS-002/003/005/006 now distinguish configured worker kind, database-clock process heartbeat, local scheduler execution and workspace queue progress. Private SQL/PG18 drift tests and UI/API status tests are documented in [worker liveness](implementation/WORKER_LIVENESS.md). No liveness observation grants customer sending authority.
+
 **Production preparation information:** FL-PROD-004 and FL-ONB-002/004 use server-reported environment presentation with neutral failure defaults. Pricing/owner views do not claim a production trial or paid delivery is enabled by account creation; captured components retain their own labels. See [launch preparation](implementation/PRODUCTION_LAUNCH_PREPARATION.md) for configuration, factual owner inputs and synthetic verification scope.
 
 **D-045 cookie choices:** FL-PRV-001 is covered by the preference validation tests and desktop/mobile browser journey in [cookie choices](implementation/COOKIE_CHOICES.md), with an unsaved Studio draft preservation check. Hosted sign-in preservation and deployment evidence are recorded after staging verification. No new optional tracking provider is activated.
