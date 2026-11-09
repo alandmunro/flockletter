@@ -29,7 +29,8 @@ export class CustomerDeliveryWorker {
         SELECT p.*,d.state delivery_state,d.due_at,d.purpose FROM customer_delivery_recipients p
         JOIN customer_deliveries d ON(d.workspace_id,d.brand_id,d.id)=(p.workspace_id,p.brand_id,p.delivery_id)
         WHERE ($1::uuid IS NULL OR d.id=$1) AND
-          ((p.state IN('pending','prepared') AND d.state='queued' AND d.due_at<=$2) OR
+          ((d.purpose='test' AND d.state='paused' AND d.test_day<(clock_timestamp() AT TIME ZONE 'UTC')::date AND p.state IN('pending','preparing','prepared')) OR
+           (p.state IN('pending','prepared') AND d.state='queued' AND d.due_at<=$2) OR
            (p.state='preparing' AND d.state='queued' AND p.next_check_at<=$2) OR
            (p.state IN('submitting','uncertain') AND (p.next_check_at IS NULL OR p.next_check_at<=$2)))
         ORDER BY coalesce(p.next_check_at,d.due_at),p.id LIMIT 1 FOR UPDATE OF p`,[deliveryId??null,this.now()])).rows[0];

@@ -3,6 +3,7 @@ export type ReleasePlan={version:1;operation:string;environment:string;target:Re
 export const releaseRoot:string;
 export function targetSpecGaps(value:unknown):string[];
 export function targetFingerprint(spec:ReleaseTarget):string;
+export const releaseBoundaryFiles:readonly string[];
 export function releaseSourceFingerprint():Promise<string>;
 export function verifyReleaseSourceFile(file:string):Promise<void>;
 export function createReleasePlan(spec:unknown,now?:Date):Promise<{codes?:string[];plan?:ReleasePlan}>;

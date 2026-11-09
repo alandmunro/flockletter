@@ -25,8 +25,8 @@ BEGIN
  END IF;
  IF NEW.purpose IS DISTINCT FROM OLD.purpose THEN RAISE EXCEPTION 'test_purpose_immutable'; END IF;
  IF OLD.purpose='test' THEN
-  IF ROW(NEW.workspace_id,NEW.brand_id,NEW.id,NEW.campaign_id,NEW.version,NEW.actor_id,NEW.creator_id,NEW.content,NEW.rendered_html,NEW.rendered_text,NEW.asset_digests,NEW.provider_binding,NEW.sender_profile,NEW.due_at,NEW.selected,NEW.excluded)
-   IS DISTINCT FROM ROW(OLD.workspace_id,OLD.brand_id,OLD.id,OLD.campaign_id,OLD.version,OLD.actor_id,OLD.creator_id,OLD.content,OLD.rendered_html,OLD.rendered_text,OLD.asset_digests,OLD.provider_binding,OLD.sender_profile,OLD.due_at,OLD.selected,OLD.excluded)
+  IF ROW(NEW.workspace_id,NEW.brand_id,NEW.id,NEW.campaign_id,NEW.version,NEW.actor_id,NEW.creator_id,NEW.mode,NEW.content,NEW.rendered_html,NEW.rendered_text,NEW.asset_digests,NEW.provider_binding,NEW.sender_profile,NEW.due_at,NEW.selected,NEW.excluded)
+   IS DISTINCT FROM ROW(OLD.workspace_id,OLD.brand_id,OLD.id,OLD.campaign_id,OLD.version,OLD.actor_id,OLD.creator_id,OLD.mode,OLD.content,OLD.rendered_html,OLD.rendered_text,OLD.asset_digests,OLD.provider_binding,OLD.sender_profile,OLD.due_at,OLD.selected,OLD.excluded)
    THEN RAISE EXCEPTION 'test_snapshot_immutable'; END IF;
   IF OLD.approved_at IS NOT NULL AND ROW(NEW.approved_at,NEW.reservation_key) IS DISTINCT FROM ROW(OLD.approved_at,OLD.reservation_key) THEN RAISE EXCEPTION 'test_approval_immutable'; END IF;
   IF OLD.test_day IS NOT NULL AND ROW(NEW.test_day,NEW.test_slot,NEW.test_admitted_at) IS DISTINCT FROM ROW(OLD.test_day,OLD.test_slot,OLD.test_admitted_at) THEN RAISE EXCEPTION 'test_admission_immutable'; END IF;
@@ -52,6 +52,9 @@ BEGIN
  IF TG_OP='INSERT' AND EXISTS(SELECT FROM public.customer_delivery_recipients WHERE workspace_id=NEW.workspace_id AND brand_id=NEW.brand_id AND delivery_id=NEW.delivery_id) THEN RAISE EXCEPTION 'test_requires_one_recipient'; END IF;
  IF NEW.state='submitting' AND (TG_OP='INSERT' OR OLD.state IS DISTINCT FROM 'submitting' OR NEW.attempts>OLD.attempts) THEN
   IF current_setting('app.customer_test_dispatch',true) IS DISTINCT FROM 'v1' OR parent.selected<>1 OR parent.test_day IS NULL
+   OR parent.state<>'queued' OR parent.approved_at IS NULL OR parent.reservation_key IS NULL
+   OR NOT EXISTS(SELECT FROM public.customer_usage_reservations u WHERE u.workspace_id=NEW.workspace_id AND u.operation_key=parent.reservation_key
+    AND u.campaign_id=parent.campaign_id AND u.brand_id=NEW.brand_id AND u.recipients=1 AND u.slots=0 AND u.state='reserved' AND u.accepted=0 AND u.excluded=0)
    OR parent.test_slot IS NULL OR parent.test_admitted_at IS NULL OR parent.test_day<>(clock_timestamp() AT TIME ZONE 'UTC')::date
    OR (SELECT count(*) FROM public.customer_delivery_recipients WHERE workspace_id=NEW.workspace_id AND brand_id=NEW.brand_id AND delivery_id=NEW.delivery_id)<>1
    THEN RAISE EXCEPTION 'test_dispatch_not_authorized'; END IF;

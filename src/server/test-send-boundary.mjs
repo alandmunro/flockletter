@@ -1,3 +1,6 @@
+import {createHash} from 'node:crypto';
+// SHA-256 of the exact migration031 guard bodies; source and migration must promote together.
+const expectedGuardDigests={"flockletter_customer_test_snapshot_guard": "6783471145041d7b1a053ef7f2344da109403f5538d9c79a3862ed12c0f359d4", "flockletter_customer_test_dispatch_guard": "0ee5ae0c67b4c666a6e7a1a6ab09ee5c50dfd00ac34fc0cf942fa1cf0b9157b4"};
 const normalize=value=>String(value);
 const expectedConstraint="(((purpose = 'broadcast'::text) AND (test_day IS NULL) AND (test_slot IS NULL) AND (test_admitted_at IS NULL)) OR ((purpose = 'test'::text) AND (selected = 1) AND (((test_day IS NULL) AND (test_slot IS NULL) AND (test_admitted_at IS NULL) AND (state = ANY (ARRAY['reviewed'::text, 'cancelled'::text])) AND (approved_at IS NULL) AND (reservation_key IS NULL)) OR ((test_day IS NOT NULL) AND (test_slot IS NOT NULL) AND ((test_slot >= 1) AND (test_slot <= 5)) AND (test_admitted_at IS NOT NULL) AND (test_day = ((test_admitted_at AT TIME ZONE 'UTC'::text))::date)))))";
 const expectedPredicate="((purpose = 'test'::text) AND (test_day IS NOT NULL))";
@@ -15,7 +18,7 @@ export async function verifyTestSendBoundary(client) {
   ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(attnum,n) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum ORDER BY k.n) columns
   FROM pg_index i WHERE i.indexrelid=to_regclass('public.customer_test_send_daily_slots') AND i.indrelid=to_regclass('public.customer_deliveries') AND i.indexprs IS NULL`)).rows[0];
  if(!index?.indisunique||!index.indisvalid||!index.indisready||index.indnatts!==3||index.indnkeyatts!==3||JSON.stringify(index.columns)!==JSON.stringify(['workspace_id','test_day','test_slot'])||normalize(index.predicate)!==normalize(expectedPredicate))throw Error('Test-send daily admissions need their unique shared five-slot index.');
- const guards=(await client.query(`SELECT c.relname,t.tgname,p.prosecdef,p.proconfig=ARRAY['search_path=pg_catalog']::text[] fixed_path,
+ const guards=(await client.query(`SELECT c.relname,t.tgname,p.proname,p.prosrc,p.prosecdef,p.proconfig=ARRAY['search_path=pg_catalog']::text[] fixed_path,
   p.proowner<>current_user::regrole::oid different_owner,
   NOT has_function_privilege(current_user,p.oid,'EXECUTE') runtime_cannot_execute,
   NOT EXISTS(SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') private_execute
@@ -24,5 +27,5 @@ export async function verifyTestSendBoundary(client) {
   ((c.relname='customer_deliveries' AND t.tgname='flockletter_customer_test_snapshot_guard' AND p.oid=to_regprocedure('public.flockletter_customer_test_snapshot_guard()')) OR
    (c.relname='customer_delivery_recipients' AND t.tgname='flockletter_customer_test_dispatch_guard' AND p.oid=to_regprocedure('public.flockletter_customer_test_dispatch_guard()')))
   AND t.tgenabled='A' AND t.tgtype=23 AND t.tgqual IS NULL AND t.tgnargs=0 AND t.tgattr=''::int2vector`)).rows;
- if(guards.length!==2||guards.some(g=>!g.prosecdef||!g.fixed_path||!g.different_owner||!g.runtime_cannot_execute||!g.private_execute))throw Error('Test-send dispatch requires immutable migration-owned ALWAYS guards.');
+ if(guards.length!==2||guards.some(g=>!g.prosecdef||!g.fixed_path||!g.different_owner||!g.runtime_cannot_execute||!g.private_execute||createHash('sha256').update(g.prosrc.replace(/\r\n/g,'\n')).digest('hex')!==expectedGuardDigests[g.proname]))throw Error('Test-send dispatch requires immutable migration-owned ALWAYS guards.');
 }
