@@ -1,5 +1,8 @@
 import { createServer,type Server } from 'node:http';
 import { randomBytes,randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { access } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { EmbeddedListmonk } from '../campaign/embedded-listmonk.js';
 import { privateMessenger } from '../campaign/private-messenger.js';
 import { listmonkReference,reviewedListmonkMessage } from '../campaign/listmonk-callback.js';
@@ -16,6 +19,10 @@ export class CustomerEnginePool {
   readonly bootId=randomUUID();
   constructor(private maximum=1) {
     if(!Number.isInteger(maximum)||maximum<1||maximum>5)throw Error('Configure one to five private renderers.');
+  }
+  /** Check the pinned build artifact before advertising a configured renderer. */
+  async verify() {
+    await access(resolve('dist/private/listmonk'),constants.X_OK);
   }
   private async create(_workspace:string):Promise<Engine> {
     const pending=new Map<string,Pending>(), secret=randomBytes(32).toString('hex');

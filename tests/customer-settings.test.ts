@@ -9,6 +9,9 @@ const config = (environment: Config['environment'] = 'staging'): Config => ({
   port: 4310,
   localIdentity: false,
 });
+it.each(['production', 'staging', 'local'] as const)('rejects an invalid private-engine switch in %s', environment => {
+  expect(() => customerSettings(config(environment), { FLOCKLETTER_PRIVATE_ENGINE: 'embeddedd' })).toThrow();
+});
 it('starts all customer workflows disabled and bounds embedded engine capacity', () => {
   expect(customerSettings(config(), {})).toEqual({
     billing: 'off',

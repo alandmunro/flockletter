@@ -76,6 +76,8 @@ Staging exercised the private Listmonk handoff with synthetic recipients and a l
 
 FL-AUD-001/002/004, FL-API-002/005, FL-DEL-003/004/005 and FL-OPS-007 have targeted evidence for the FFA signup endpoint, double opt-in, consent history, suppression and private capture. The FI-001–015 test and deployment record distinguishes captured confirmation from live delivery. [Intake verification](implementation/SUBSCRIBER_INTAKE_OPERATIONS.md)
 
+FL-DEL-005 and FL-OPS-003/004 have focused startup coverage separating production customer rendering from the staging-only rehearsal messenger. Configured customer renderers require the executable pinned build artifact in both web and worker entry points; invalid switches fail closed, and default-disabled production needs no renderer or staging scope. [Staging startup tests](../tests/private-engine-startup.test.ts) · [Customer renderer checks](../tests/customer-renderer-startup.test.ts) · [Production configuration](implementation/PRODUCTION_MAIL.md). These local checks do not establish provider activation or live delivery.
+
 The deployed foundation passed Clerk passwordless sign-in, workspace creation, partial image-batch validation, and saved campaign preview and reload. The second synthetic organization's campaign list was empty. The shared-host release verified seven forced row-level policies and the runtime role's restricted access. [Foundation verification](implementation/VERIFICATION.md)
 
 Design-only browser checks and screen/story coverage are recorded in [design verification](design/VERIFICATION.md). They do not mark any FL-AT case complete.
