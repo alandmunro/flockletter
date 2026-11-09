@@ -1,3 +1,4 @@
+import {testBudget} from './test-send.js';
 import type { Campaign,Gap } from '../../shared/contracts.js';
 import type { CustomerCampaignPreflight } from '../../shared/customer-preflight.js';
 import type { Sql } from '../db.js';
@@ -11,7 +12,8 @@ import { usage as customerUsage } from '../customer-billing/service.js';
 
 /** Observations, never send authorization. Review and execution repeat every critical check. */
 export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Campaign,options:DeliveryOptions,
- input:{expectedVersion?:number;segmentId?:string;dueAt?:string}={},requireSend=false):Promise<CustomerCampaignPreflight> {
+ input:{expectedVersion?:number;segmentId?:string;dueAt?:string;purpose?:'broadcast'|'test';subscriberId?:string}={},requireSend=false):Promise<CustomerCampaignPreflight> {
+ const purpose=input.purpose??'broadcast';
  const owner=actor.kind==='session'&&actor.owner;
  if(owner||actor.kind==='connection')requireCondition(await options.isOwner(actor.userId,actor.workspaceId),403,'owner_required','Current issuing-owner authority is required.');
  let summary=actor.scopes.includes('audience:summary');
@@ -39,7 +41,14 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
  if(campaign.content.assetIds.some(id=>!assets.some(asset=>asset.id===id&&digest(asset.bytes)===asset.sha256)))add('image_unavailable','Review the original images','A selected original image is missing or changed.','content');
  if(input.segmentId)requireCondition((await sql.query('SELECT FROM audience_segments WHERE id=$1',[input.segmentId])).rowCount,404,'group_unavailable','Choose an available group in this brand.');
  let audience:CustomerCampaignPreflight['audience']={visibility:'restricted'};
- if(owner||summary) {
+ if(purpose==='test') {
+  requireCondition(input.subscriberId&&!input.segmentId&&!input.dueAt,422,'invalid_test_recipient','Choose one known confirmed contact without a group or schedule.');
+  const person=(await sql.query<{id:string;state:string}>('SELECT id,state FROM subscribers WHERE id=$1',[input.subscriberId])).rows[0];
+  const confirmed=person?.state==='confirmed';
+  const testSelected=Number(Boolean(confirmed&&(options.mode==='capture'||await options.liveConsent?.(sql,input.subscriberId))));
+  if(owner||summary)audience={visibility:'available',confirmed:Number(confirmed),selected:testSelected,excluded:1-testSelected};
+  if(!testSelected)add('test_recipient_ineligible','Select a confirmed test contact','The selected contact must be confirmed and consent-eligible in this brand.','audience');
+ } else if(owner||summary) {
   const population=(await sql.query<{id:string;total:number;confirmed:number}>(`WITH population AS MATERIALIZED (
     SELECT s.id,s.state FROM subscribers s WHERE $1::uuid IS NULL OR EXISTS(SELECT FROM audience_segment_members m
     WHERE (m.workspace_id,m.brand_id,m.subscriber_id)=(s.workspace_id,s.brand_id,s.id) AND m.segment_id=$1))
@@ -56,6 +65,8 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
    if(!eligible.length)add('confirmed_audience_required','Confirm subscribers','No confirmed, consent-eligible recipient is available for this review.','audience');
   }
  } else add('audience_review_required','Review the audience','A current owner or an explicitly granted audience-summary connection must review recipient counts.','audience');
+ const budget=purpose==='test'?await testBudget(sql):undefined;
+ if(budget&&budget.remaining<1)add('test_daily_limit','Daily test limit reached','This workspace has used all five approved test requests for this UTC day. Cancellation or rejection does not restore this limit.','delivery');
  const status=options.eligibilitySql?await options.eligibilitySql(sql,actor.workspaceId):await options.billing.eligibility(actor.workspaceId);
  if(!status.eligible)add('service_activation_required','Review service access',owner?status.reasons.join(' '):'The workspace owner must review current service eligibility.','billing');
  const now=new Date(status.now),due=input.dueAt?new Date(input.dueAt):now;
@@ -69,9 +80,9 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
   const used=period===status.usage.period?status.usage:await customerUsage(sql,period);
   const remainingEmails=Math.max(0,limits.emails-used.emails-used.reservedEmails),remainingCampaigns=Math.max(0,limits.campaigns-used.campaigns-used.reservedCampaigns);
   if(owner)allowance={period,remainingEmails,remainingCampaigns,recipientLimit:limits.recipients};
-  if(remainingCampaigns<1||audience.visibility==='available'&&(audience.selected>limits.recipients||audience.selected>remainingEmails))
+  if(purpose==='broadcast'&&remainingCampaigns<1||(purpose==='test'?1:audience.visibility==='available'?audience.selected:0)>Math.min(limits.recipients,remainingEmails))
     add('allowance_exceeded','Review remaining allowance','This review cannot fit the shared remaining campaign or recipient allowance.','billing');
  }
- return {campaignId:campaign.id,version:campaign.version,brandId:campaign.brandId,segmentId:input.segmentId??null,senderRevision:profile?.revision??null,
+ return {purpose,...(budget?{testBudget:budget}:{}),campaignId:campaign.id,version:campaign.version,brandId:campaign.brandId,segmentId:input.segmentId??null,senderRevision:profile?.revision??null,
   observedAt:new Date().toISOString(),mode:options.mode,canSend:false,reviewRequired:true,contentReady:!gaps.some(g=>g.area==='content'),gaps,audience,...(allowance?{allowance}:{})};
 }

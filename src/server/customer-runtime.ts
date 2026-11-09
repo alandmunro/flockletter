@@ -113,7 +113,7 @@ export class CustomerWorkflows {
       },apply:async(_db,event,eventId)=>{
         await locked(this.db,route.workspaceId,async sql=>{
           await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[route.brandId]);
-          const row=(await sql.query<DeliveryRow>(`SELECT d.* FROM customer_deliveries d JOIN customer_delivery_recipients p
+          const row=(await sql.query<DeliveryRow>(`SELECT d.*,d.test_day::text AS test_day FROM customer_deliveries d JOIN customer_delivery_recipients p
             ON(p.workspace_id,p.brand_id,p.delivery_id)=(d.workspace_id,d.brand_id,d.id)
             WHERE p.id=$1 AND d.brand_id=$2 AND d.mode='ses' AND split_part(d.provider_binding,':',1)=$3`,
             [event.operation,route.brandId,route.fingerprint])).rows[0];
@@ -212,7 +212,7 @@ export class CustomerWorkflows {
     if(!this.owns(name))return undefined;
     requireCondition(!this.closing,503,'worker_draining','The service is restarting. Retry with the same operation key.');
     const mutation=commands[name].mutation;
-    if(name.startsWith('infrastructure.')||name.startsWith('delivery.')&&!['delivery.preflight','delivery.outcomes'].includes(name))await this.hydrateInfrastructure(actor.workspaceId);
+    if(name.startsWith('infrastructure.')||name.startsWith('delivery.')&&!['delivery.preflight','delivery.outcomes','delivery.testDetails'].includes(name))await this.hydrateInfrastructure(actor.workspaceId);
     if(mutation)await this.wake(actor.workspaceId);
     let result:unknown;
     if(name==='operations.status')return this.status(actor.workspaceId);

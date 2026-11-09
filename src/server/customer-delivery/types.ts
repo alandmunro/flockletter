@@ -8,6 +8,7 @@ import type { CustomerSenderProfile } from '../../shared/customer-delivery.js';
 import type { CustomerBillingStatus } from '../../shared/customer-billing.js';
 
 export type DeliveryRow = {
+  purpose:'broadcast'|'test';test_day:string|null;test_slot:number|null;test_admitted_at:Date|null;
   workspace_id:string; brand_id:string; id:string; campaign_id:string; version:number; actor_id:string; creator_id:string;
   mode:'capture'|'ses'; state:string; content:CampaignContent; rendered_html:string; rendered_text:string;
   asset_digests:{id:string;name:string;sha256:string}[]; provider_binding:string; due_at:Date;

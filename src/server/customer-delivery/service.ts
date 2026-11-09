@@ -1,3 +1,5 @@
+import {admitTest,testRecipient} from './test-send.js';
+import type {TestDeliveryReview,TestDeliveryDetails} from '../../shared/customer-test-send.js';
 import {customerCampaignPreflight} from './preflight.js';
 import { randomUUID } from 'node:crypto';
 import { customerDeliveryCommands } from '../../shared/customer-delivery.js';
@@ -45,7 +47,8 @@ export class CustomerDelivery {
         [actor.actorId.slice('connection:'.length),actor.userId,input.brandId])).rowCount,
         403,'connection_revoked','This connection no longer has current delivery access.');
       if(name==='delivery.list') {
-        const rows=(await sql.query<DeliveryRow>('SELECT * FROM customer_deliveries WHERE brand_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100',[input.brandId])).rows;
+        const filter=customerDeliveryCommands['delivery.list'].schema.parse(raw);
+        const rows=(await sql.query<DeliveryRow>('SELECT *,test_day::text AS test_day FROM customer_deliveries WHERE brand_id=$1 AND ($2::text IS NULL OR purpose=$2) ORDER BY created_at DESC,id DESC LIMIT 100',[input.brandId,filter.purpose??null])).rows;
         return deliveryViews(sql,rows);
       }
       if(name==='delivery.sender') {
@@ -67,9 +70,14 @@ export class CustomerDelivery {
           [actor.workspaceId,profile.brandId,JSON.stringify(next)]);
         value=next;
       } else if(name==='delivery.review')value=await this.review(sql,actor,customerDeliveryCommands['delivery.review'].schema.parse(raw));
+      else if(name==='delivery.reviewTest') {
+        const test=customerDeliveryCommands['delivery.reviewTest'].schema.parse(raw);
+        value=await this.review(sql,actor,{operationKey:test.operationKey,brandId:test.brandId,campaignId:test.campaignId,expectedVersion:test.expectedVersion},test.subscriberId);
+      }
       else {
         const row=await deliveryRow(sql,input.id!,input.brandId);
         if(name==='delivery.approve')value=await this.approve(sql,actor,row);
+        else if(name==='delivery.approveTest')value=await this.approve(sql,actor,row,customerDeliveryCommands['delivery.approveTest'].schema.parse(raw));
         else if(name==='delivery.pause') {
           requireCondition(['queued','paused'].includes(row.state),409,'pause_unavailable','Only approved pending work can be paused.');
           await sql.query("UPDATE customer_deliveries SET state='paused',reason='paused_by_owner' WHERE id=$1",[row.id]);
@@ -102,7 +110,7 @@ export class CustomerDelivery {
     if(processId)await this.worker.tick(actor.workspaceId,processId);
     return result;
   }
-  preflight(sql:Sql,actor:Actor,campaign:Campaign,input:{expectedVersion?:number;segmentId?:string;dueAt?:string}={},requireSend=false) {
+  preflight(sql:Sql,actor:Actor,campaign:Campaign,input:{expectedVersion?:number;segmentId?:string;dueAt?:string;purpose?:'broadcast'|'test';subscriberId?:string}={},requireSend=false) {
     return customerCampaignPreflight(sql,actor,campaign,this.options,input,requireSend);
   }
   async status(actor:Actor,brandId?:string) {
@@ -122,6 +130,18 @@ export class CustomerDelivery {
       eligible:eligibility.eligible,eligibility,brandId:brandId??null,senderVerified,gaps};
   }
   private async read(name:string,raw:unknown,actor:Actor,sql:Sql) {
+    if(name==='delivery.testDetails') {
+      requireCondition(actor.kind==='session'&&actor.owner&&await this.options.isOwner(actor.userId,actor.workspaceId),403,'owner_required','Use the current workspace owner session.');
+      const input=customerDeliveryCommands['delivery.testDetails'].schema.parse(raw),row=await deliveryRow(sql,input.id,input.brandId);
+      requireCondition(row.purpose==='test',404,'test_review_unavailable','Choose a test review in this brand.');
+      const selected=await testRecipient(sql,row,undefined,this.options);
+      requireCondition(selected.matches&&selected.person,409,'test_snapshot_invalid','This test requires a fresh one-recipient review.');
+      const person=selected.person,review={...await deliveryView(sql,row),purpose:'test' as const,testSubscriberId:person.subscriber_id};
+      const current=(await sql.query('SELECT FROM campaigns WHERE id=$1 AND version=$2',[row.campaign_id,row.version])).rowCount;
+      return {review,recipient:{id:person.subscriber_id,email:digest(person.email_normalized)===person.email_digest?person.email_normalized:null,eligible:selected.eligible},
+        canApprove:row.state==='reviewed'&&row.actor_id===actor.actorId&&row.creator_id===actor.userId&&selected.eligible&&Boolean(current)} satisfies TestDeliveryDetails;
+    }
+
     if(name==='delivery.outcomes') {
       const input=customerDeliveryCommands['delivery.outcomes'].schema.parse(raw);
       return deliveryOutcomes(sql,await deliveryRow(sql,input.id,input.brandId),input);
@@ -143,7 +163,8 @@ export class CustomerDelivery {
     }
     return {...capture.payload,images};
   }
-  private async review(sql:Sql,actor:Actor,input:ReturnType<typeof customerDeliveryCommands['delivery.review']['schema']['parse']>) {
+  private async review(sql:Sql,actor:Actor,input:ReturnType<typeof customerDeliveryCommands['delivery.review']['schema']['parse']>,testSubscriberId?:string) {
+    const purpose=testSubscriberId?'test':'broadcast';
     requireCondition(this.options.mode!=='off',503,'delivery_off','Choose an available delivery configuration.');
     const draft=(await sql.query<{id:string;brand_id:string;version:number;content:CampaignContent;created_at:Date;updated_at:Date}>(
       'SELECT * FROM campaigns WHERE id=$1 AND brand_id=$2',[input.campaignId,input.brandId])).rows[0];
@@ -158,15 +179,17 @@ export class CustomerDelivery {
     const population=(await sql.query<{id:string;email_normalized:string;state:string;total:number}>(`
       WITH population AS MATERIALIZED (
         SELECT s.id,s.email_normalized,s.state FROM subscribers s
-        WHERE $1::uuid IS NULL OR EXISTS(SELECT FROM audience_segment_members m WHERE
-          (m.workspace_id,m.brand_id,m.subscriber_id)=(s.workspace_id,s.brand_id,s.id) AND m.segment_id=$1)
+        WHERE ($1::uuid IS NULL OR EXISTS(SELECT FROM audience_segment_members m WHERE
+          (m.workspace_id,m.brand_id,m.subscriber_id)=(s.workspace_id,s.brand_id,s.id) AND m.segment_id=$1))
+          AND ($2::uuid IS NULL OR s.id=$2)
       )
       SELECT *, (SELECT count(*)::int FROM population) total FROM population
-      WHERE state='confirmed' ORDER BY id LIMIT 10001`,[input.segmentId??null])).rows;
+      WHERE state='confirmed' ORDER BY id LIMIT 10001`,[input.segmentId??null,testSubscriberId??null])).rows;
     requireCondition(population.length<=10000,422,'audience_limit','Choose a group with at most 10,000 confirmed contacts.');
     const selected=[];
     for(const person of population)if(person.state==='confirmed'&&
       (this.options.mode==='capture'||await this.options.liveConsent?.(sql,person.id)))selected.push(person);
+    if(purpose==='test')requireCondition(selected.length===1,422,'test_recipient_ineligible','Select one existing confirmed and consent-eligible contact in this brand.');
     requireCondition(selected.length>0&&selected.length<=10000,422,'audience_empty','Choose between one and 10,000 confirmed eligible contacts.');
     const provider=this.options.provider?.(actor.workspaceId,input.brandId);
     const profile=await senderProfile(sql,input.brandId);
@@ -174,31 +197,43 @@ export class CustomerDelivery {
     const assets=(await sql.query<{id:string;name:string;sha256:string}>('SELECT id,name,sha256 FROM assets WHERE brand_id=$1 AND id=ANY($2::uuid[])',[input.brandId,draft.content.assetIds])).rows;
     requireCondition(assets.length===draft.content.assetIds.length,422,'image_unavailable','A selected original photo is unavailable.');
     const ordered=draft.content.assetIds.map(id=>assets.find(a=>a.id===id)!);
-    const preview=renderPreview(campaign,ordered),rendered=legalFooter(preview.html,preview.text,profile),id=randomUUID();
+    const snapshot=purpose==='test'?{...campaign,content:{...campaign.content,subject:'[TEST] '+campaign.content.subject}}:campaign;
+    const preview=renderPreview(snapshot,ordered),rendered=legalFooter(preview.html,preview.text,profile),id=randomUUID();
     await sql.query(`INSERT INTO customer_deliveries(workspace_id,brand_id,id,campaign_id,version,actor_id,creator_id,mode,state,
-      content,rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded,sender_profile)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
-      [actor.workspaceId,input.brandId,id,draft.id,draft.version,actor.actorId,actor.userId,this.options.mode,JSON.stringify(draft.content),
-        rendered.html,rendered.text,JSON.stringify(ordered),senderFingerprint(provider,profile),due,selected.length,(population[0]?.total??0)-selected.length,profile?JSON.stringify(profile):null]);
+      content,rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded,sender_profile,purpose)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+      [actor.workspaceId,input.brandId,id,draft.id,draft.version,actor.actorId,actor.userId,this.options.mode,JSON.stringify(snapshot.content),
+        rendered.html,rendered.text,JSON.stringify(ordered),senderFingerprint(provider,profile),due,selected.length,(population[0]?.total??0)-selected.length,profile?JSON.stringify(profile):null,purpose]);
     const people=selected.map(person=>{const operation=randomUUID();return {operation,subscriber:person.id,
       email:digest(person.email_normalized),reference:listmonkReference(actor.workspaceId,input.brandId,operation)};});
     await sql.query(`INSERT INTO customer_delivery_recipients(workspace_id,brand_id,delivery_id,id,subscriber_id,email_digest,engine_reference,state)
       SELECT $1,$2,$3,p.operation,p.subscriber,p.email,p.reference,'pending'
       FROM unnest($4::uuid[],$5::uuid[],$6::text[],$7::text[]) p(operation,subscriber,email,reference)`,
       [actor.workspaceId,input.brandId,id,people.map(p=>p.operation),people.map(p=>p.subscriber),people.map(p=>p.email),people.map(p=>p.reference)]);
-    return deliveryView(sql,await deliveryRow(sql,id,input.brandId));
+    const result=await deliveryView(sql,await deliveryRow(sql,id,input.brandId));
+    return testSubscriberId?{...result,purpose:'test' as const,testSubscriberId} satisfies TestDeliveryReview:result;
   }
-  private async approve(sql:Sql,actor:Actor,row:DeliveryRow) {
+  private async approve(sql:Sql,actor:Actor,row:DeliveryRow,test?:{subscriberId:string;expectedVersion:number}) {
+    requireCondition((row.purpose==='test')===Boolean(test),409,row.purpose==='test'?'test_approval_required':'test_review_required','Approve a test only through its exact one-recipient test review.');
+    if(test) {
+      requireCondition(row.version===test.expectedVersion,409,'version_conflict','This test review belongs to a different source version.');
+      const person=await testRecipient(sql,row,test.subscriberId,this.options);
+      requireCondition(person.matches,409,'test_recipient_mismatch','The supplied contact does not match this frozen test review.');
+      if(row.state==='reviewed')requireCondition(person.eligible,422,'test_recipient_ineligible','This test contact is no longer confirmed and consent-eligible.');
+    }
     requireCondition(row.actor_id===actor.actorId&&row.creator_id===actor.userId,403,'reviewer_required','Approve with the account or connection that reviewed this campaign.');
-    if(row.state==='queued')return deliveryView(sql,row);
+    if(row.state==='queued'){const result=await deliveryView(sql,row);return test?{...result,purpose:'test' as const,testSubscriberId:test.subscriberId}:result;}
     requireCondition(row.state==='reviewed',409,'review_required','Prepare a fresh review before approval.');
     requireCondition((await sql.query('SELECT id FROM campaigns WHERE id=$1 AND version=$2',[row.campaign_id,row.version])).rowCount,409,'version_conflict','The campaign changed after review.');
     const provider=this.options.provider?.(actor.workspaceId,row.brand_id);
     requireCondition(row.mode===this.options.mode&&row.provider_binding===senderFingerprint(provider,await senderProfile(sql,row.brand_id)),409,'sender_changed','The sender configuration changed. Prepare a fresh review.');
     if(row.mode==='ses')requireCondition(await senderEligible(sql,row.brand_id,provider),503,'sender_ineligible','The sender checks must be current before approval.');
     const reservation='customer-delivery-'+row.id;
-    await this.options.billing.reserve(sql,actor.workspaceId,{operationKey:reservation,campaignId:row.campaign_id,brandId:row.brand_id,recipients:row.selected,dueAt:row.due_at});
+    if(test)await admitTest(sql,row);
+    await this.options.billing.reserve(sql,actor.workspaceId,{operationKey:reservation,campaignId:row.campaign_id,brandId:row.brand_id,recipients:row.selected,
+      ...(test?{campaignSlot:false}:{dueAt:row.due_at})});
     await sql.query("UPDATE customer_deliveries SET state='queued',reservation_key=$2,approved_at=now() WHERE id=$1",[row.id,reservation]);
-    return deliveryView(sql,await deliveryRow(sql,row.id,row.brand_id));
+    const result=await deliveryView(sql,await deliveryRow(sql,row.id,row.brand_id));
+    return test?{...result,purpose:'test' as const,testSubscriberId:test.subscriberId}:result;
   }
 }
