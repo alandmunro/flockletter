@@ -21,7 +21,7 @@ export const audiencePolicyInput = {
 };
 export const customerAudienceCommands = {
   'audienceOnboarding.status': commandDefinition(
-    'Read brand signup settings and captured confirmation messages.',
+    'Read brand signup settings, captured confirmations and verified transport receipts.',
     'owner',
     false,
     { brandId },
@@ -92,6 +92,6 @@ export type AudienceSettingsView = {
   sourceDomain: string;
   publicUrl: string | null;
   trackingEnabled: false;
-  messages: { id: string; email: string; state: string; mode: string; createdAt: string }[];
+  messages: { id: string; email: string; state: string; mode: string; createdAt: string; transport?: {kind: 'accepted'|'delivered'|'hard_bounce'|'complaint'|'failed'|'delayed'; occurredAt: string}|null }[];
   imports: { id: string; source: string; createdAt: string; rows: number }[];
 };

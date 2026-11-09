@@ -104,7 +104,7 @@ export async function verifyRuntimeBoundary(client, expected = {}) {
     (has_table_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR
      has_any_column_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,REFERENCES'))) AS unsafe`);
   if(privateTables.rows[0]?.unsafe)throw Error('Private worker capacity and routing tables must not be accessible to runtime credentials.');
-  const signatures=['wake(text,timestamp with time zone)','snooze(text,timestamp with time zone)','due_scopes()','record_pass(text,text)','scope_status(text)','claim_provisioning_budget(text,uuid,uuid,integer)','trial_claim(text,text,text,text,integer,integer,text,uuid,text,text,text)','register_support_reply_route(text,uuid,text,text,timestamp with time zone)','resolve_support_reply_route(text)'];
+  const signatures=['wake(text,timestamp with time zone)','snooze(text,timestamp with time zone)','due_scopes()','record_pass(text,text)','scope_status(text)','claim_provisioning_budget(text,uuid,uuid,integer)','trial_claim(text,text,text,text,integer,integer,text,uuid,text,text,text)','register_support_reply_route(text,uuid,text,text,timestamp with time zone)','resolve_support_reply_route(text)','register_confirmation_route(text,uuid,uuid,text,text,timestamp with time zone)','resolve_confirmation_route(text)'];
   const routines=await client.query(`SELECT p.oid::regprocedure::text signature,p.prosecdef,
     p.proconfig=ARRAY['search_path=pg_catalog']::text[] AS fixed_path,
     p.proowner<>current_user::regrole::oid AS different_owner,
@@ -129,8 +129,8 @@ export async function verifyRuntimeBoundary(client, expected = {}) {
  AND p.oid=to_regprocedure('public.flockletter_retention_insert_guard()') AND p.provolatile='v' AND p.prosecdef AND p.proconfig=ARRAY['search_path=pg_catalog']::text[] AND p.proowner<>current_user::regrole::oid
  AND NOT has_function_privilege(current_user,p.oid,'EXECUTE') AND NOT EXISTS(SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')`,[guarded]);
   if(guards.rowCount!==guarded.length)throw Error('Every runtime insert needs the immutable private erasure guard.');
-  const privateGuards=await client.query(`SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_trigger t ON t.tgrelid=c.oid WHERE n.nspname||'.'||c.relname=ANY(ARRAY['flockletter_customer_jobs.scopes','flockletter_customer_jobs.support_reply_routes','flockletter_retention_control.platform_records']) AND t.tgname='flockletter_retention_insert_guard' AND t.tgenabled='A' AND t.tgtype=7 AND t.tgfoid=to_regprocedure('public.flockletter_retention_insert_guard()')`);
-  if(privateGuards.rowCount!==3)throw Error('Private customer routing and operator metadata need erasure guards.');
+  const privateGuards=await client.query(`SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_trigger t ON t.tgrelid=c.oid WHERE n.nspname||'.'||c.relname=ANY(ARRAY['flockletter_customer_jobs.scopes','flockletter_customer_jobs.support_reply_routes','flockletter_retention_control.platform_records','flockletter_customer_jobs.confirmation_routes']) AND t.tgname='flockletter_retention_insert_guard' AND t.tgenabled='A' AND t.tgtype=7 AND t.tgfoid=to_regprocedure('public.flockletter_retention_insert_guard()')`);
+  if(privateGuards.rowCount!==4)throw Error('Private customer routing and operator metadata need erasure guards.');
   return {
     database: identity.database,
     role: identity.role,

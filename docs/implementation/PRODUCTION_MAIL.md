@@ -4,7 +4,7 @@ This checklist supports FL-DEL-001–007, FL-AUD-002/004, FL-SUP-001/002 and FL-
 
 ## Resend account and credential boundaries
 
-Use a Flockletter-only Resend account or team. The provider currently offers `sending_access` and `full_access`; retrieval requires the latter and cannot be described as read-only. Sending keys should use `sending_access` restricted to the verified sending domain. Separate sending and retrieval credentials are mandatory for live support and approved alerts; the application never falls back to a sending key for retrieval. Keys cannot be shared with another application's mail account. [Resend key permissions](https://resend.com/docs/api-reference/api-keys/create-api-key)
+Use a Flockletter-only Resend account or team. The provider currently offers `sending_access` and `full_access`; retrieval requires the latter and cannot be described as read-only. Sending keys should use `sending_access` restricted to the verified sending domain. Separate sending and retrieval credentials are mandatory for live confirmations, support and approved alerts; the application never falls back to a sending key for retrieval. Keys cannot be shared with another application's mail account. [Resend key permissions](https://resend.com/docs/api-reference/api-keys/create-api-key)
 
 | Configuration | Purpose |
 | --- | --- |
@@ -19,6 +19,9 @@ Use a Flockletter-only Resend account or team. The provider currently offers `se
 | `FLOCKLETTER_SUPPORT_THREAD_KEY` | Dedicated random signing secret, at least 32 bytes; never reuse a provider API key |
 | `FLOCKLETTER_CUSTOMER_AUDIENCE=live` and `FLOCKLETTER_CONFIRMATION_ACTIVATION_APPROVED=true` | Enable generic customer confirmation transport |
 | `FLOCKLETTER_CUSTOMER_CONFIRMATION_KEY` | Separate domain-scoped confirmation sending key |
+| `FLOCKLETTER_CUSTOMER_CONFIRMATION_RETRIEVE_KEY` | Dedicated fixed-GET sent-email retrieval key, provider Full access; different from the sending key |
+| `FLOCKLETTER_CUSTOMER_CONFIRMATION_WEBHOOK_SECRET` | Signing secret for `/api/v1/customer-audience/confirmation-events` |
+| `FLOCKLETTER_CUSTOMER_CONFIRMATION_ROUTING_KEY` | Dedicated stable 32-byte hex opaque routing/recipient-HMAC signer, different from the link signer |
 | `FLOCKLETTER_CUSTOMER_CONFIRMATION_FROM` | Verified confirmation sender |
 | `FLOCKLETTER_CUSTOMER_CONFIRMATION_SIGNING_KEY` | Stable, dedicated 32-byte hex confirmation signer; preserve it while issued links remain valid |
 | `FLOCKLETTER_PLATFORM_ALERTS_ENABLED=approved` | Enable alerts only with verified live operator configuration |
@@ -36,6 +39,16 @@ Resend's signed `email.received` webhook contains metadata. The application veri
 
 Verify: good signature and exact destination; bad signature; unbound destination; mismatched provider body; missing/gray authentication; known participant reply; duplicate receipt; and provider retrieval denied/unavailable. Retrieval errors remain retryable 503 outcomes, without ingesting a provider error body or manufacturing a ticket. Do not weaken authentication to make an inbox self-test pass.
 
+## Customer confirmation receipts
+
+Migration 029 adds private opaque confirmation routing and the append-only brand-scoped `customer_audience_feedback` ledger. Before the one permitted submission, a committed route binds the workspace, brand, operation and HMAC recipient digest. Its token is a provider tag; neither raw addresses nor workspace identifiers are stored in routing metadata. Routes expire 30 days after the confirmation-link expiry, with a database-enforced 90-day ceiling. Workspace erasure inventories and removes routes and feedback; the private insert guard prevents restoration from recreating erased data.
+
+The raw 16 KiB-limited event must pass its signature and timestamp check before retrieval. Subscribe this webhook to `email.sent`, `email.delivered`, `email.bounced`, `email.complained`, `email.failed` and `email.delivery_delayed`. A UUID-only fixed `GET /emails/:id` retrieves authoritative route/operation tags; caller-supplied tags never select a workspace. Retrieved sender, sole recipient, route HMAC, operation, submitted attempt and immutable provider binding must match under the workspace/brand lock. Missing receipt data or unavailable retrieval remains unresolved. Event identifiers are globally unique; changed content or a changed provider mapping is rejected rather than rebound. [Sent-email reference](https://resend.com/docs/api-reference/emails/retrieve-email)
+
+Authenticated transport facts can resolve an uncertain provider acceptance. They never mark a subscriber confirmed or create opt-in evidence. Only a permanent bounce or complaint strengthens canonical suppression, including when receipts arrive out of order; a transient bounce remains a delay. The existing token-based confirmation action is still required. Owner UI/API status includes the latest verified transport fact separately from subscription state. Existing delegated MCP grants keep their current bounds; aggregate audience counts reflect canonical suppression, while detailed owner-only confirmation records are not newly delegated. Old confirmations submitted before this routing scheme have no registered route and remain held; never infer acceptance from their absence in provider search or resend them automatically.
+
+Disposable PostgreSQL tests cover missing/forged/expired signatures, body bounds, unavailable retrieval, missing/duplicate tags, recipient/provider mismatches, conflicting replay IDs, two-workspace isolation, immutable routing, append-only receipts, suppression ordering and restored-erasure/route expiry. A real signed provider receipt is still required for live verification.
+
 ## SES newsletter runtime
 
 `FLOCKLETTER_CUSTOMER_DELIVERY=ses` requires `APP_ENV=production`, `FLOCKLETTER_LIVE_MAILING_APPROVED=true`, dedicated `FLOCKLETTER_CUSTOMER_SES_ACCESS_KEY_ID` / `FLOCKLETTER_CUSTOMER_SES_SECRET_ACCESS_KEY` (and optional `FLOCKLETTER_CUSTOMER_SES_SESSION_TOKEN`) and validated `FLOCKLETTER_CUSTOMER_SES_BINDINGS`. Each binding contains the exact `workspaceId`, `brandId`, US `region`, `accountId`, `tenant`, `configurationSet`, `from`, `identityArn` and `topicArn`. Do not put actual IDs or keys in this document.
@@ -52,6 +65,6 @@ The legacy FFA server-proxy/intake contract remains explicitly staging-only. Its
 
 ## Evidence and local-model work
 
-Credential separation and retry behavior are covered by provider/configuration tests and disposable PostgreSQL support tests. They do not prove live delivery, domain ownership or Resend key permissions. Record actual provider/domain/receipt verification separately, without secret values or customer bodies.
+Credential separation and retry behavior are covered by provider/configuration tests and disposable PostgreSQL support tests. The complete local validation passed 92 files and 603 tests, with two explicitly gated private-engine tests skipped; lint, typecheck and the production build passed. Final confirmation hardening also passed all 11 focused tests. They do not prove live delivery, domain ownership or Resend key permissions. Record actual provider/domain/receipt verification separately, without secret values or customer bodies.
 
 Local Qwen drafted three bounded credential-isolation test cases. Chat reviewed the draft, corrected a mutable declaration and an existing lookup fixture, and owns credential scope, transport wiring, failure behavior and this operational checklist.

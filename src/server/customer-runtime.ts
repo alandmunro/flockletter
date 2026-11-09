@@ -11,6 +11,7 @@ import { customerSettings } from './customer-settings.js';
 import { CustomerBilling,customerEligibility,customerContactLimit,customerSeatLimit,retentionServiceEndSql,retentionClockSql } from './customer-billing/service.js';
 import { customerBillingConfiguration,stripeCustomerProvider } from './customer-billing/provider.js';
 import { CustomerAudience,createCustomerOptOut,productionConsentEligible } from './customer-audience/service.js';
+import { CustomerConfirmationFeedback } from './customer-audience/feedback.js';
 import { CustomerConfirmationProvider } from './customer-audience/resend.js';
 import { CustomerTeamLifecycle } from './customer-team/service.js';
 import { customerTeamClerkPort } from './customer-team/clerk.js';
@@ -54,9 +55,14 @@ export class CustomerWorkflows {
     const gateway=stripeCustomerProvider(config.origin,env);
     this.billing=new CustomerBilling(db,{environment:config.environment,exerciseEnabled:settings.billing==='exercise',
       gateway,trialRegistry:trialRegistryFromEnvironment(env,settings.billing==='exercise'?'exercise':gateway?.live?'stripe_live':'stripe_test',settings.billing==='exercise'?'captured':gateway?.account??'unconfigured'),checkOwner:identity.isOwner});
+    const confirmationFeedback=settings.audience==='live'?new CustomerConfirmationFeedback(db,{
+      sendingKey:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_KEY??'',retrieveKey:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_RETRIEVE_KEY??'',
+      sender:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_FROM??'',webhookSecret:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_WEBHOOK_SECRET??'',
+      routeKey:this.confirmationRoutingKey(),
+    }):undefined;
     this.audience=new CustomerAudience(db,{mode:settings.audience,origin:config.origin,checkOwner:identity.isOwner,
       contactLimit:(sql,w)=>customerContactLimit(sql,w,this.billing.options),
-      ...(settings.audience==='live'?{confirmationKey:this.confirmationKey(),provider:new CustomerConfirmationProvider(
+      ...(settings.audience==='live'?{feedback:confirmationFeedback,confirmationKey:this.confirmationKey(),provider:new CustomerConfirmationProvider(
         env.FLOCKLETTER_CUSTOMER_CONFIRMATION_KEY??'',env.FLOCKLETTER_CUSTOMER_CONFIRMATION_FROM??'',config.origin)}:{})});
     this.team=new CustomerTeamLifecycle(db,{mode:settings.team,checkOwner:identity.isOwner,seatLimit:(sql,w)=>customerSeatLimit(sql,w,this.billing.options),
       ...(settings.team==='clerk'?{port:customerTeamClerkPort({secretKey:config.clerkSecretKey!,publishableKey:config.clerkPublishableKey!})}:{})});
@@ -127,6 +133,11 @@ export class CustomerWorkflows {
       const verified=await this.infrastructure.verifiedRoute(workspace,route.brandId).catch(()=>null);
       this.ses?.register(route,verified?.fingerprint===route.fingerprint);
     }
+  }
+  private confirmationRoutingKey() {
+    const key=this.env.FLOCKLETTER_CUSTOMER_CONFIRMATION_ROUTING_KEY;
+    if(!key||!/^[a-f0-9]{64}$/i.test(key)||key.toLowerCase()===this.env.FLOCKLETTER_CUSTOMER_CONFIRMATION_SIGNING_KEY?.toLowerCase())throw Error('Live confirmation needs a distinct dedicated routing key.');
+    return Buffer.from(key,'hex');
   }
   private confirmationKey() {
     const key=this.env.FLOCKLETTER_CUSTOMER_CONFIRMATION_SIGNING_KEY;

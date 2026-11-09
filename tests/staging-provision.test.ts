@@ -133,14 +133,14 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
       await control.query(`SELECT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname IN ('flockletter_customer_jobs','flockletter_retention_control') AND c.relkind='r'`)
     ).rows;
-    expect(privateObjects.length).toBe(13);
+    expect(privateObjects.length).toBe(14);
     expect(privateObjects.every((row) => row.owner === 'flockletter_staging_migrator')).toBe(true);
     const schedulerFunctions = (
       await control.query(
         "SELECT pg_get_userbyid(proowner) AS owner FROM pg_proc WHERE pronamespace='flockletter_customer_jobs'::regnamespace",
       )
     ).rows;
-    expect(schedulerFunctions).toHaveLength(11);
+    expect(schedulerFunctions).toHaveLength(13);
     expect(schedulerFunctions.every((row) => row.owner === 'flockletter_staging_migrator')).toBe(true);
     await control.query('ALTER SCHEMA flockletter_customer_jobs OWNER TO flockletter_staging_migrator');
     const alreadyMigratorOwned = prepareSchemas(ownerUrl.href);

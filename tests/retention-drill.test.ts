@@ -111,6 +111,8 @@ async function seed(db: pg.Client, workspace: string) {
         VALUES(w,b,gen_random_uuid(),gen_random_uuid(),'fixture','fixture',digest,'{"source":"same@example.test"}');
       INSERT INTO customer_audience_confirmations(workspace_id,brand_id,id,subscriber_id,token_hash,unsubscribe_hash,mode,state,policy_snapshot,expires_at)
         VALUES(w,b,gen_random_uuid(),s,digest,digest,'exercise','captured','{}',now()+interval '1 day');
+      INSERT INTO customer_audience_feedback(workspace_id,brand_id,event_id,digest,confirmation_id,provider_id,kind,occurred_at)
+        SELECT w,b,'fixture-confirmation-'||w,digest,id,gen_random_uuid(),'delivered',now() FROM customer_audience_confirmations WHERE workspace_id=w AND brand_id=b;
       INSERT INTO customer_audience_optouts(workspace_id,brand_id,id,subscriber_id,token_hash)
         VALUES(w,b,gen_random_uuid(),s,digest);
       INSERT INTO customer_team_scenarios(workspace_id,user_id,email,role)

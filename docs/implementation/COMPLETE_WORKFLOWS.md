@@ -31,3 +31,5 @@ These are implementation defaults for staging and configurable production policy
 Record model contributions, fix invalid local drafts, and test two workspaces, retries, revocation, concurrency, changed consent and provider uncertainty. Test the normal browser entry points at desktop and phone sizes. Finish a version-checked staging PR/deploy and a practical owner testing guide. Report live provider checks independently of captured exercises.
 
 D-043 completes the three remaining platform integrations with separate live activation gates. See [implementation and exercise playbook](PLATFORM_COMPLETION.md).
+
+Production mail credential separation, private confirmation-feedback routing, suppression and activation checks are specified in [the production mail checklist](PRODUCTION_MAIL.md). Local tests are not live-provider evidence.
