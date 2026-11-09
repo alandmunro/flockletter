@@ -169,7 +169,7 @@ async function verify(page: Page, origin: string) {
   const list = page.getByRole('table', { name: 'Audience contacts' });
   const navigate = () => button('Audience').click();
   const openReader = () => button(reader).click();
-  await page.goto(origin);await rejectOptionalCookies(page);
+  await page.goto(origin);
   await navigate();
   await list.waitFor();
   const total = page.getByText('Total contacts', { exact: true });
@@ -308,6 +308,8 @@ try {
       const config=loadConfig({APP_ENV:'local',APP_ORIGIN:origin,LOCAL_TEST_IDENTITY:'true',DATABASE_URL:fixture.url});
       server.on('request',createApp(config,service,new Authenticator(db,localIdentity())));
       page.setDefaultTimeout(8000);
+      await page.goto(origin);
+      await rejectOptionalCookies(page);
       await journey(page,origin);
     } finally {
       await page.close();
