@@ -1,6 +1,6 @@
 # Staging setup and acceptance
 
-The Flockletter staging web service runs in the existing Render workspace, Oregon region. It uses Render’s Free web compute plan and deploys manually from the implementation branch. Its Clerk development application, staging database and release secrets belong to Flockletter.
+The Flockletter staging web service runs in the existing Render workspace, Oregon region. It uses Render’s Free web compute plan and deploys manually from `main` following D-044. Its Clerk development application, staging database and release secrets belong to Flockletter. See the [release parity record](RELEASE_PARITY.md) for source revisions and production setup status.
 
 The authenticated workspace is deployed at the [staging hostname](https://flockletter.frostyflamingosoftware.com). The service uses its dedicated Clerk development application and restricted runtime connection. Render monitors `/readyz` for database readiness. [Render service](https://dashboard.render.com/web/srv-dbn5lb6gekts738v63ag) · [Verification record](VERIFICATION.md)
 

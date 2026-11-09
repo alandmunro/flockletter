@@ -4,6 +4,8 @@ Updated November 7, 2026. D-030 authorizes the foundation implementation and sta
 
 ## Accepted decisions
 
+**D-044 · Release code parity.** The owner authorized bringing Flockletter production and staging up to parity with development and GitHub. Promote the tested application, administration, API/MCP and worker source tree, maintaining isolated production identity and persistence. Keep staging on inexpensive exercise infrastructure. This supersedes earlier staging-only deployment authorization for Flockletter; it does not authorize changes to other applications or automatically activate customer mail, charges, AWS provisioning or hosted erasure. Existing activation, capacity, privacy and external-verification requirements remain in force. Durable production credentials require the applicable issuance approval. [Release and verification checklist](implementation/RELEASE_PARITY.md)
+
 | ID | Decision | Basis |
 | --- | --- | --- |
 | D-001 | Name the product Flockletter and the GitHub repository `flockletter`. | Owner selected the name and repository slug. |

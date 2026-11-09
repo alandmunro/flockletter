@@ -1,5 +1,13 @@
 # Foundation verification
 
+## D-044 release promotion, November 8
+
+PR #24 promoted the complete tested release into `main` as `f7a5e3ddb314a8ec596155664da368b0d6d8c549`, with the same Git tree as staging. Render staging now deploys manually from `main`; deploy `dep-dbogljhsrm7s73btvj40` became live. Public and private-proxy readiness returned 200 with no gaps and sending disabled. Both paths rejected unauthenticated customer and operator schema requests with 401. The actual owner control room remained signed in after refresh, with workspace-only capture controls. No workspace was created merely for this verification.
+
+Production release-tooling checks passed locally: 89 test files, 563 passing tests and two explicitly gated engine tests skipped; lint, types, build, locked notices and the dependency audit passed with zero vulnerabilities. Focused production tests additionally passed after the migration command was added. Tests use disposable PostgreSQL and prove refusal of unsafe foreign grants without changing foreign permissions or rows. They do not prove production setup. Production credential issuance and isolated database activation remain pending, and the canonical hostname still routes to staging. [Release checklist and current status](RELEASE_PARITY.md)
+
+## Earlier foundation evidence
+
 November 6–7, 2026 (Mountain time) · staging branch `codex/foundation-workflow`. Initial local browser checks used `3d6e24d`, hosted signup passed on `b2bd70a`, and the authenticated database-backed workspace passed on `ab2f053`. The campaign and original image persisted across deployment of `b623487`. [Staged application CI](https://github.com/alandmunro/flockletter/actions/runs/42383563916)
 
 This records a campaign-preparation foundation, not completion of all release-one requirements. Tests use fictional organizations and no external email, payment or production operations.
