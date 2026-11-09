@@ -202,7 +202,7 @@ export function IntakePanel({
             <p className="help">
               {status.sourceDomain
                 ? 'Start the configured confirmation worker to accept signups.'
-                : 'Configure the staging brand, source domain and confirmation transport before enabling intake.'}
+                : 'Configure the brand, source domain and confirmation transport before enabling intake.'}
             </p>
           )}
 

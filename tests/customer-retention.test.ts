@@ -217,13 +217,16 @@ it('executes only with separate restricted authority and replays the durable era
     );
     await admin.query('GRANT USAGE ON SCHEMA flockletter_customer_jobs TO ' + pg.escapeIdentifier(role));
     await admin.query(
-      'GRANT SELECT,DELETE ON flockletter_customer_jobs.scopes,flockletter_customer_jobs.support_reply_routes,flockletter_retention_control.platform_records TO ' + pg.escapeIdentifier(role),
+      'GRANT SELECT,DELETE ON flockletter_customer_jobs.scopes,flockletter_customer_jobs.support_reply_routes,flockletter_customer_jobs.confirmation_routes,flockletter_retention_control.platform_records TO ' + pg.escapeIdentifier(role),
     );
     await admin.query('GRANT INSERT ON customer_retention_receipts TO ' + pg.escapeIdentifier(role));
     await admin.query(
       'INSERT INTO flockletter_customer_jobs.scopes(workspace_id,next_due_at) VALUES($1,now()),($2,now())',
       [actor.workspaceId, other.workspaceId],
     );
+    await admin.query(`INSERT INTO flockletter_customer_jobs.confirmation_routes(workspace_id,brand_id,confirmation_id,token_hash,recipient_digest,expires_at)
+      VALUES($1,$3,$4,$5,$7,now()+interval '1 day'),($2,$3,$4,$6,$7,now()+interval '1 day')`,
+      [actor.workspaceId,other.workspaceId,randomUUID(),randomUUID(),'c'.repeat(64),'d'.repeat(64),'e'.repeat(64)]);
     await admin.query('SET ROLE ' + pg.escapeIdentifier(role));
     const approval = {
       workspaceId: actor.workspaceId,
@@ -255,6 +258,7 @@ it('executes only with separate restricted authority and replays the durable era
         )
       ).rows,
     ).toEqual([{ workspace_id: other.workspaceId }]);
+    expect((await admin.query('SELECT workspace_id FROM flockletter_customer_jobs.confirmation_routes WHERE workspace_id=ANY($1)',[[actor.workspaceId,other.workspaceId]])).rows).toEqual([{workspace_id:other.workspaceId}]);
     expect(await executeAuthorizedRetention(admin, options, actor.workspaceId, job.id)).toMatchObject({
       erased: true,
       replayed: true,

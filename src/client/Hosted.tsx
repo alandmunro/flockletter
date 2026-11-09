@@ -25,7 +25,7 @@ function Hosted({ environment,setupGaps }: SetupProps) {
   }
   if (!orgId) return <><Header account={account} /><main className="main"><h1 className="page-heading">Choose your workspace.</h1><p>Select an existing workspace above or create one to begin.</p><CreateOrganization routing="hash" afterCreateOrganizationUrl="/" /></main></>;
   if(window.location.pathname==='/operator')return <OperatorPortal key={sessionId+':'+orgId} getToken={token} account={account} verify={verify}/>;
-  return <Portal key={sessionId + ':' + orgId} getToken={token} account={account} local={false} />;
+  return <Portal key={sessionId + ':' + orgId} getToken={token} account={account} local={false} environment={environment} />;
 }
 
 export default function HostedPortal({publishableKey,...setup}:{publishableKey:string}&SetupProps) {

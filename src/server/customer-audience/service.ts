@@ -1,3 +1,4 @@
+import type { CustomerConfirmationFeedback } from './feedback.js';
 import {lockWorkspace} from '../workspace-lock.js';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
@@ -34,6 +35,7 @@ type Confirmation = {
 };
 export type ConfirmationEnvelope = {
   operationKey: string;
+  routeToken?: string;
   to: string;
   brandName: string;
   confirmUrl: string;
@@ -53,6 +55,7 @@ export type CustomerAudienceOptions = {
   contactLimit?: (sql: Sql, workspace: string) => Promise<number>;
   confirmationKey?: Buffer;
   provider?: CustomerConfirmationPort;
+  feedback?: CustomerConfirmationFeedback;
 };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const genericReceipt = {
@@ -367,9 +370,11 @@ export class CustomerAudience {
   private async status(sql: Sql, brandId: string, brandName: string): Promise<AudienceSettingsView> {
     const row = await settings(sql);
     const messages = (
-      await sql.query<{ id: string; email: string; state: string; mode: string; created_at: Date }>(`
-      SELECT c.id,s.email_normalized AS email,c.state,c.mode,c.created_at FROM customer_audience_confirmations c
-      JOIN subscribers s USING(workspace_id,brand_id) WHERE s.id=c.subscriber_id ORDER BY c.created_at DESC LIMIT 50`)
+      await sql.query<{ id: string; email: string; state: string; mode: string; created_at: Date; transport_kind:'accepted'|'delivered'|'hard_bounce'|'complaint'|'failed'|'delayed'|null; transport_at:Date|null }>(`
+      SELECT c.id,s.email_normalized AS email,c.state,c.mode,c.created_at,f.kind transport_kind,f.occurred_at transport_at FROM customer_audience_confirmations c
+      JOIN subscribers s USING(workspace_id,brand_id)
+      LEFT JOIN LATERAL(SELECT kind,occurred_at FROM customer_audience_feedback WHERE confirmation_id=c.id ORDER BY occurred_at DESC,created_at DESC LIMIT 1) f ON true
+      WHERE s.id=c.subscriber_id ORDER BY c.created_at DESC LIMIT 50`)
     ).rows;
     const imports = (
       await sql.query<{ id: string; source: string; created_at: Date; rows: number }>(
@@ -388,7 +393,7 @@ export class CustomerAudience {
       publicUrl: row ? this.options.origin + '/newsletter/' + row.form_token : null,
       trackingEnabled: false,
       imports: imports.map(({ created_at, ...item }) => ({ ...item, createdAt: created_at.toISOString() })),
-      messages: messages.map(({ created_at, ...m }) => ({ ...m, createdAt: created_at.toISOString() })),
+      messages: messages.map(({ created_at,transport_kind,transport_at, ...m }) => ({ ...m, createdAt: created_at.toISOString(),transport:transport_kind&&transport_at?{kind:transport_kind,occurredAt:transport_at.toISOString()}:null })),
     };
   }
   private async configure(sql: Sql, actor: Actor, raw: unknown) {
@@ -777,11 +782,13 @@ export class CustomerAudience {
         'confirmation_key_changed',
         'Restore the configured confirmation signer before processing.',
       );
+      const routeToken=submit&&this.options.feedback?await this.options.feedback.register(sql,workspace,brand,job.id,job.email_normalized,job.expires_at):undefined;
       return {
         job,
         submit,
         message: {
           operationKey: job.id,
+          routeToken,
           to: job.email_normalized,
           brandName,
           confirmUrl: this.options.origin + '/newsletter/' + row.form_token + '/confirm?t=' + token,
@@ -836,6 +843,7 @@ export const customerAudienceTables = [
   { name: 'customer_audience_imports', scope: 'brand', permissions: ['SELECT', 'INSERT'] },
   { name: 'customer_audience_confirmations', scope: 'brand', permissions: ['SELECT', 'INSERT', 'UPDATE'] },
   { name: 'customer_audience_optouts', scope: 'brand', permissions: ['SELECT', 'INSERT', 'UPDATE'] },
+  { name: 'customer_audience_feedback', scope: 'brand', permissions: ['SELECT', 'INSERT'] },
 ] as const;
 
 export async function createCustomerOptOut(

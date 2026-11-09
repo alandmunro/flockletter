@@ -22,7 +22,7 @@ export class CustomerDelivery {
     authorize(actor,name as keyof typeof customerDeliveryCommands);
     const command=customerDeliveryCommands[name as keyof typeof customerDeliveryCommands];
     const parsed=command.schema.parse(raw);
-    if(name==='delivery.status')return this.status(actor.workspaceId);
+    if(name==='delivery.status')return this.status(actor,customerDeliveryCommands['delivery.status'].schema.parse(raw).brandId);
     const input=parsed as {operationKey?:string;brandId:string;id?:string};
     let processId:string|undefined;
     const result=await locked(this.db,actor.workspaceId,async sql=>{
@@ -91,11 +91,21 @@ export class CustomerDelivery {
     if(processId)await this.worker.tick(actor.workspaceId,processId);
     return result;
   }
-  async status(workspace:string) {
-    const eligibility=await this.options.billing.eligibility(workspace);
+  async status(actor:Actor,brandId?:string) {
+    const eligibility=await this.options.billing.eligibility(actor.workspaceId);
+    let senderVerified:boolean|null=null;
+    if(brandId)await this.db.tenant(actor.workspaceId,async sql=>{
+      await brandScope(sql,actor,brandId);
+      if(this.options.mode==='ses') {
+        try {senderVerified=await senderEligible(sql,brandId,this.options.provider?.(actor.workspaceId,brandId));}
+        catch {senderVerified=false;}
+      }
+    });
+    const gaps=this.options.mode==='off'?['Configure the delivery mode.']:this.options.mode==='capture'?[]:
+      !brandId?['Choose a brand to inspect its current sender and provider readiness.']:
+      senderVerified?[]:['Complete or refresh the selected brand’s sender verification and provider setup.'];
     return {mode:this.options.mode,externalSendingEnabled:this.options.mode==='ses',
-      eligible:eligibility.eligible,eligibility,
-      gaps:this.options.mode==='off'?['Configure the delivery mode.']:this.options.mode==='capture'?[]:['A verified brand sender and provider route are required.']};
+      eligible:eligibility.eligible,eligibility,brandId:brandId??null,senderVerified,gaps};
   }
   private async read(name:string,raw:unknown,actor:Actor,sql:Sql) {
     if(name==='delivery.report') {

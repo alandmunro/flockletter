@@ -40,4 +40,18 @@ export async function verifyPublicPlans(
   await page.getByRole('button', { name: 'Overview', exact: true }).click();
   await setup.getByRole('button', { name: 'Open campaigns', exact: true }).click();
   await page.getByRole('heading', { name: 'Campaigns', exact: true }).waitFor();
+  const configUrl=origin+'/api/config';
+  await page.route(configUrl,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({environment:'production'})}));
+  try {
+    await page.goto(origin+'/pricing');
+    await page.getByRole('link',{name:'Create an account',exact:true}).waitFor();
+    await page.getByText('Create your workspace to prepare and preview campaigns.',{exact:false}).waitFor();
+    assert.equal(await page.getByRole('link',{name:'Create a staging account',exact:true}).count(),0);
+    assert.match(await page.getByRole('main').innerText(),/Account creation does not start a trial/);
+    await page.unroute(configUrl);
+    await page.route(configUrl,route=>route.fulfill({status:503,contentType:'application/json',body:'{}'}));
+    await page.goto(origin+'/pricing');
+    await page.getByText('Plan prices and limits are shown for review.',{exact:false}).waitFor();
+    assert.equal(await page.getByRole('link',{name:'Create a staging account',exact:true}).count(),0);
+  } finally { await page.unroute(configUrl); }
 }

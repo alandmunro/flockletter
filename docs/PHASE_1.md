@@ -1,4 +1,4 @@
-> Update November 6, 2026: the owner has now authorized the [foundation implementation](implementation/FOUNDATION.md) and staging verification (D-030). The design-only restrictions below describe the earlier planning phase and are superseded for that bounded scope. Full SaaS launch, live sending and production remain gated.
+> Current-status update November 8, 2026: this page preserves the historical phase 1 design review. D-030 authorized implementation, D-044 authorized production/staging code parity, and D-046 authorizes autonomous completion plus Resend, Clerk and Render production credential setup, with local-model delegation, primary validation and practical parallel work. These supersede the historical scope limits below for Flockletter. Keep staging on Render Free and obtain approval for each individual move above USD 25. Completion, live verification, unresolved legal/tax and Stripe account facts, and the proposed lifetime trial-record retention exception are not established by that authorization; existing activation gates remain.
 
 # Flockletter phase 1 product review
 

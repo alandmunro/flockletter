@@ -52,7 +52,7 @@ it('returns unknown on network failure', async () => {
 it('returns unknown for 429 and 500, rejected for 422', async () => {
   const makeProvider = (status: number) => {
     const fakeFetch: typeof fetch = vi.fn(async () => new Response(null, { status })) as typeof fetch;
-    return new ResendSupportProvider('test-key', fakeFetch);
+    return new ResendSupportProvider('test-key', fakeFetch, 'retrieve-key');
   };
 
   expect(await makeProvider(429).submit(validEnvelope())).toEqual({ state: 'unknown' });
@@ -77,9 +77,10 @@ it('lookup returns accepted only for exact matching id', async () => {
     const fakeFetch: typeof fetch = vi.fn(async (input, init) => {
       expect(input).toBe('https://api.resend.com/emails/' + providerId);
       expect(init?.redirect).toBe('error');
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer retrieve-key');
       return new Response(JSON.stringify({ id: responseId }), { status: 200 });
     }) as typeof fetch;
-    return new ResendSupportProvider('test-key', fakeFetch);
+    return new ResendSupportProvider('test-key', fakeFetch, 'retrieve-key');
   };
 
   const matching = await makeLookupProvider(providerId).lookup(randomUUID(), providerId);
@@ -87,4 +88,63 @@ it('lookup returns accepted only for exact matching id', async () => {
 
   const nonMatching = await makeLookupProvider(randomUUID()).lookup(randomUUID(), providerId);
   expect(nonMatching).toEqual({ state: 'unknown' });
+});
+
+it('uses distinct sending and retrieval keys for submit and lookup', async () => {
+  const providerId = randomUUID();
+  const envelope = validEnvelope();
+  const sendKey = 'send-credential';
+  const retrieveKey = 'retrieve-credential';
+
+  const fakeFetch: typeof fetch = vi.fn(async (input, init) => {
+    if (input === 'https://api.resend.com/emails' && init?.method === 'POST') {
+      const req = new Request(input, init as RequestInit);
+      expect(req.headers.get('authorization')).toBe('Bearer ' + sendKey);
+      return new Response(JSON.stringify({ id: providerId }), { status: 201 });
+    }
+    if (input === 'https://api.resend.com/emails/' + providerId) {
+      const req = new Request(input, init as RequestInit);
+      expect(req.headers.get('authorization')).toBe('Bearer ' + retrieveKey);
+      return new Response(JSON.stringify({ id: providerId }), { status: 200 });
+    }
+    throw new Error('Unexpected fetch call: ' + String(input));
+  }) as typeof fetch;
+
+  const provider = new ResendSupportProvider(sendKey, fakeFetch, retrieveKey);
+  const submitResult = await provider.submit(envelope);
+  expect(submitResult).toEqual({ state: 'accepted', id: providerId });
+
+  const lookupResult = await provider.lookup(envelope.operationKey, providerId);
+  expect(lookupResult).toEqual({ state: 'accepted', id: providerId });
+
+  expect(fakeFetch).toHaveBeenCalledTimes(2);
+});
+
+it('returns unknown and makes no request when retrieveKey is absent', async () => {
+  const providerId = randomUUID();
+  const fakeFetch: typeof fetch = vi.fn(async () => new Response(JSON.stringify({ id: providerId }), { status: 200 })) as typeof fetch;
+
+  const provider = new ResendSupportProvider('send-credential', fakeFetch);
+  const result = await provider.lookup(randomUUID(), providerId);
+
+  expect(result).toEqual({ state: 'unknown' });
+  expect(fakeFetch).not.toHaveBeenCalled();
+});
+
+it('returns unknown on lookup 403 and never retries with sending key', async () => {
+  const providerId = randomUUID();
+  const calls: Array<{ url: string; auth: string | null }> = [];
+
+  const fakeFetch: typeof fetch = vi.fn(async (input, init) => {
+    calls.push({ url: String(input), auth: new Request(input, init as RequestInit).headers.get('authorization') });
+    return new Response(null, { status: 403 });
+  }) as typeof fetch;
+
+  const provider = new ResendSupportProvider('send-credential', fakeFetch, 'retrieve-credential');
+  const result = await provider.lookup(randomUUID(), providerId);
+
+  expect(result).toEqual({ state: 'unknown' });
+  expect(fakeFetch).toHaveBeenCalledTimes(1);
+  expect(calls[0]?.url).toBe('https://api.resend.com/emails/' + providerId);
+  expect(calls[0]?.auth).toBe('Bearer retrieve-credential');
 });

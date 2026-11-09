@@ -4,7 +4,7 @@ import type { Authenticator } from '../auth.js';
 import { createHostedRetentionPlanner,readProtectedRetentionFile } from '../customer-retention/configuration.js';
 import { retentionServiceEndSql } from '../customer-billing/service.js';
 import { ResendSupportProvider } from '../customer-support/provider.js';
-import { z } from 'zod';
+import { platformAlertsConfiguration } from './alerts-configuration.js';
 import type { CustomerWorkflows } from '../customer-runtime.js';
 import { OperatorStore } from './store.js';
 import { platformIdentity } from './auth.js';
@@ -14,6 +14,7 @@ export async function platformRuntime(config:Config,db:Database,auth:Authenticat
  if(mode==='off')return undefined;
  if(!['capture','live'].includes(mode)||mode==='capture'&&config.environment==='production')throw Error('Use explicit platform mode; synthetic controls are forbidden in production.');
  const selected=mode as 'capture'|'live';
+ const alertConfiguration=platformAlertsConfiguration(env,selected);
  const store=new OperatorStore(db,selected,env.FLOCKLETTER_OPERATOR_DATABASE_URL);await store.verify();
  const identity=platformIdentity(config,auth,selected,env);
  const files=[env.FLOCKLETTER_RETENTION_PLANNER_CONFIG_FILE,env.FLOCKLETTER_RETENTION_PLANNER_DATABASE_FILE,env.FLOCKLETTER_RETENTION_INVENTORY_DIRECTORY];
@@ -25,9 +26,9 @@ export async function platformRuntime(config:Config,db:Database,auth:Authenticat
   signing={keyId:env.FLOCKLETTER_RETENTION_SIGNING_KEY_ID,privateKey:await readProtectedRetentionFile(env.FLOCKLETTER_RETENTION_SIGNING_PRIVATE_FILE)};
  }
  let alerts;
- if(env.FLOCKLETTER_PLATFORM_ALERTS_ENABLED==='approved'){
-  if(selected!=='live'||!env.FLOCKLETTER_PLATFORM_ALERT_RESEND_KEY)throw Error('Live alerts require a verified operator configuration and dedicated transport.');
-  alerts={provider:new ResendSupportProvider(env.FLOCKLETTER_PLATFORM_ALERT_RESEND_KEY),from:z.email().parse(env.FLOCKLETTER_PLATFORM_ALERT_FROM),to:z.email().parse(env.FLOCKLETTER_PLATFORM_ALERT_TO)};
+ if(alertConfiguration){
+  alerts={provider:new ResendSupportProvider(alertConfiguration.sending,undefined,alertConfiguration.retrieval),
+   from:alertConfiguration.from,to:alertConfiguration.to};
  }
  const platform=new PlatformService(db,store,{mode:selected,identity,support:customer.support,databaseName:new URL(config.databaseUrl!).pathname.slice(1),plan:planner?.plan,signing,alerts,gaps:selected==='capture'?['Workspace-only exercise. Global customer controls require a separate operator organization, restricted database role and recent MFA.','Hosted deletion needs configured protected checkpoint storage, exact external-copy inventory and a separate offline executor.','Live support and platform email notifications remain disabled until separately activated.']:['Hosted retention signing is disabled until protected evidence and the separate planner role are configured.']});
  customer.support.options.operatorAuthorized=(user,workspace,reference)=>platform.supportAuthorized(user,workspace,reference);

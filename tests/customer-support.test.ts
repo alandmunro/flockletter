@@ -401,6 +401,25 @@ it('verifies native signed metadata, retrieves fixed-provider content once, and 
   await expect(service.receiveResend(changed.raw,changed.headers)).rejects.toMatchObject({code:'support_event_conflict'});
 });
 
+it('keeps authenticated native receipt intake retryable when provider retrieval is denied',async()=>{
+  const owner=await actor(),secret='whsec_'+randomBytes(32).toString('base64');
+  const data={email_id:randomUUID(),from:'sender@example.test',to:['bound@example.test'],subject:'Receipt retry',message_id:'<retry@example.test>'};
+  const raw=Buffer.from(JSON.stringify({type:'email.received',created_at:new Date().toISOString(),data}));
+  const at=new Date(),eventId='msg_'+randomUUID();
+  const headers={'svix-id':eventId,'svix-timestamp':String(Math.floor(at.getTime()/1000)),
+    'svix-signature':new Webhook(secret).sign(eventId,at,raw.toString())};
+  const send=vi.fn(async(_url:string|URL|Request,init?:RequestInit)=>{
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer retrieve-fixture');
+    return new Response(JSON.stringify({message:'Permission denied'}),{status:403});
+  });
+  const service=new CustomerSupport(db,{mode:'live',isOwner,nativeInbound:{webhookSecret:secret,apiKey:'retrieve-fixture',
+    bindings:[{workspaceId:owner.workspaceId,address:'bound@example.test'}],send}});
+  await expect(service.receiveResend(raw,headers)).rejects.toMatchObject({status:503,code:'support_inbound_pending'});
+  await expect(service.receiveResend(raw,headers)).rejects.toMatchObject({code:'support_inbound_pending'});
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(await call(service,'support.list',{offset:0},owner)).toMatchObject({total:0});
+});
+
 it('quarantines global unassigned email without creating a tenant ticket and uses signed participant-bound thread replies',async () => {
   const owner=await actor(),secret='whsec_'+randomBytes(32).toString('base64'),threadSecret=randomBytes(32).toString('hex');
   let body:Record<string,unknown>={};

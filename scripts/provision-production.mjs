@@ -2,6 +2,7 @@
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import { applyMigrations } from './apply-migrations.mjs';
 import { prepareCustomerSchemas } from './prepare-production-schemas.mjs';
+import { hasSupportedProductionConnectionOptions } from './production-connection.mjs';
 import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
 import { createInterface } from 'node:readline/promises';
 import process from 'node:process';
@@ -48,7 +49,7 @@ if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.hostname !== set
     typeof settings.expectedSource !== 'string' || !/^[a-z][a-z0-9_]{0,62}$/.test(settings.expectedSource) ||
     !/(?:^|_)(?:prod|production)(?:_|$)/.test(settings.expectedSource) ||
     /(?:^|_)(?:staging|test|dev|development)(?:_|$)/.test(settings.expectedSource) || settings.expectedSource === target ||
-    !url.password) throw new Error('The administration connection must match the explicitly selected production host and source database.');
+    !url.username || !url.password || !hasSupportedProductionConnectionOptions(url)) throw new Error('The administration connection must match the explicitly selected production host and source database.');
 
 function connect(database, role, password) {
   const connection = new URL(url);
@@ -101,20 +102,27 @@ async function provision(admin) {
   } catch (error) { await admin.query('ROLLBACK'); throw error; }
   const memberships = await admin.query('SELECT 1 FROM pg_auth_members WHERE member IN (SELECT oid FROM pg_roles WHERE rolname=ANY($1))', [[runtime, migrator]]);
   if (memberships.rowCount) throw new Error('The Flockletter roles have additional role memberships. Review before activation.');
-  const other = await admin.query('SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate AND datname<>$1 AND has_database_privilege($2,datname,\'CONNECT\')', [target, runtime]);
+  const other = await admin.query(`SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate AND datname<>$1
+    AND (has_database_privilege($2,datname,'CONNECT') OR has_database_privilege($3,datname,'CONNECT'))`, [target, runtime, migrator]);
   for (const { datname } of other.rows) {
     await using(connect(datname), async audit => {
-      const result = await audit.query(`SELECT EXISTS (
+      for (const role of [runtime, migrator]) {
+        if (!(await audit.query("SELECT has_database_privilege($1,current_database(),'CONNECT') AS allowed", [role])).rows[0].allowed) continue;
+        const result = await audit.query(`SELECT EXISTS (
         SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
         WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND has_schema_privilege($1,n.oid,'USAGE')
         AND CASE WHEN c.relkind='S' THEN has_sequence_privilege($1,c.oid,'SELECT,USAGE,UPDATE')
-          WHEN c.relkind IN ('r','p','v','m','f') THEN has_table_privilege($1,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') ELSE false END
+          WHEN c.relkind IN ('r','p','v','m','f') THEN has_table_privilege($1,c.oid,
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER' || CASE WHEN current_setting('server_version_num')::int>=170000 THEN ',MAINTAIN' ELSE '' END)
+            OR has_any_column_privilege($1,c.oid,'SELECT,INSERT,UPDATE,REFERENCES') ELSE false END
       ) OR EXISTS (
         SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
         WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND p.prosecdef
         AND has_schema_privilege($1,n.oid,'USAGE') AND has_function_privilege($1,p.oid,'EXECUTE')
-      ) OR EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND has_schema_privilege($1,n.oid,'CREATE')) AS unsafe`, [runtime]);
-      if (result.rows[0].unsafe) throw new Error('A foreign database grants the runtime access to application objects or a privileged function. Review its grants before activation.');
+      ) OR EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND has_schema_privilege($1,n.oid,'CREATE'))
+        OR has_database_privilege($1,current_database(),'CREATE') AS unsafe`, [role]);
+        if (result.rows[0].unsafe) throw new Error('A foreign database grants a Flockletter role access to application objects or a privileged function. Review its grants before activation.');
+      }
     });
   }
   await admin.query(`GRANT CONNECT ON DATABASE ${target} TO ${migrator},${runtime}`);

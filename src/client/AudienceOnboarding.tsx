@@ -462,12 +462,13 @@ export function AudienceOnboarding({
               </button>
             </fieldset>
           </form>
-          <h3>Captured confirmations</h3>
-          {!view.messages.length && <p>No captured confirmations yet.</p>}
+          <h3>{view.mode==='exercise'?'Captured confirmations':'Confirmation delivery'}</h3>
+          {!view.messages.length && <p>No confirmation messages yet.</p>}
           <ul>
             {view.messages.map((message) => (
               <li key={message.id}>
                 {message.email} · {message.state}{' '}
+                {message.transport&&<span>· Mail: {message.transport.kind.replaceAll('_',' ')} <time dateTime={message.transport.occurredAt}>{new Date(message.transport.occurredAt).toLocaleString()}</time>{' '}</span>}
                 {message.mode === 'exercise' && (
                   <button
                     type="button"

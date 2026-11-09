@@ -57,7 +57,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     customerWorkflows:service?.customer?{billing:service.customer.settings.billing,delivery:service.customer.settings.delivery,audience:service.customer.settings.audience,team:service.customer.settings.team,support:service.customer.settings.support,retention:service.customer.settings.retention}:null }));
   app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false,
     skip: req => (['HEAD','POST'].includes(req.method) && /^\/brands\/[^/]+\/subscriber-signups\/?$/i.test(req.path)) ||
-      (req.method==='POST' && /^\/(confirmation-feedback|billing\/stripe-events|customer-billing\/stripe-events|support\/(inbound|resend-inbound)|customer-delivery\/ses-events)\/?$/i.test(req.path)),
+      (req.method==='POST' && /^\/(confirmation-feedback|customer-audience\/confirmation-events|billing\/stripe-events|customer-billing\/stripe-events|support\/(inbound|resend-inbound)|customer-delivery\/ses-events)\/?$/i.test(req.path)),
     message: { error: { code: 'rate_limited', message: 'Too many requests. Retry in a minute.' } } }));
   app.use('/api/v1', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -77,6 +77,13 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   subscriberRoutes(app, config, service?.intake, auth);
   marketingUnsubscribeRoutes(app,config,service?.db);
   if(service?.customer)app.use('/newsletter',customerAudienceRoutes(service.customer.audience));
+  app.post('/api/v1/customer-audience/confirmation-events',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'16kb'}),async(req,res)=>{
+    const feedback=service?.customer?.audience.options.feedback;
+    if(!feedback)throw new AppError(503,'confirmation_feedback_unavailable','Customer confirmation feedback is not configured.');
+    if(!Buffer.isBuffer(req.body))throw new AppError(415,'json_required','Send the raw signed provider event.');
+    await feedback.receive(req.body,Object.fromEntries(['svix-id','svix-timestamp','svix-signature'].map(name=>[name,req.get(name)??''])));
+    res.sendStatus(204);
+  });
   app.post('/api/v1/customer-billing/stripe-events',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'128kb'}),async(req,res)=>{
     if(!service?.customer)throw new AppError(503,'customer_workflow_unavailable','Customer billing is not configured.');
     if(!Buffer.isBuffer(req.body))throw new AppError(415,'json_required','Send the raw signed provider event.');

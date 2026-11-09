@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Api } from './api.js';
 import { operationKey } from './api.js';
 import type { CustomerOperationsStatus } from '../shared/customer-operations.js';
+import {WorkerReadiness} from './WorkerReadiness.js';
 
 export function CustomerOperations({ api }: { api: Api }) {
   const requestKey=useRef(operationKey());
@@ -69,7 +70,7 @@ export function CustomerOperations({ api }: { api: Api }) {
       )}
 
       <p className="help">
-        Captured exercises cannot prove external provider delivery or billing. Free staging web worker sleeps and dedicated readiness may be missing.
+        Captured outcomes are simulations. Review the worker, workflow modes and activation gaps below for current service readiness.
       </p>
 
       {!status && !loading && <button type="button" className="btn secondary" onClick={()=>void handleRefresh()}>Retry status</button>}
@@ -86,19 +87,7 @@ export function CustomerOperations({ api }: { api: Api }) {
             </button>
           </div>
 
-          <section aria-labelledby="worker-heading">
-            <h3 id="worker-heading" className="badge">Worker</h3>
-            <dl>
-              <dt>Running</dt>
-              <dd>{status.worker.running ? 'Yes' : 'No'}</dd>
-              <dt>Dedicated</dt>
-              <dd>{status.worker.dedicated ? 'Yes' : 'No'}</dd>
-              <dt>Last Pass</dt>
-              <dd>{status.worker.lastPass ?? '—'}</dd>
-              <dt>Last Failure</dt>
-              <dd>{status.worker.lastFailure ?? '—'}</dd>
-            </dl>
-          </section>
+          <WorkerReadiness worker={status.worker}/>
 
           <section aria-labelledby="modes-heading">
             <h3 id="modes-heading" className="badge">Modes</h3>

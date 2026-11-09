@@ -100,6 +100,10 @@ export class ResendSupportInbox {
       const response = await (this.options.send ?? fetch)('https://api.resend.com/emails/receiving/' + metadata.email_id + '?html_format=cid', {
         redirect: 'error', signal: AbortSignal.timeout(8000), headers: { authorization: 'Bearer ' + this.options.apiKey },
       });
+      if(!response.ok) {
+        await response.body?.cancel();
+        throw Error('Provider retrieval is unavailable.');
+      }
       value = await boundedJson(response, 65536);
     } catch { throw new AppError(503, 'support_inbound_pending', 'The verified email is awaiting provider retrieval. Retry this event.'); }
     const received = receivedSchema.parse(value);

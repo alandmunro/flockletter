@@ -11,7 +11,7 @@ export const customerDeliveryCommands = {
     fromEmail:normalizedEmail,replyTo:normalizedEmail,organization:z.string().trim().min(1).max(150).regex(/^[^\p{Cc}\p{Cf}]+$/u),
     postalAddress:z.string().trim().min(10).max(500).regex(/^[^\p{Cc}\p{Cf}]+$/u),
   }),
-  'delivery.status': command('View delivery mode, setup gaps and workspace usage.', 'campaign:send', false, {}),
+  'delivery.status': command('View delivery mode, workspace usage and current sender checks for an optional authorized brand.', 'campaign:send', false, {brandId:id.optional()}),
   'delivery.list': command('List this brand’s reviewed campaigns and delivery outcomes.', 'campaign:send', false, {brandId:id}),
   'delivery.review': command('Freeze the saved draft and confirmed audience before approval.', 'campaign:send', true, {
     operationKey,brandId:id,campaignId:id,expectedVersion:z.number().int().positive(),

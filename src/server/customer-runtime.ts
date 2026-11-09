@@ -1,4 +1,5 @@
 import { trialRegistryFromEnvironment } from './customer-abuse/registry.js';
+import {readWorkerHeartbeat,runWorkerHeartbeat} from './customer-worker-heartbeat.js';
 import { setTimeout as pause } from 'node:timers/promises';
 import type { Config } from './config.js';
 import type { Database } from './db.js';
@@ -11,11 +12,13 @@ import { customerSettings } from './customer-settings.js';
 import { CustomerBilling,customerEligibility,customerContactLimit,customerSeatLimit,retentionServiceEndSql,retentionClockSql } from './customer-billing/service.js';
 import { customerBillingConfiguration,stripeCustomerProvider } from './customer-billing/provider.js';
 import { CustomerAudience,createCustomerOptOut,productionConsentEligible } from './customer-audience/service.js';
+import { CustomerConfirmationFeedback } from './customer-audience/feedback.js';
 import { CustomerConfirmationProvider } from './customer-audience/resend.js';
 import { CustomerTeamLifecycle } from './customer-team/service.js';
 import { customerTeamClerkPort } from './customer-team/clerk.js';
 import { configuredSupportWriter } from './customer-support/writer.js';
 import { CustomerSupport } from './customer-support/index.js';
+import { supportResendKeys } from './customer-support/configuration.js';
 import { ResendSupportProvider } from './customer-support/provider.js';
 import { CustomerRetention } from './customer-retention/index.js';
 import { CustomerDelivery } from './customer-delivery/service.js';
@@ -53,20 +56,26 @@ export class CustomerWorkflows {
     const gateway=stripeCustomerProvider(config.origin,env);
     this.billing=new CustomerBilling(db,{environment:config.environment,exerciseEnabled:settings.billing==='exercise',
       gateway,trialRegistry:trialRegistryFromEnvironment(env,settings.billing==='exercise'?'exercise':gateway?.live?'stripe_live':'stripe_test',settings.billing==='exercise'?'captured':gateway?.account??'unconfigured'),checkOwner:identity.isOwner});
+    const confirmationFeedback=settings.audience==='live'?new CustomerConfirmationFeedback(db,{
+      sendingKey:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_KEY??'',retrieveKey:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_RETRIEVE_KEY??'',
+      sender:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_FROM??'',webhookSecret:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_WEBHOOK_SECRET??'',
+      routeKey:this.confirmationRoutingKey(),
+    }):undefined;
     this.audience=new CustomerAudience(db,{mode:settings.audience,origin:config.origin,checkOwner:identity.isOwner,
       contactLimit:(sql,w)=>customerContactLimit(sql,w,this.billing.options),
-      ...(settings.audience==='live'?{confirmationKey:this.confirmationKey(),provider:new CustomerConfirmationProvider(
+      ...(settings.audience==='live'?{feedback:confirmationFeedback,confirmationKey:this.confirmationKey(),provider:new CustomerConfirmationProvider(
         env.FLOCKLETTER_CUSTOMER_CONFIRMATION_KEY??'',env.FLOCKLETTER_CUSTOMER_CONFIRMATION_FROM??'',config.origin)}:{})});
     this.team=new CustomerTeamLifecycle(db,{mode:settings.team,checkOwner:identity.isOwner,seatLimit:(sql,w)=>customerSeatLimit(sql,w,this.billing.options),
       ...(settings.team==='clerk'?{port:customerTeamClerkPort({secretKey:config.clerkSecretKey!,publishableKey:config.clerkPublishableKey!})}:{})});
     const inbound=env.FLOCKLETTER_SUPPORT_INBOUND_WORKSPACE&&env.FLOCKLETTER_SUPPORT_INBOUND_ADDRESS&&env.FLOCKLETTER_SUPPORT_INBOUND_SECRET?
       {workspaceId:env.FLOCKLETTER_SUPPORT_INBOUND_WORKSPACE,address:env.FLOCKLETTER_SUPPORT_INBOUND_ADDRESS,webhookSecret:env.FLOCKLETTER_SUPPORT_INBOUND_SECRET}:undefined;
-    if(settings.support==='live'&&(!env.FLOCKLETTER_SUPPORT_RESEND_KEY||!env.FLOCKLETTER_SUPPORT_SENDER))
+    const supportKeys=supportResendKeys(env,settings.support==='live');
+    if(settings.support==='live'&&!env.FLOCKLETTER_SUPPORT_SENDER)
       throw Error('External support needs dedicated transport, sender and operator bindings.');
     this.support=new CustomerSupport(db,{mode:settings.support,isOwner:identity.isOwner,
       isOperator:async()=>false,writer:configuredSupportWriter({enabled:env.FLOCKLETTER_SUPPORT_WRITER_ENABLED==='true',origin:env.FLOCKLETTER_SUPPORT_WRITER_ORIGIN??'',allowedOrigins:(env.FLOCKLETTER_SUPPORT_WRITER_ALLOWED_ORIGINS??'').split(',').filter(Boolean),model:env.FLOCKLETTER_SUPPORT_WRITER_MODEL??'',apiKey:env.FLOCKLETTER_SUPPORT_WRITER_KEY}),automationLiveApproved:env.FLOCKLETTER_SUPPORT_AUTOMATION_APPROVED==='true',sender:env.FLOCKLETTER_SUPPORT_SENDER,
-      ...(env.FLOCKLETTER_SUPPORT_NATIVE_WEBHOOK_SECRET&&env.FLOCKLETTER_SUPPORT_RESEND_KEY?{nativeInbound:{webhookSecret:env.FLOCKLETTER_SUPPORT_NATIVE_WEBHOOK_SECRET,apiKey:env.FLOCKLETTER_SUPPORT_RESEND_KEY,bindings:JSON.parse(env.FLOCKLETTER_SUPPORT_NATIVE_BINDINGS??'[]'),platformAddress:env.FLOCKLETTER_SUPPORT_NATIVE_ADDRESS,replyDomain:env.FLOCKLETTER_SUPPORT_REPLY_DOMAIN,threadSecret:env.FLOCKLETTER_SUPPORT_THREAD_KEY}}:{}),
-      ...(settings.support==='live'?{provider:new ResendSupportProvider(env.FLOCKLETTER_SUPPORT_RESEND_KEY!),inbound}:{})});
+      ...(env.FLOCKLETTER_SUPPORT_NATIVE_WEBHOOK_SECRET?{nativeInbound:{webhookSecret:env.FLOCKLETTER_SUPPORT_NATIVE_WEBHOOK_SECRET,apiKey:supportKeys.retrieval!,bindings:JSON.parse(env.FLOCKLETTER_SUPPORT_NATIVE_BINDINGS??'[]'),platformAddress:env.FLOCKLETTER_SUPPORT_NATIVE_ADDRESS,replyDomain:env.FLOCKLETTER_SUPPORT_REPLY_DOMAIN,threadSecret:env.FLOCKLETTER_SUPPORT_THREAD_KEY}}:{}),
+      ...(settings.support==='live'?{provider:new ResendSupportProvider(supportKeys.sending!,undefined,supportKeys.retrieval),inbound}:{})});
     this.retention=new CustomerRetention(db,{mode:settings.retention,isOwner:identity.isOwner,
       serviceEnd:w=>this.billing.retentionServiceEnd(w),serviceEndSql:(sql,w)=>retentionServiceEndSql(sql,w,this.billing.options),
       clock:w=>this.billing.retentionClock(w),clockSql:(sql,w)=>retentionClockSql(sql,w,this.billing.options),
@@ -125,6 +134,11 @@ export class CustomerWorkflows {
       const verified=await this.infrastructure.verifiedRoute(workspace,route.brandId).catch(()=>null);
       this.ses?.register(route,verified?.fingerprint===route.fingerprint);
     }
+  }
+  private confirmationRoutingKey() {
+    const key=this.env.FLOCKLETTER_CUSTOMER_CONFIRMATION_ROUTING_KEY;
+    if(!key||!/^[a-f0-9]{64}$/i.test(key)||key.toLowerCase()===this.env.FLOCKLETTER_CUSTOMER_CONFIRMATION_SIGNING_KEY?.toLowerCase())throw Error('Live confirmation needs a distinct dedicated routing key.');
+    return Buffer.from(key,'hex');
   }
   private confirmationKey() {
     const key=this.env.FLOCKLETTER_CUSTOMER_CONFIRMATION_SIGNING_KEY;
@@ -237,7 +251,11 @@ export class CustomerWorkflows {
     if(this.observe)await this.observe({workspaceId:workspace,status:await this.status(workspace)});
   }
   async run(signal:AbortSignal) {
+    if(this.running)throw Error('The customer worker is already running.');
     this.running=true;
+    const heartbeatStop=new AbortController();
+    const heartbeat=runWorkerHeartbeat(this.db,this.settings.dedicated?'dedicated':'embedded',
+      AbortSignal.any([signal,heartbeatStop.signal])).catch(()=>console.error('The customer worker heartbeat stopped unexpectedly.'));
     try {
       while(!signal.aborted) {
         try {
@@ -250,9 +268,10 @@ export class CustomerWorkflows {
         }catch{console.error('The customer scheduler needs review.');}
         try{await pause(3000,undefined,{signal});}catch{if(!signal.aborted)throw Error('Worker timer failed.');}
       }
-    }finally{this.running=false;}
+    }finally{this.running=false;heartbeatStop.abort();await heartbeat;}
   }
   async status(workspace:string):Promise<CustomerOperationsStatus> {
+    const heartbeat=await readWorkerHeartbeat(this.db,this.settings.dedicated?'dedicated':'embedded');
     const recorded=await this.db.tenant(workspace,async sql=>(await sql.query<{last_pass_at:Date|null;last_failure_code:string|null}>(
       'SELECT * FROM flockletter_customer_jobs.scope_status($1)',[workspace])).rows[0]);
     const queue=await this.db.tenant(workspace,async sql=>{
@@ -274,6 +293,8 @@ export class CustomerWorkflows {
       };
     });
     const modes=this.settings,gaps:CustomerOperationsStatus['gaps']=[];
+    if(heartbeat.state!=='fresh')gaps.push({area:'operations',code:'worker_heartbeat_'+heartbeat.state,
+      detail:'Worker liveness is '+heartbeat.state+'. Check the worker process and the separate queue-pass history.'});
     for(const area of ['billing','delivery','audience','team','support','retention','infrastructure'] as const)if(modes[area]==='off')
       gaps.push({area,code:'not_configured',detail:'Configure this workflow before activation.'});
     if(modes.delivery!=='off'&&!this.engine)gaps.push({area:'delivery',code:'private_renderer_required',detail:'Enable the private Listmonk renderer.'});
@@ -283,7 +304,8 @@ export class CustomerWorkflows {
     const billing=customerBillingConfiguration(this.env);
     for(const key of billing.missing)gaps.push({area:'billing',code:'configuration_required',detail:'Configure '+key+'.'});
     return {environment:this.config.environment,exercise:Object.values(modes).some(value=>value==='capture'||value==='exercise'),
-      worker:{running:this.running,dedicated:modes.dedicated,lastPass:recorded?.last_pass_at?.toISOString()??null,lastFailure:recorded?.last_failure_code??null},
+      worker:{running:heartbeat.state==='fresh',dedicated:modes.dedicated,localProcessRunning:this.running,heartbeat,
+        lastPass:recorded?.last_pass_at?.toISOString()??null,lastFailure:recorded?.last_failure_code??null},
       modes:{billing:modes.billing,delivery:modes.delivery,audience:modes.audience,team:modes.team,support:modes.support,retention:modes.retention,infrastructure:modes.infrastructure},
       gaps,queue,safeguards:{externalDelivery:modes.delivery==='ses',realCharges:modes.billing==='stripe_live',hostedErasure:false,openTracking:false,clickTracking:false}};
   }

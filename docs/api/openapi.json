@@ -1539,7 +1539,7 @@
     "/api/v1/commands/audienceOnboarding.status": {
       "post": {
         "operationId": "audienceOnboarding_status",
-        "summary": "Read brand signup settings and captured confirmation messages.",
+        "summary": "Read brand signup settings, captured confirmations and verified transport receipts.",
         "security": [
           {
             "bearerAuth": []
@@ -4206,7 +4206,7 @@
     "/api/v1/commands/delivery.status": {
       "post": {
         "operationId": "delivery_status",
-        "summary": "View delivery mode, setup gaps and workspace usage.",
+        "summary": "View delivery mode, workspace usage and current sender checks for an optional authorized brand.",
         "security": [
           {
             "bearerAuth": []
@@ -4221,7 +4221,13 @@
               "schema": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
-                "properties": {},
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
                 "additionalProperties": false
               }
             }

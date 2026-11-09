@@ -6,6 +6,7 @@ import { URL } from 'node:url';
 import pg from 'pg';
 import { applyMigrations } from './apply-migrations.mjs';
 import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
+import { hasSupportedProductionConnectionOptions } from './production-connection.mjs';
 
 async function run() {
   const tag = process.argv[2];
@@ -30,6 +31,8 @@ async function run() {
     process.env.APP_ENV !== 'staging' ||
     !['postgres:', 'postgresql:'].includes(migration.protocol) ||
     !['postgres:', 'postgresql:'].includes(runtime.protocol) ||
+    !hasSupportedProductionConnectionOptions(migration) ||
+    !hasSupportedProductionConnectionOptions(runtime) ||
     migration.host !== runtime.host ||
     migration.pathname !== '/flockletter_staging' ||
     runtime.pathname !== migration.pathname ||

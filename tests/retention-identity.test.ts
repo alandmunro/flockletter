@@ -26,3 +26,14 @@ it('renews only expired identical fresh plans without uncertain or completed ext
  await db.query("INSERT INTO flockletter_retention_control.operations(operation_key,workspace_id,job_id,approval_digest,target_digest,target,state) VALUES($1,$2,$3,$4,$5,'{}','unknown')",['f'.repeat(64),workspaceId,jobId,'2'.repeat(64),'a'.repeat(64)]);
  const later=new Date(at.getTime()+1200000),next={...renewed,nonce:randomUUID(),issuedAt:later.toISOString(),expiresAt:new Date(later.getTime()+600000).toISOString()};await expect(persistHostedApproval(db,next,'3'.repeat(64),later)).rejects.toMatchObject({code:'approval_renewal_reconciliation_required'});
 });
+it('rejects SELECT-only sequence grants and PostgreSQL17 maintenance authority',async()=>{
+ await db.query('CREATE SEQUENCE public.retention_identity_sequence');
+ await db.query('GRANT SELECT ON SEQUENCE public.retention_identity_sequence TO '+pg.escapeIdentifier(executor));
+ await db.query('SET ROLE '+pg.escapeIdentifier(executor));
+ try{await expect(verifyRetentionIdentity(db,'flockletter_test',executor,'executor')).rejects.toMatchObject({code:'operator_sequence_grants_drift'});}finally{await db.query('RESET ROLE');await db.query('REVOKE SELECT ON SEQUENCE public.retention_identity_sequence FROM '+pg.escapeIdentifier(executor));}
+ const version=Number((await db.query("SELECT current_setting('server_version_num') version")).rows[0].version);
+ if(version>=170000){
+  await db.query('GRANT MAINTAIN ON public.workspaces TO '+pg.escapeIdentifier(executor));await db.query('SET ROLE '+pg.escapeIdentifier(executor));
+  try{await expect(verifyRetentionIdentity(db,'flockletter_test',executor,'executor')).rejects.toMatchObject({code:'operator_table_grants_drift'});}finally{await db.query('RESET ROLE');await db.query('REVOKE MAINTAIN ON public.workspaces FROM '+pg.escapeIdentifier(executor));}
+ }
+});
