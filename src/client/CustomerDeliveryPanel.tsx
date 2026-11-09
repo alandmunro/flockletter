@@ -4,6 +4,7 @@ import { operationKey } from './api.js';
 import type { Brand,Campaign,CommandName } from '../shared/contracts.js';
 import type { DeliveryView,DeliveryMode } from '../shared/customer-delivery.js';
 import type { CustomerBillingStatus } from '../shared/customer-billing.js';
+import type { SegmentDirectory } from '../shared/segments.js';
 import { SenderProfilePanel } from './SenderProfilePanel.js';
 
 type Status={mode:DeliveryMode;eligible:boolean;eligibility:CustomerBillingStatus;gaps:string[]};
@@ -26,17 +27,17 @@ export function CustomerDeliveryPanel({api,brands}:{api:Api;brands:Brand[]}) {
   </>;
 }
 function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
-  const [status,setStatus]=useState<Status|null>(null),[campaigns,setCampaigns]=useState<Campaign[]>([]),[deliveries,setDeliveries]=useState<DeliveryView[]>([]);
-  const [campaignId,setCampaignId]=useState(''),[schedule,setSchedule]=useState('');
+  const [status,setStatus]=useState<Status|null>(null),[campaigns,setCampaigns]=useState<Campaign[]>([]),[deliveries,setDeliveries]=useState<DeliveryView[]>([]),[groups,setGroups]=useState<SegmentDirectory|null>(null);
+  const [campaignId,setCampaignId]=useState(''),[schedule,setSchedule]=useState(''),[segmentId,setSegmentId]=useState('');
   const [busy,setBusy]=useState(''),[loaded,setLoaded]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
-  const [review,setReview]=useState<DeliveryView|null>(null),[capture,setCapture]=useState<{deliveryId:string;recipientId:string;message:Captured}|null>(null);
+  const [review,setReview]=useState<DeliveryView|null>(null),[reviewAudience,setReviewAudience]=useState(''),[capture,setCapture]=useState<{deliveryId:string;recipientId:string;message:Captured}|null>(null);
   const pending=useRef(new Map<string,{signature:string;key:string}>()),acting=useRef(false);
   const read=useCallback(async()=>{
-    const [s,cs,ds]=await Promise.all([api.call<Status>('delivery.status',{}),api.call<Campaign[]>('campaign.list',{}),api.call<DeliveryView[]>('delivery.list',{brandId:brand.id})]);
-    return {s,cs:cs.filter(item=>item.brandId===brand.id),ds};
+    const [s,cs,ds,gs]=await Promise.all([api.call<Status>('delivery.status',{brandId:brand.id}),api.call<Campaign[]>('campaign.list',{}),api.call<DeliveryView[]>('delivery.list',{brandId:brand.id}),api.call<SegmentDirectory>('segment.list',{brandId:brand.id})]);
+    return {s,cs:cs.filter(item=>item.brandId===brand.id),ds,gs};
   },[api,brand.id]);
   const apply=useCallback((data:Awaited<ReturnType<typeof read>>)=>{
-    setStatus(data.s);setCampaigns(data.cs);setDeliveries(data.ds);setLoaded(true);
+    setStatus(data.s);setCampaigns(data.cs);setDeliveries(data.ds);setGroups(data.gs);setLoaded(true);
     setCampaignId(id=>data.cs.some(item=>item.id===id)?id:data.cs[0]?.id??'');
   },[]);
   useEffect(()=>{
@@ -66,11 +67,14 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
       try{apply(await read());}catch(error){setError('Your action was saved. Refresh the results: '+explain(error));}
     }catch(error){setError(explain(error));}finally{acting.current=false;setBusy('');}
   }
+  const selectedGroup=groups?.items.find(item=>item.id===segmentId);
+  const missingGroup=segmentId!==''&&!selectedGroup;
   async function reviewSaved() {
     const campaign=campaigns.find(item=>item.id===campaignId);if(!campaign)return;
+    if(missingGroup){setError('Selected group unavailable. Choose an available audience.');return;}
     let dueAt:string|undefined;
     if(schedule){const date=new Date(schedule);if(!Number.isFinite(date.getTime())){setError('Choose a valid date and time.');return;}dueAt=date.toISOString();}
-    await mutate<DeliveryView>('delivery.review',{brandId:brand.id,campaignId,expectedVersion:campaign.version,...(dueAt?{dueAt}:{})},'review',setReview);
+    await mutate<DeliveryView>('delivery.review',{brandId:brand.id,campaignId,expectedVersion:campaign.version,...(segmentId?{segmentId}:{}),...(dueAt?{dueAt}:{})},'review',result=>{setReview(result);setReviewAudience(selectedGroup?.name??'All confirmed contacts');});
   }
   async function preview(deliveryId:string,recipientId:string) {
     if(acting.current)return;acting.current=true;setBusy('preview');setError('');
@@ -88,11 +92,17 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
       <fieldset disabled={!!busy}>
         <div className="field"><label htmlFor="delivery-campaign">Saved campaign</label><select id="delivery-campaign" value={campaignId} onChange={event=>{setCampaignId(event.target.value);setReview(null);}}>
           {campaigns.map(item=><option key={item.id} value={item.id}>{item.content.subject||item.content.title||'Untitled'} · version {item.version}</option>)}</select></div>
+        <div className="field"><label htmlFor="delivery-audience">Audience</label><select id="delivery-audience" value={segmentId} onChange={event=>{setSegmentId(event.target.value);setReview(null);}}>
+          <option value="">All confirmed contacts</option>
+          {missingGroup&&<option value={segmentId} disabled>Selected group unavailable</option>}
+          {groups?.items.map(group=><option key={group.id} value={group.id}>{group.name} · {group.counts.confirmed} confirmed</option>)}</select>
+          {missingGroup?<p className="help" role="status">Selected group unavailable. Choose an available audience.</p>:<p className="help">Review freezes the eligible recipients in this audience. Later group additions are not added to that review.</p>}
+        </div>
         {!campaigns.length&&<p>Create and save a campaign before reviewing delivery.</p>}
         <div className="field"><label htmlFor="delivery-time">Schedule in your local time, optional</label><input id="delivery-time" type="datetime-local" value={schedule} onChange={event=>{setSchedule(event.target.value);setReview(null);}}/></div>
-        <button className="btn" disabled={!campaignId||status?.mode==='off'} onClick={()=>void reviewSaved()}>{busy==='review'?'Reviewing…':'Review saved campaign'}</button>
+        <button className="btn" disabled={!campaignId||status?.mode==='off'||missingGroup} onClick={()=>void reviewSaved()}>{busy==='review'?'Reviewing…':'Review saved campaign'}</button>
       </fieldset>
-      {review&&<p role="status">Reviewed version {review.version}: {review.selected} confirmed recipients and {review.excluded} excluded. Approve this review below.</p>}
+      {review&&<p role="status">{reviewAudience} · Reviewed version {review.version}: {review.selected} confirmed recipients and {review.excluded} excluded. Approve this review below.</p>}
     </>}
   </section>
   <section className="card"><h2>Delivery history</h2>{loaded&&!deliveries.length&&<p>No reviewed deliveries yet.</p>}

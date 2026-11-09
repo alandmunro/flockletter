@@ -574,3 +574,34 @@ it('rejects a revoked send grant after waiting for the workspace lock, including
   await rejection;
   await readRejection;
 });
+it('reports current selected-brand sender readiness without a permanent false setup gap',async()=>{
+ let ready=true,checks=0;
+ const f=await factory({mode:'ses',provider:()=>({fingerprint:'a'.repeat(64),from:'news@shop.test',ready:async()=>{checks++;return ready;},submit:async()=>{throw Error('Status must never send.');},lookup:async()=>{throw Error('Status must not reconcile.');}})});
+ await saveSenderProfile(f.delivery,f.actor,f.brandId);
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query('INSERT INTO sender_domains(workspace_id,brand_id,domain,challenge,verified_at) VALUES($1,$2,$3,$4,clock_timestamp())',[f.workspaceId,f.brandId,'shop.test',randomUUID()]));
+ expect(await f.delivery.execute('delivery.status',{brandId:f.brandId},f.actor)).toMatchObject({brandId:f.brandId,senderVerified:true,gaps:[]});
+ ready=false;expect(await f.delivery.execute('delivery.status',{brandId:f.brandId},f.actor)).toMatchObject({senderVerified:false,gaps:[expect.stringContaining('selected brand')]});
+ ready=true;await db.brand(f.workspaceId,f.brandId,sql=>sql.query("UPDATE sender_domains SET verified_at=now()-interval '25 hours'"));
+ expect(await f.delivery.execute('delivery.status',{brandId:f.brandId},f.actor)).toMatchObject({senderVerified:false});expect(checks).toBe(2);
+ expect(await f.delivery.execute('delivery.status',{},f.actor)).toMatchObject({brandId:null,senderVerified:null,gaps:[expect.stringContaining('Choose a brand')]});
+ const other=await factory();
+ await expect(f.delivery.execute('delivery.status',{brandId:other.brandId},f.actor)).rejects.toMatchObject({code:'brand_unavailable'});
+ await expect(f.delivery.execute('delivery.status',{brandId:f.brandId},{...f.actor,brandIds:[]})).rejects.toMatchObject({code:'brand_unavailable'});
+ expect(checks).toBe(2);
+});
+it('freezes only the selected group and never adds later group members to the reviewed delivery',async()=>{
+ const f=await factory(),later=randomUUID(),blocked=randomUUID(),groupCore=new CommandService(db,undefined,async()=>true);
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+   VALUES($1,$2,$3,'later@shop.test','confirmed'),($1,$2,$4,'blocked@shop.test','hard_bounced')`,[f.workspaceId,f.brandId,later,blocked]));
+ const group=await groupCore.execute('segment.create',{operationKey:randomUUID(),brandId:f.brandId,name:'Early customers'},f.actor) as {id:string};
+ await groupCore.execute('segment.members',{operationKey:randomUUID(),brandId:f.brandId,segmentId:group.id,action:'add',emails:['confirmed@shop.test','blocked@shop.test']},f.actor);
+ const review=await f.delivery.execute('delivery.review',{operationKey:randomUUID(),brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1,segmentId:group.id},f.actor) as DeliveryView;
+ expect(review).toMatchObject({selected:1,excluded:1});
+ await groupCore.execute('segment.members',{operationKey:randomUUID(),brandId:f.brandId,segmentId:group.id,action:'add',emails:['later@shop.test']},f.actor);
+ await groupCore.execute('segment.members',{operationKey:randomUUID(),brandId:f.brandId,segmentId:group.id,action:'remove',emails:['confirmed@shop.test']},f.actor);
+ await f.delivery.execute('delivery.approve',{operationKey:randomUUID(),brandId:f.brandId,id:review.id},f.actor);
+ await f.delivery.worker.tick(f.workspaceId,review.id);await f.delivery.worker.tick(f.workspaceId,review.id);
+ const selected=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT subscriber_id FROM customer_delivery_recipients WHERE delivery_id=$1',[review.id])).rows);
+ expect(selected).toEqual([{subscriber_id:f.subscriberId}]);
+ expect(await f.delivery.execute('delivery.report',{brandId:f.brandId,id:review.id},f.actor)).toMatchObject({state:'completed',selected:1,accepted:1,excluded:1});
+});

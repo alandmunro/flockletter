@@ -160,10 +160,10 @@ export class CommandService {
           requireCondition(await this.team.membership(actor.userId,actor.workspaceId)==='member',403,'membership_required','Current workspace membership is required.');
           const current=await memberPermissions(sql,actor.workspaceId,actor.userId,this.team,this.customer?.billing.options);
           actor={...actor,...current};authorize(actor,name);
-          if('brandId' in input)await brand(sql,actor,input.brandId);
+          if('brandId' in input&&typeof input.brandId==='string')await brand(sql,actor,input.brandId);
           if(name==='campaign.update')await campaign(sql,actor,commands[name].schema.parse(raw).id);
         }
-        if (name.startsWith('rehearsal.') && 'brandId' in input) {
+        if (name.startsWith('rehearsal.') && 'brandId' in input&&typeof input.brandId==='string') {
           await audienceBrand(sql,actor,input.brandId);
           if(name==='rehearsal.review' && 'audience' in input && input.audience==='confirmed' && actor.kind==='connection')
             requireCondition(actor.scopes.includes('audience:summary'),403,'scope_required','Grant audience totals to review a brand audience.');
@@ -173,13 +173,13 @@ export class CommandService {
             requireCondition(!requiresSimulationGrant(method),403,'scope_required','This method requires a separate campaign simulator grant.');
           }
         }
-        if (name.startsWith('segment.') && 'brandId' in input) {
+        if (name.startsWith('segment.') && 'brandId' in input&&typeof input.brandId==='string') {
           requireCondition(await this.checkOwner(actor.userId,actor.workspaceId),403,'owner_required','Current workspace ownership is required to manage groups.');
           await audienceBrand(sql, actor, input.brandId);
         }
         if(name==='team.grant'||name==='team.revoke')
           requireCondition(await this.team.membership(actor.userId,actor.workspaceId)==='owner',403,'owner_required','Current Clerk owner membership is required.');
-        if (name === 'audience.applyPracticeImport' && 'brandId' in input) {
+        if (name === 'audience.applyPracticeImport' && 'brandId' in input&&typeof input.brandId==='string') {
           requireCondition(this.practiceImportsEnabled, 403, 'practice_import_disabled', 'Practice imports are available only in staging or a local test.');
           await audienceBrand(sql, actor, input.brandId);
           requireCondition(await this.checkOwner(actor.userId,actor.workspaceId),403,'owner_required','Current workspace ownership is required to import contacts.');

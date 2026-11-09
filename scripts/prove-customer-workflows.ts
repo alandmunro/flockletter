@@ -168,6 +168,7 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   await signup.close();
   await confirmSignup(page, reader);
   await confirmSignup(page, suppressed);
+  await confirmSignup(page, 'outside@trail.example.com');
   await assertContact(db, brand, reader, 'confirmed');
   await assertContact(db, brand, suppressed, 'confirmed');
   await page.getByLabel('Find an exact email', { exact: true }).fill(suppressed);
@@ -208,6 +209,15 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   await page.getByRole('region', { name: 'Import results', exact: true }).waitFor();
   await assertContact(db, brand, suppressed, 'unsubscribed');
   await assertContact(db, brand, 'new@trail.example.com', 'pending');
+  const groups=page.getByRole('region',{name:'Audience groups',exact:true});
+  await groups.getByText('Create a group',{exact:true}).click();
+  await groups.getByLabel('Group name',{exact:true}).fill('Newsletter readers');
+  await waitForCommand(page,'segment.create',()=>groups.getByRole('button',{name:'Create group',exact:true}).click());
+  await groups.getByLabel('Email addresses',{exact:true}).fill(reader);
+  await waitForCommand(page,'segment.members',()=>groups.getByRole('button',{name:'Save membership changes',exact:true}).click());
+  const group=(await db.brand(workspace,brand,sql=>sql.query('SELECT id FROM audience_segments WHERE brand_id=$1 AND name=$2',[brand,'Newsletter readers']))).rows[0]!;
+  const groupCore=new CommandService(db,undefined,async()=>true);
+  const retired=await groupCore.execute('segment.create',{operationKey:randomUUID(),brandId:brand,name:'Retired group'},actor) as {id:string};
   await photo(page, '02-audience-import-and-consent');
   await noAlerts(page);
 
@@ -228,7 +238,21 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   await noAlerts(page);
 
   await navigate(page, 'Delivery');
+  const audiencePicker=page.getByRole('combobox',{name:'Audience',exact:true});
+  await audiencePicker.selectOption(retired.id);
+  await groupCore.execute('segment.delete',{operationKey:randomUUID(),brandId:brand,segmentId:retired.id},actor);
+  await button(page,'Refresh delivery').click();
+  await page.getByText('Selected group unavailable. Choose an available audience.',{exact:true}).waitFor();
+  assert.equal(await audiencePicker.inputValue(),retired.id,'Deleted selection must never silently broaden to all contacts.');
+  assert.equal(await button(page,'Review saved campaign').isDisabled(),true);
+  await audiencePicker.selectOption(group.id);
+  const reviewRequest=page.waitForRequest(request=>new URL(request.url()).pathname==='/api/v1/commands/delivery.review');
   await waitForCommand(page, 'delivery.review', () => button(page, 'Review saved campaign').click());
+  assert.equal((await reviewRequest).postDataJSON().segmentId,group.id,'Normal UI submits the exact selected group.');
+  const recipients=(await db.brand(workspace,brand,sql=>sql.query(`SELECT s.email_normalized FROM customer_delivery_recipients p
+    JOIN subscribers s ON(s.workspace_id,s.brand_id,s.id)=(p.workspace_id,p.brand_id,p.subscriber_id)`))).rows;
+  assert.deepEqual(recipients,[{email_normalized:reader}],'Another confirmed contact outside the chosen group is not selected.');
+
   await waitForCommand(page, 'delivery.approve', () => button(page, 'Approve captured delivery').click());
   // Run the same durable worker through its owner UI; the render dependency is a deterministic
   // injected no-network adapter. The separate pinned Listmonk integration has its own proof.
