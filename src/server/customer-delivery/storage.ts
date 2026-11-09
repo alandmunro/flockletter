@@ -1,3 +1,4 @@
+import {mapDeliveryViews,type DeliveryGroupRow,type DeliveryRecipientRow} from './report-mapping.js';
 import {lockWorkspace} from '../workspace-lock.js';
 import { randomUUID,createHash } from 'node:crypto';
 import type { Database,Sql } from '../db.js';
@@ -25,18 +26,28 @@ export async function deliveryRow(sql:Sql,id:string,brand:string):Promise<Delive
   requireCondition(row,404,'delivery_unavailable','This delivery is unavailable for this brand.');
   return row;
 }
+/** Batch only bounded aggregate facts and the first 50 opaque outcomes for each visible delivery. */
+export async function deliveryViews(sql:Sql,rows:DeliveryRow[]):Promise<DeliveryView[]> {
+  if(!rows.length)return [];
+  requireCondition(rows.length<=100,422,'report_batch_limit','Read at most 100 delivery summaries at once.');
+  const params=[rows.map(row=>row.workspace_id),rows.map(row=>row.brand_id),rows.map(row=>row.id)];
+  const requested=`WITH requested AS (SELECT DISTINCT * FROM unnest($1::text[],$2::uuid[],$3::uuid[]) r(workspace_id,brand_id,delivery_id))`;
+  const people=(await sql.query<DeliveryGroupRow>(requested+`
+    SELECT p.workspace_id,p.brand_id,p.delivery_id,p.state,p.feedback,count(*)::int n
+    FROM customer_delivery_recipients p JOIN requested r USING(workspace_id,brand_id,delivery_id)
+    GROUP BY p.workspace_id,p.brand_id,p.delivery_id,p.state,p.feedback`,params)).rows;
+  // Sequential queries on one checked-out pg client; LATERAL bounds retrieval inside PostgreSQL.
+  const recipients=(await sql.query<DeliveryRecipientRow>(requested+`
+    SELECT r.workspace_id,r.brand_id,r.delivery_id,p.id,p.state,p.feedback,p.reason,p.attempts
+    FROM requested r CROSS JOIN LATERAL (
+      SELECT p.id,p.state,p.feedback,p.reason,p.attempts FROM customer_delivery_recipients p
+      WHERE (p.workspace_id,p.brand_id,p.delivery_id)=(r.workspace_id,r.brand_id,r.delivery_id)
+      ORDER BY p.id LIMIT 50
+    ) p ORDER BY r.workspace_id,r.brand_id,r.delivery_id,p.id`,params)).rows;
+  return mapDeliveryViews(rows,people,recipients);
+}
 export async function deliveryView(sql:Sql,row:DeliveryRow):Promise<DeliveryView> {
-  const recipients=(await sql.query<DeliveryView['recipients'][number]>('SELECT id,state,feedback,reason,attempts FROM customer_delivery_recipients WHERE delivery_id=$1 ORDER BY id LIMIT 50',[row.id])).rows;
-  const people=(await sql.query<{state:string;feedback:string|null;n:number}>(
-    'SELECT state,feedback,count(*)::int n FROM customer_delivery_recipients WHERE delivery_id=$1 GROUP BY state,feedback',[row.id])).rows;
-  const count=(...states:string[])=>people.filter(p=>states.includes(p.state)).reduce((n,p)=>n+p.n,0);
-  const feedback=(kind:string)=>people.filter(p=>p.feedback===kind).reduce((n,p)=>n+p.n,0);
-  return {id:row.id,brandId:row.brand_id,campaignId:row.campaign_id,version:row.version,subject:row.content.subject,senderProfile:row.sender_profile,
-    state:row.state,mode:row.mode,dueAt:row.due_at.toISOString(),selected:row.selected,excluded:row.excluded,
-    pending:count('pending','prepared'),preparing:count('preparing'),submitting:count('submitting'),accepted:count('accepted'),
-    uncertain:count('uncertain'),rejected:count('rejected'),skipped:count('excluded','cancelled'),
-    delivered:feedback('delivered'),hardBounced:feedback('hard_bounce'),complained:feedback('complaint'),
-    createdAt:row.created_at.toISOString(),reason:row.reason,recipients};
+  return (await deliveryViews(sql,[row]))[0]!;
 }
 export async function originalEnvelope(sql:Sql,row:DeliveryRow,person:PersonRow,address:string):Promise<DeliveryEnvelope|null> {
   const images:DeliveryEnvelope['images']=[];

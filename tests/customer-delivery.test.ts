@@ -3,14 +3,16 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { beforeAll, afterAll, expect, it } from 'vitest';
 import { startDatabase } from '../scripts/database-fixture.js';
-import { Database } from '../src/server/db.js';
+import { deliveryViews } from '../src/server/customer-delivery/storage.js';
+import { mapDeliveryViews } from '../src/server/customer-delivery/report-mapping.js';
+import { Database,type Sql } from '../src/server/db.js';
 import { CommandService, authorize, type Actor } from '../src/server/service.js';
 import { CustomerBilling, customerEligibility } from '../src/server/customer-billing/service.js';
 import { createCustomerOptOut } from '../src/server/customer-audience/service.js';
 import type { DeliveryView,DeliveryOutcomesPage } from '../src/shared/customer-delivery.js';
 import { createMcpServer } from '../src/mcp/bridge.js';
 import { CustomerDelivery } from '../src/server/customer-delivery/service.js';
-import type { DeliveryOptions } from '../src/server/customer-delivery/types.js';
+import type { DeliveryOptions,DeliveryRow } from '../src/server/customer-delivery/types.js';
 import { saveSenderProfile, addCampaignPhoto } from './helpers/delivery-profile.js';
 import { makeAudienceConnection } from './helpers/audience-connection.js';
 
@@ -779,4 +781,60 @@ it('preflight blocks oversized audiences without fabricating exact selected or e
   SELECT $1,$2,gen_random_uuid(),'synthetic-'||i||'@shop.test','confirmed' FROM generate_series(1,10000) i`,[f.workspaceId,f.brandId]));
  const result=await f.delivery.execute('delivery.preflight',{brandId:f.brandId,campaignId:f.campaign.id},f.actor) as {audience:unknown;gaps:{code:string}[]};
  expect(result.audience).toEqual({visibility:'over_limit',confirmed:10001});expect(result.gaps.map(g=>g.code)).toContain('audience_limit');
+});
+it('batches complete delivery counts and only50 ordered opaque outcomes in2 sequential reads',async()=>{
+ const f=await factory();
+ const reviewed=await f.delivery.execute('delivery.review',{operationKey:randomUUID(),brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1},f.actor) as DeliveryView;
+ const states=['pending','prepared','preparing','submitting','accepted','uncertain','rejected','excluded','cancelled'];
+ const feedback=[null,'delivered','hard_bounce','complaint','temporary_bounce'];
+ const people=Array.from({length:60},(_,i)=>({subscriber:randomUUID(),id:i.toString(16).padStart(8,'0')+'-0000-4000-8000-000000000000',state:states[i%states.length]!,feedback:feedback[i%feedback.length]!}));
+ await db.brand(f.workspaceId,f.brandId,async sql=>{
+  await sql.query('UPDATE customer_delivery_recipients SET id=$2 WHERE delivery_id=$1',[reviewed.id,'ffffffff-ffff-4fff-8fff-ffffffffffff']);
+  await sql.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+   SELECT $1,$2,p.id,'batch-'||p.id::text||'@shop.test','confirmed' FROM unnest($3::uuid[]) p(id)`,[f.workspaceId,f.brandId,people.map(p=>p.subscriber)]);
+  await sql.query(`INSERT INTO customer_delivery_recipients(workspace_id,brand_id,delivery_id,id,subscriber_id,email_digest,engine_reference,state,feedback,reason,attempts)
+   SELECT $1,$2,$3,p.id,p.subscriber,$4,p.id::text,p.state,p.feedback,'fixture_reason',1
+   FROM unnest($5::uuid[],$6::uuid[],$7::text[],$8::text[]) p(id,subscriber,state,feedback)`,[f.workspaceId,f.brandId,reviewed.id,'a'.repeat(64),people.map(p=>p.id),people.map(p=>p.subscriber),people.map(p=>p.state),people.map(p=>p.feedback)]);
+ });
+ const rows=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query<DeliveryRow>('SELECT * FROM customer_deliveries WHERE brand_id=$1',[f.brandId])).rows);
+ const measured=async(input:DeliveryRow[])=>db.brand(f.workspaceId,f.brandId,async sql=>{
+  let calls=0,active=0,maximum=0;
+  const tracked=new Proxy(sql,{get(target,property,receiver){const value=Reflect.get(target,property,receiver);if(property!=='query')return value;return (...args:unknown[])=>{
+   calls++;active++;maximum=Math.max(maximum,active);return Promise.resolve(Reflect.apply(value,target,args)).finally(()=>{active--;});
+  };}});
+  return {reports:await deliveryViews(tracked,input),calls,maximum};
+ });
+ const one=await measured(rows),report=one.reports[0]!;
+ expect(one.calls).toBe(2);expect(one.maximum).toBe(1);
+ const all=[{state:'pending',feedback:null},...people];
+ const count=(...match:string[])=>all.filter(p=>match.includes(p.state)).length;
+ const events=(kind:string)=>all.filter(p=>p.feedback===kind).length;
+ expect(report).toMatchObject({pending:count('pending','prepared'),preparing:count('preparing'),submitting:count('submitting'),accepted:count('accepted'),uncertain:count('uncertain'),rejected:count('rejected'),skipped:count('excluded','cancelled'),delivered:events('delivered'),hardBounced:events('hard_bounce'),complained:events('complaint')});
+ expect(report.recipients).toHaveLength(50);expect(report.recipients.map(p=>p.id)).toEqual(people.slice(0,50).map(p=>p.id));
+ for(const p of report.recipients)expect(Object.keys(p).sort()).toEqual(['attempts','feedback','id','reason','state']);
+ expect(report.recipients.every(p=>p.attempts===1&&p.reason==='fixture_reason')).toBe(true);
+ await db.brand(f.workspaceId,f.brandId,sql=>sql.query(`INSERT INTO customer_deliveries(workspace_id,brand_id,id,campaign_id,version,actor_id,creator_id,mode,state,content,rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded)
+  SELECT workspace_id,brand_id,gen_random_uuid(),campaign_id,version,actor_id,creator_id,mode,state,content,rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded FROM customer_deliveries CROSS JOIN generate_series(1,99) WHERE id=$1`,[reviewed.id]));
+ const manyRows=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query<DeliveryRow>('SELECT * FROM customer_deliveries WHERE brand_id=$1 ORDER BY id DESC',[f.brandId])).rows);
+ const many=await measured(manyRows);expect(many.calls).toBe(2);expect(many.maximum).toBe(1);expect(many.reports.map(r=>r.id)).toEqual(manyRows.map(r=>r.id));
+ expect(many.reports.find(r=>r.id===reviewed.id)).toEqual(report);
+ expect(many.reports.filter(r=>r.id!==reviewed.id).every(r=>r.pending===0&&r.accepted===0&&r.recipients.length===0)).toBe(true);
+ expect(await deliveryViews({query:()=>{throw Error('Empty reports must not query.');}} as unknown as Sql,[])).toEqual([]);
+ await expect(deliveryViews({query:()=>{throw Error('Oversized report must not query.');}} as unknown as Sql,Array.from({length:101},()=>rows[0]!))).rejects.toMatchObject({code:'report_batch_limit'});
+ const duplicate=await measured([rows[0]!,rows[0]!]);expect(duplicate.reports).toEqual([report,report]);expect(duplicate.calls).toBe(2);
+ const otherBrand=randomUUID();await db.tenant(f.workspaceId,sql=>sql.query('INSERT INTO brands(workspace_id,id,name) VALUES($1,$2,$3)',[f.workspaceId,otherBrand,'Other report brand']));
+ const hiddenCampaign=await f.core.execute('campaign.create',{operationKey:randomUUID(),brandId:otherBrand,content:rows[0]!.content},f.actor) as {id:string};
+ await db.brand(f.workspaceId,otherBrand,sql=>sql.query("INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES($1,$2,$3,'hidden@other.test','confirmed')",[f.workspaceId,otherBrand,randomUUID()]));
+ const hidden=await f.delivery.execute('delivery.review',{operationKey:randomUUID(),brandId:otherBrand,campaignId:hiddenCampaign.id,expectedVersion:1},f.actor) as DeliveryView;
+ await expect(f.delivery.execute('delivery.list',{brandId:otherBrand},{...f.actor,brandIds:[f.brandId]})).rejects.toMatchObject({code:'brand_unavailable'});
+ const listed=await f.delivery.execute('delivery.list',{brandId:f.brandId},{...f.actor,brandIds:[f.brandId]}) as DeliveryView[];
+ expect(listed).toHaveLength(100);expect(listed.every(r=>r.brandId===f.brandId)).toBe(true);expect(listed.some(r=>r.id===hidden.id)).toBe(false);
+});
+it('keeps mapper routing tuples separate when delivery identifiers coincide across brands/workspaces',async()=>{
+ const f=await factory(),review=await f.delivery.execute('delivery.review',{operationKey:randomUUID(),brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1},f.actor) as DeliveryView;
+ const row=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query<DeliveryRow>('SELECT * FROM customer_deliveries WHERE id=$1',[review.id])).rows[0]!);
+ const base={workspace_id:f.workspaceId,brand_id:f.brandId,delivery_id:row.id};
+ const groups=[{...base,state:'pending',feedback:null,n:1},{...base,brand_id:randomUUID(),state:'accepted',feedback:'complaint',n:9},{...base,workspace_id:'org_foreign',state:'accepted',feedback:'hard_bounce',n:7}];
+ const outcomes=[{...base,id:randomUUID(),state:'pending',feedback:null,reason:null,attempts:0},{...base,workspace_id:'org_foreign',id:randomUUID(),state:'accepted',feedback:'complaint',reason:'foreign',attempts:3}];
+ const report=mapDeliveryViews([row],groups,outcomes)[0]!;expect(report).toMatchObject({pending:1,accepted:0,complained:0,hardBounced:0});expect(report.recipients).toHaveLength(1);expect(JSON.stringify(report)).not.toContain('foreign');
 });

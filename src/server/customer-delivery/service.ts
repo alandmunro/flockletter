@@ -7,7 +7,7 @@ import type { Database,Sql } from '../db.js';
 import { contentGaps,digest,renderPreview } from '../content.js';
 import { requireCondition } from '../errors.js';
 import { listmonkReference } from '../campaign/listmonk-callback.js';
-import { brandScope,deliveryRow,deliveryView,locked,audit } from './storage.js';
+import { brandScope,deliveryRow,deliveryView,deliveryViews,locked,audit } from './storage.js';
 import type { DeliveryOptions,DeliveryRow } from './types.js';
 import { CustomerDeliveryWorker } from './worker.js';
 import { senderProfile,senderFingerprint,senderEligible,legalFooter } from './sender.js';
@@ -46,7 +46,7 @@ export class CustomerDelivery {
         403,'connection_revoked','This connection no longer has current delivery access.');
       if(name==='delivery.list') {
         const rows=(await sql.query<DeliveryRow>('SELECT * FROM customer_deliveries WHERE brand_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100',[input.brandId])).rows;
-        return Promise.all(rows.map(row=>deliveryView(sql,row)));
+        return deliveryViews(sql,rows);
       }
       if(name==='delivery.sender') {
         const provider=this.options.provider?.(actor.workspaceId,input.brandId);
