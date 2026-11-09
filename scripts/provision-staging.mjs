@@ -53,7 +53,7 @@ function connect(database, role, password) {
   return new pg.Client({ connectionString: connection.href, connectionTimeoutMillis: 8000, statement_timeout: 30000 });
 }
 
-async function using(client, action) {
+async function withClient(client, action) {
   await client.connect();
   try { return await action(client); } finally { await client.end(); }
 }
@@ -98,7 +98,7 @@ async function provision(admin) {
   const foreignCatalogsChecked=await auditReleaseForeignAccess(admin,connect,target,[runtime,migrator]);
   await admin.query(`GRANT CONNECT ON DATABASE ${target} TO ${migrator},${runtime}`);
   await admin.query(`ALTER DATABASE ${target} ALLOW_CONNECTIONS true`);
-  await using(connect(target), async owner => {
+  await withClient(connect(target), async owner => {
     await owner.query('REVOKE ALL ON SCHEMA public FROM PUBLIC');
     await owner.query(`GRANT USAGE, CREATE ON SCHEMA public TO ${migrator} WITH GRANT OPTION`);
     await owner.query(`GRANT USAGE ON SCHEMA public TO ${runtime}`);
@@ -107,18 +107,18 @@ async function provision(admin) {
   });
   await admin.query(`ALTER ROLE ${migrator} LOGIN`);
   await admin.query(`ALTER ROLE ${runtime} LOGIN`);
-  await using(connect(target, migrator, passwords[migrator]), async release => {
+  await withClient(connect(target, migrator, passwords[migrator]), async release => {
     phase='migrations';
     await applyMigrations(release, runtime);
   });
-  await using(connect(target, runtime, passwords[runtime]), async app => {
+  await withClient(connect(target, runtime, passwords[runtime]), async app => {
     phase='runtime_verification';
     const check = await verifyRuntimeBoundary(app,{database:target,role:runtime});
     console.log(JSON.stringify({ verified: true, foreignCatalogsChecked, ...check }));
   });
 }
 
-try { await using(connect(settings.expectedSource), provision); }
+try { await withClient(connect(settings.expectedSource), provision); }
 catch (error) {
   // PostgreSQL errors can include SQL or request parameters. Emit only an error category.
   console.error(error.code ? `Staging database operation failed (${error.code}; ${error.schemaPreparationPhase??phase}).` : error.message?.replace(/postgres(?:ql)?:\/\/\S+/gi, '[connection]'));
