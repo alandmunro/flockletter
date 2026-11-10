@@ -552,7 +552,8 @@ it('allows independently verified pending agreement management without granting 
   expect(opened).toBe(1);
   const selectedKey = randomUUID();
   let selectedCalls = 0;
-  p.g.portal = async (_customer, key, plan) => {
+  p.g.portal = async (_customer, key, plan, subscription) => {
+    expect(subscription).toBe('sub_'+r.setupId);
     expect(key).toBe(selectedKey);
     expect(plan).toBe('pro');
     selectedCalls++;

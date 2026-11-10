@@ -1103,7 +1103,8 @@ export class CustomerBilling {
         await sql.query<{
           provider_customer: string;
           provider_account: string;
-        }>("SELECT provider_customer,provider_account FROM customer_subscriptions WHERE source='stripe'")
+          provider_subscription: string;
+        }>("SELECT provider_customer,provider_account,provider_subscription FROM customer_subscriptions WHERE source='stripe'")
       ).rows[0];
       if (!subscription) {
         const setup = (
@@ -1139,7 +1140,7 @@ export class CustomerBilling {
           'The pending billing agreement requires support review.',
         );
         await this.requireOwner(actor, sql);
-        subscription = { provider_customer: verified.customer, provider_account: gateway.account };
+        subscription = { provider_customer: verified.customer, provider_account: gateway.account, provider_subscription: verified.id };
       }
       requireCondition(
         subscription?.provider_account === gateway.account,
@@ -1149,7 +1150,7 @@ export class CustomerBilling {
       );
       // Preserve historical management-operation hashes, while binding each new
       // destination selection to the same durable operation and retry key.
-      const hash = digest(plan ? JSON.stringify([subscription.provider_customer, plan]) : subscription.provider_customer);
+      const hash = digest(plan ? JSON.stringify([subscription.provider_customer, subscription.provider_subscription, plan]) : subscription.provider_customer);
       const previous = (
         await sql.query<{
           request_hash: string;
@@ -1169,6 +1170,7 @@ export class CustomerBilling {
         );
         return {
           customer: subscription.provider_customer,
+          subscription: subscription.provider_subscription,
           ready: previous.state === 'completed',
           createdAt: previous.created_at,
         };
@@ -1186,6 +1188,7 @@ export class CustomerBilling {
       );
       return {
         customer: subscription.provider_customer,
+        subscription: subscription.provider_subscription,
         ready: false,
         createdAt,
       };
@@ -1200,7 +1203,7 @@ export class CustomerBilling {
     let url: string;
     await this.requireOwner(actor);
     try {
-      url = await gateway.portal(intent.customer, key, plan);
+      url = await gateway.portal(intent.customer, key, plan, intent.subscription);
     } catch {
       throw new AppError(503, 'portal_pending', 'Retry this same portal request.');
     }

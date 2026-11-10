@@ -167,6 +167,7 @@ it('creates one provider-held card trial with exact account and catalogue fields
     }),
   ).toMatchObject({ id: 'cs_test_fixture' });
   const posted = site.calls.find((c) => c.url.pathname === '/v1/checkout/sessions')!.body;
+  expect(posted.get('managed_payments[enabled]')).toBe('false');
   expect(posted.get('payment_method_collection')).toBe('always');
   expect(posted.get('payment_method_configuration')).toBe('pmc_fixture');
   expect(posted.get('subscription_data[trial_period_days]')).toBe('14');
@@ -366,6 +367,7 @@ it('collects a card in setup-only Checkout and obtains its fingerprint only from
   const afterSetup = Date.now();
   const posted = site.calls.find((c) => c.url.pathname === '/v1/checkout/sessions')!.body;
   expect(posted.get('mode')).toBe('setup');
+  expect(posted.get('managed_payments[enabled]')).toBe('false');
   expect(posted.get('currency')).toBe('usd');
   expect(Number(posted.get('expires_at'))).toBeGreaterThanOrEqual(
     Math.floor(beforeSetup / 1000) + 31 * 60,
@@ -477,16 +479,22 @@ it.each(['starter', 'growth', 'pro'] as const)('opens only the selected %s desti
     for (const tier of ['starter','growth','pro'] as const)
       if(url.pathname === '/v1/prices/price_'+tier) return billingPrice(tier);
     if(url.pathname === '/v1/billing_portal/configurations/bpc_'+plan) return portal;
+    if(url.pathname === '/v1/subscriptions/sub_fixture') { const current=subscription(); current.items.data[0]!.price=billingPrice(plan==='growth'?'starter':'growth'); return current; }
     if(url.pathname === '/v1/billing_portal/sessions') return {id:'bps_fixture',url:'https://billing.stripe.com/p/review'};
     throw Error('Unexpected provider request');
   });
-  expect(await site.provider.portal('cus_fixture','destination_operation',plan)).toBe('https://billing.stripe.com/p/review');
+  expect(await site.provider.portal('cus_fixture','destination_operation',plan,'sub_fixture')).toBe('https://billing.stripe.com/p/review');
   const posts=()=>site.calls.filter(call=>call.url.pathname==='/v1/billing_portal/sessions');
   expect(posts()[0]!.body.get('configuration')).toBe('bpc_'+plan);
+  expect(posts()[0]!.body.get('flow_data[type]')).toBe('subscription_update_confirm');
+  expect(posts()[0]!.body.get('flow_data[subscription_update_confirm][subscription]')).toBe('sub_fixture');
+  expect(posts()[0]!.body.get('flow_data[subscription_update_confirm][items][0][id]')).toBe('si_fixture');
+  expect(posts()[0]!.body.get('flow_data[subscription_update_confirm][items][0][price]')).toBe('price_'+plan);
+  expect(posts()[0]!.body.get('flow_data[subscription_update_confirm][items][0][quantity]')).toBe('1');
   expect(posts()[0]!.body.get('customer')).toBe('cus_fixture');
   expect(posts()[0]!.body.get('return_url')).toBe('https://flockletter.example.test/');
   portal = {...portal,metadata:{fl_application:'flockletter',fl_plan:plan==='starter'?'growth':'starter'}};
-  await expect(site.provider.portal('cus_fixture','changed_policy_operation',plan)).rejects.toThrow('could not be verified');
+  await expect(site.provider.portal('cus_fixture','changed_policy_operation',plan,'sub_fixture')).rejects.toThrow('could not be verified');
   expect(posts()).toHaveLength(1);
 });
 
@@ -565,3 +573,26 @@ it.each(['updated', 'released'] as const)(
     expect(site.calls.some((call) => call.url.pathname === '/v1/subscriptions/sub_wrong')).toBe(false);
   },
 );
+
+
+it.each(['foreign customer','wrong mode','multiple items','unknown price','missing subscription','current plan','attached schedule','past due'] as const)(
+  'rejects selected-plan confirmation for %s before issuing a portal session', async reason => {
+    const current = { ...subscription(), schedule: null as string | null };
+    if(reason==='foreign customer') current.customer='cus_other';
+    if(reason==='wrong mode') current.livemode=true;
+    if(reason==='multiple items') current.items.data.push({...current.items.data[0]!,id:'si_other'});
+    if(reason==='unknown price') current.items.data[0]!.price.id='price_unknown';
+    if(reason==='current plan') current.items.data[0]!.price=billingPrice('starter');
+    if(reason==='attached schedule') current.schedule='sub_sched_fixture';
+    if(reason==='past due') current.status='past_due';
+    const site=fixture(url=>{
+      if(url.pathname==='/v1/account')return{id:'acct_fixture'};
+      for(const tier of ['starter','growth','pro'] as const)
+        if(url.pathname==='/v1/prices/price_'+tier)return billingPrice(tier);
+      if(url.pathname==='/v1/billing_portal/configurations/bpc_starter')return billingPortal('starter');
+      if(url.pathname==='/v1/subscriptions/sub_fixture')return current;
+      throw Error('Unexpected provider request');
+    });
+    await expect(site.provider.portal('cus_fixture','guard_operation','starter',reason==='missing subscription'?undefined:'sub_fixture')).rejects.toThrow('could not be verified');
+    expect(site.calls.filter(call=>call.url.pathname==='/v1/billing_portal/sessions')).toHaveLength(0);
+  });
