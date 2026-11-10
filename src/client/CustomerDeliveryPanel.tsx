@@ -2,15 +2,16 @@ import { useCallback,useEffect,useRef,useState } from 'react';
 import type { Api } from './api.js';
 import { operationKey } from './api.js';
 import type { Brand,Campaign,CommandName } from '../shared/contracts.js';
-import type { DeliveryView,DeliveryMode } from '../shared/customer-delivery.js';
+import type { DeliveryView,DeliveryMode,DeliveryScope } from '../shared/customer-delivery.js';
 import type { CustomerBillingStatus } from '../shared/customer-billing.js';
 import type { SegmentDirectory } from '../shared/segments.js';
 import { SenderProfilePanel } from './SenderProfilePanel.js';
 import { DeliveryOutcomes } from './DeliveryOutcomes.js';
 import {CustomerTestSendPanel} from './CustomerTestSendPanel.js';
 import type { CustomerCampaignPreflight } from '../shared/customer-preflight.js';
+import {DeliveryScopeNotice} from './DeliveryScopeNotice.js';
 
-type Status={mode:DeliveryMode;eligible:boolean;eligibility:CustomerBillingStatus;gaps:string[]};
+type Status={mode:DeliveryMode;scope?:DeliveryScope;eligible:boolean;eligibility:CustomerBillingStatus;gaps:string[]};
 type Captured={to:string;subject:string;html:string;text:string;images:{sha256:string;mime:string;base64:string}[]};
 const explain=(error:unknown)=>error instanceof Error?error.message:'This action could not finish. Retry with the same inputs.';
 function captureHtml(message:Captured) {
@@ -104,21 +105,22 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
     {error&&<p role="alert" className="notice error">{error}</p>}{notice&&<p role="status" className="notice success">{notice}</p>}
     {!loaded?<p>Loading delivery settings…</p>:<>
       <p className="badge">{status?.mode==='capture'?'Captured exercise · no external email':status?.mode==='ses'?'Customer provider configured':'Delivery is off'}</p>
+      {status&&<DeliveryScopeNotice mode={status.mode} scope={status.scope??'all'}/>}
       {status?.mode==='capture'&&<p className="help">These messages stay in your staging workspace. Captured outcomes exercise the workflow and cannot prove inbox delivery.</p>}
       {!!status?.gaps.length&&<ul>{status.gaps.map(gap=><li key={gap}>{gap}</li>)}</ul>}
       {!status?.eligible&&<div className="notice"><strong>Service activation needed</strong><ul>{status?.eligibility.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul><p>Open Subscription to review your plan or start a captured trial.</p></div>}
       <fieldset disabled={!!busy}>
         <div className="field"><label htmlFor="delivery-campaign">Saved campaign</label><select id="delivery-campaign" value={campaignId} onChange={event=>{setCampaignId(event.target.value);setReview(null);setChecks(null);}}>
           {campaigns.map(item=><option key={item.id} value={item.id}>{item.content.subject||item.content.title||'Untitled'} · version {item.version}</option>)}</select></div>
-        <div className="field"><label htmlFor="delivery-audience">Audience</label><select id="delivery-audience" value={segmentId} onChange={event=>{setSegmentId(event.target.value);setReview(null);setChecks(null);}}>
+        <div className="field"><label htmlFor="delivery-audience">Audience</label><select id="delivery-audience" disabled={status?.scope==='tests'} value={segmentId} onChange={event=>{setSegmentId(event.target.value);setReview(null);setChecks(null);}}>
           <option value="">All confirmed contacts</option>
           {missingGroup&&<option value={segmentId} disabled>Selected group unavailable</option>}
           {groups?.items.map(group=><option key={group.id} value={group.id}>{group.name} · {group.counts.confirmed} confirmed</option>)}</select>
           {missingGroup?<p className="help" role="status">Selected group unavailable. Choose an available audience.</p>:<p className="help">Review freezes the eligible recipients in this audience. Later group additions are not added to that review.</p>}
         </div>
         {!campaigns.length&&<p>Create and save a campaign before reviewing delivery.</p>}
-        <div className="field"><label htmlFor="delivery-time">Schedule in your local time, optional</label><input id="delivery-time" type="datetime-local" value={schedule} onChange={event=>{setSchedule(event.target.value);setReview(null);setChecks(null);}}/></div>
-        <button className="btn" disabled={!campaignId||status?.mode==='off'||missingGroup} onClick={()=>void reviewSaved()}>{busy==='review'?'Reviewing…':'Review saved campaign'}</button>
+        <div className="field"><label htmlFor="delivery-time">Schedule in your local time, optional</label><input id="delivery-time" type="datetime-local" disabled={status?.scope==='tests'} value={schedule} onChange={event=>{setSchedule(event.target.value);setReview(null);setChecks(null);}}/></div>
+        <button className="btn" disabled={!campaignId||status?.mode==='off'||status?.scope==='tests'||missingGroup} onClick={()=>void reviewSaved()}>{busy==='review'?'Reviewing…':'Review saved campaign'}</button>
       </fieldset>
       {checks&&checks.gaps.length>0&&<section aria-label="Delivery preparation gaps" className="notice">
         <h3>Resolve these items before review</h3><ul>{checks.gaps.map((gap,index)=><li key={gap.code+'-'+index}><strong>{gap.title}</strong>: {gap.detail}</li>)}</ul>
@@ -137,10 +139,10 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
       <p className="help">{item.pending+item.preparing+item.submitting} processing · {item.hardBounced} hard bounces · {item.complained} complaints</p>
       {item.reason&&<p className="notice">{item.state==='paused'?'Paused: ':'Action needed: '}{item.reason.replaceAll('_',' ')}. {item.state==='paused'?'The reviewed recipients and reserved allowance are held. Resume when the cause is resolved.':'Preserve uncertain outcomes for reconciliation. A blocked review needs a fresh review after its cause is fixed.'}</p>}
       <div className="actions">
-        {item.state==='reviewed'&&item.purpose!=='test'&&<button className="btn" disabled={!!busy} onClick={()=>void mutate('delivery.approve',{brandId:brand.id,id:item.id},'approve:'+item.id)}>{item.mode==='capture'?'Approve captured delivery':'Approve customer delivery'}</button>}
+        {item.state==='reviewed'&&item.purpose!=='test'&&<button className="btn" disabled={!!busy||status?.scope==='tests'} onClick={()=>void mutate('delivery.approve',{brandId:brand.id,id:item.id},'approve:'+item.id)}>{item.mode==='capture'?'Approve captured delivery':'Approve customer delivery'}</button>}
         {['queued','paused','cancelled','blocked'].includes(item.state)&&<button className="btn secondary" disabled={!!busy} onClick={()=>void mutate('delivery.process',{brandId:brand.id,id:item.id},'process:'+item.id)}>Process or reconcile</button>}
         {item.state==='queued'&&<button className="btn secondary" disabled={!!busy} onClick={()=>void mutate('delivery.pause',{brandId:brand.id,id:item.id},'pause:'+item.id)}>Pause future submissions</button>}
-        {item.state==='paused'&&<button className="btn" disabled={!!busy} onClick={()=>void mutate('delivery.resume',{brandId:brand.id,id:item.id},'resume:'+item.id)}>Resume unchanged delivery</button>}
+        {item.state==='paused'&&<button className="btn" disabled={!!busy||status?.scope==='tests'} onClick={()=>void mutate('delivery.resume',{brandId:brand.id,id:item.id},'resume:'+item.id)}>Resume unchanged delivery</button>}
         {['reviewed','queued','paused'].includes(item.state)&&<button className="btn secondary" disabled={!!busy} onClick={()=>void mutate('delivery.cancel',{brandId:brand.id,id:item.id},'cancel:'+item.id)}>Cancel remaining work</button>}
       </div>
       {item.mode==='capture'&&<div className="actions">{item.recipients.filter(person=>person.state==='accepted').map((person,index)=><button className="btn secondary" key={person.id} disabled={!!busy} onClick={()=>void preview(item.id,person.id)}>View captured email {index+1}</button>)}</div>}

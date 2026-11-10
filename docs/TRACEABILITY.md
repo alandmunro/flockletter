@@ -1,5 +1,7 @@
 # Flockletter requirement traceability
 
+D-052 extends FL-AT-039 and FL-AT-019/020/028 with a separately gated test-only sending scope. [Scope tests](../tests/customer-delivery-scope.test.ts), [activation checks](../tests/customer-settings.test.ts), [transport tests](../tests/customer-delivery-ses.test.ts) and the [browser exercise](../scripts/prove-customer-test-send.ts) cover canonical review/approval, blocked broadcasts before dispatch, one-recipient test completion and reconciliation after scope narrowing. Run results and hosted evidence are recorded in [the playbook](implementation/TEST_ONLY_DELIVERY.md); these references alone do not establish live sending or inbox receipt.
+
 This matrix maps the proposed requirements in [the SRD](SRD.md) to planned acceptance cases. The table lists full-release acceptance cases. The authorized foundation now has targeted implementation evidence in [foundation verification](implementation/VERIFICATION.md). This does not mark broader cases or live provider checks complete.
 
 Later evidence must identify the implementation revision, environment, input scenario, observed result and any remaining external check. Use two synthetic customer workspaces for isolation tests. Keep secrets, personal data and sensitive provider responses out of public evidence.

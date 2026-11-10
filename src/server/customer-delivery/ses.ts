@@ -5,18 +5,21 @@ import type { DeliveryEnvelope } from '../campaign/delivery-provider.js';
 import { inlineOriginals } from '../campaign/ses-simulator.js';
 import { parseSesRoute,type SesRoute } from '../campaign/ses-runtime.js';
 import { createSesInspector } from '../campaign/ses-inspection.js';
+import {customerDeliveryScope,deliveryPurposeAllowed,requireMailingActivation} from './policy.js';
+import type {DeliveryScope} from '../../shared/customer-delivery.js';
 
 export class CustomerSesProvider implements CustomerProvider {
   readonly route:SesRoute;
   readonly fingerprint:string;
   readonly from:string;
   constructor(route:SesRoute,private origin:string,
-    private send:(input:SendEmailCommandInput)=>Promise<{MessageId?:string}>,readonly ready:()=>Promise<boolean>) {
+    private send:(input:SendEmailCommandInput)=>Promise<{MessageId?:string}>,readonly ready:()=>Promise<boolean>,private readonly scope:DeliveryScope='all') {
     this.fingerprint=route.fingerprint;
     this.from=route.from;
     this.route=Object.freeze({...route});
   }
   async submit(message:DeliveryEnvelope):ReturnType<CustomerProvider['submit']> {
+    if(!deliveryPurposeAllowed(this.scope,message.purpose??'broadcast'))return {outcome:'rejected'};
     const route=this.route,unsubscribe=message.unsubscribe?.url;
     if(message.workspaceId!==route.workspaceId||message.brandId!==route.brandId||!z.uuid().safeParse(message.operationKey).success||
       !z.email().safeParse(message.to).success||/[\p{Cc}\p{Cf}]/u.test(message.subject)||message.subject.length>150||!unsubscribe||/[\p{Cc}\p{Cf}]/u.test(unsubscribe)||
@@ -57,7 +60,8 @@ export class CustomerSesProvider implements CustomerProvider {
 
 export function customerSesRuntime(origin:string,env:NodeJS.ProcessEnv) {
   if(env.FLOCKLETTER_CUSTOMER_DELIVERY!=='ses')return;
-  if(env.APP_ENV!=='production'||env.FLOCKLETTER_LIVE_MAILING_APPROVED!=='true')throw Error('Customer SES activation requires explicit production approval.');
+  const scope=customerDeliveryScope(env);
+  requireMailingActivation(env.APP_ENV??'',env,scope);
   const raw=env.FLOCKLETTER_CUSTOMER_SES_BINDINGS,
     accessKeyId=env.FLOCKLETTER_CUSTOMER_SES_ACCESS_KEY_ID,secretAccessKey=env.FLOCKLETTER_CUSTOMER_SES_SECRET_ACCESS_KEY;
   const dynamic=env.FLOCKLETTER_CUSTOMER_INFRASTRUCTURE==='aws'&&env.FLOCKLETTER_INFRASTRUCTURE_ACTIVATION_APPROVED==='true';
@@ -90,7 +94,7 @@ export function customerSesRuntime(origin:string,env:NodeJS.ProcessEnv) {
     const inspector=createSesInspector(route,credentials);
     const status={active};
     const provider=new CustomerSesProvider(route,origin,input=>client.send(new SendEmailCommand(input),{abortSignal:AbortSignal.timeout(6000)}),
-      async()=>status.active&&Object.entries(await inspector.check()).every(([key,value])=>key==='checkedAt'||value===true));
+      async()=>status.active&&Object.entries(await inspector.check()).every(([key,value])=>key==='checkedAt'||value===true),scope);
     entries.push({route:Object.freeze({...route}),provider,configuration:fromConfiguration,get active(){return status.active;},set active(value){status.active=value;},
       close(){client.destroy();inspector.close();}});
   }

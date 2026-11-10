@@ -1,5 +1,6 @@
 import type {Workspace} from '../shared/contracts.js';
 import type {SetupPage,WorkspacePreflight,WorkspaceSetupGap} from '../shared/workspace-preflight.js';
+import {DeliveryScopeNotice} from './DeliveryScopeNotice.js';
 
 export type OnboardingProgressProps={
   workspace:Pick<Workspace,'name'|'brands'|'entitlement'>|null;hasDraft?:boolean;
@@ -32,6 +33,7 @@ export function OnboardingProgress({workspace,hasDraft,readiness:observed,loadin
     {error&&<p role="alert" className="notice error">Setup could not be checked. {error}</p>}
     <ol className="setup-steps">{steps.map(step=><li key={step.label}><div><strong>{step.label}</strong><span>{step.status}</span></div><p>{step.detail}</p></li>)}</ol>
     {readiness&&<>
+      <DeliveryScopeNotice mode={readiness.mode} scope={readiness.deliveryScope??'all'}/>
       <p className="help">Snapshot observed {readiness.observedAt??'at the last refresh'}. Refresh to check again. Private renderer: {readiness.rendererConfigured?'configured':'not configured'}.</p>
       {readiness.mode==='capture'&&<p className="help">Captured exercises do not verify external sending or inbox delivery.</p>}
       {(readiness.brands??[]).map(brand=><section key={brand.id} aria-labelledby={'setup-brand-'+brand.id}>

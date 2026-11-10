@@ -14,11 +14,13 @@ import type { DeliveryOptions,DeliveryRow } from './types.js';
 import { CustomerDeliveryWorker } from './worker.js';
 import { senderProfile,senderFingerprint,senderEligible,legalFooter } from './sender.js';
 import { deliveryOutcomes } from './outcomes.js';
+import {deliveryPurposeAllowed} from './policy.js';
 
 export class CustomerDelivery {
   readonly worker:CustomerDeliveryWorker;
   constructor(readonly db:Database,readonly options:DeliveryOptions) {
     if(options.environment==='production'&&options.mode==='capture')throw Error('Captured customer delivery belongs to a test environment.');
+    if(options.scope!==undefined&&options.scope!=='all'&&options.scope!=='tests')throw Error('Choose a supported delivery scope.');
     this.worker=new CustomerDeliveryWorker(db,options);
   }
   async execute(name:string,raw:unknown,actor:Actor):Promise<unknown> {
@@ -126,7 +128,10 @@ export class CustomerDelivery {
     const gaps=this.options.mode==='off'?['Configure the delivery mode.']:this.options.mode==='capture'?[]:
       !brandId?['Choose a brand to inspect its current sender and provider readiness.']:
       senderVerified?[]:['Complete or refresh the selected brand’s sender verification and provider setup.'];
-    return {mode:this.options.mode,externalSendingEnabled:this.options.mode==='ses',
+    return {mode:this.options.mode,scope:this.options.scope??'all',
+      externalSendingEnabled:this.options.mode==='ses'&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
+      testSendingEnabled:this.options.mode==='ses'&&deliveryPurposeAllowed(this.options.scope,'test'),
+      broadcastsEnabled:this.options.mode!=='off'&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
       eligible:eligibility.eligible,eligibility,brandId:brandId??null,senderVerified,gaps};
   }
   private async read(name:string,raw:unknown,actor:Actor,sql:Sql) {
@@ -166,6 +171,7 @@ export class CustomerDelivery {
   private async review(sql:Sql,actor:Actor,input:ReturnType<typeof customerDeliveryCommands['delivery.review']['schema']['parse']>,testSubscriberId?:string) {
     const purpose=testSubscriberId?'test':'broadcast';
     requireCondition(this.options.mode!=='off',503,'delivery_off','Choose an available delivery configuration.');
+    requireCondition(deliveryPurposeAllowed(this.options.scope,purpose),403,'broadcasts_disabled','Only separately reviewed one-recipient tests are enabled. Broadcasts and schedules are disabled.');
     const draft=(await sql.query<{id:string;brand_id:string;version:number;content:CampaignContent;created_at:Date;updated_at:Date}>(
       'SELECT * FROM campaigns WHERE id=$1 AND brand_id=$2',[input.campaignId,input.brandId])).rows[0];
     requireCondition(draft,404,'campaign_unavailable','Choose a saved campaign in this brand.');
@@ -214,6 +220,7 @@ export class CustomerDelivery {
     return testSubscriberId?{...result,purpose:'test' as const,testSubscriberId} satisfies TestDeliveryReview:result;
   }
   private async approve(sql:Sql,actor:Actor,row:DeliveryRow,test?:{subscriberId:string;expectedVersion:number}) {
+    requireCondition(deliveryPurposeAllowed(this.options.scope,row.purpose),403,'broadcasts_disabled','Only separately reviewed one-recipient tests are enabled. Broadcasts and schedules are disabled.');
     requireCondition((row.purpose==='test')===Boolean(test),409,row.purpose==='test'?'test_approval_required':'test_review_required','Approve a test only through its exact one-recipient test review.');
     if(test) {
       requireCondition(row.version===test.expectedVersion,409,'version_conflict','This test review belongs to a different source version.');

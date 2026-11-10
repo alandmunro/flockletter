@@ -30,7 +30,7 @@ let customer:CustomerWorkflows|undefined;
 const images=process.env.FLOCKLETTER_TEST_SEND_SCREENSHOTS??path.join(scratch,'screenshots');
 try{
   server.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address();assert(address&&typeof address!=='string');const origin='http://127.0.0.1:'+address.port;
-  const env={APP_ENV:'test',APP_ORIGIN:origin,DATABASE_URL:fixture.url,LOCAL_TEST_IDENTITY:'true',FLOCKLETTER_CUSTOMER_BILLING:'exercise',FLOCKLETTER_CUSTOMER_DELIVERY:'capture',FLOCKLETTER_CUSTOMER_AUDIENCE:'exercise'};
+  const env={APP_ENV:'test',APP_ORIGIN:origin,DATABASE_URL:fixture.url,LOCAL_TEST_IDENTITY:'true',FLOCKLETTER_CUSTOMER_BILLING:'exercise',FLOCKLETTER_CUSTOMER_DELIVERY:'capture',FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE:'tests',FLOCKLETTER_CUSTOMER_AUDIENCE:'exercise'};
   const config=loadConfig(env),identity=localIdentity();customer=new CustomerWorkflows(db,config,identity,env);
   customer.delivery.options.render=async()=>{};
   const service=new CommandService(db,undefined,identity.isOwner,undefined,undefined,identity.team,undefined,undefined,undefined,'test',undefined,customer);
@@ -62,6 +62,10 @@ try{
     page.on('request',request=>{const name=new URL(request.url()).pathname.split('/api/v1/commands/')[1];if(name&&request.method()==='POST')calls.push({name,body:request.postDataJSON()});});
     await page.goto(origin);await rejectOptionalCookies(page);
     await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Delivery',exact:true}).click();
+    await page.getByText('Only reviewed one-recipient tests are allowed.',{exact:false}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Review saved campaign',exact:true}).isDisabled(),true);
+    assert.equal(await page.getByLabel('Audience',{exact:true}).isDisabled(),true);
+    assert.equal(await page.getByLabel('Schedule in your local time, optional',{exact:true}).isDisabled(),true);
     const panel=page.getByRole('region',{name:'Test one confirmed contact',exact:true});
     const picker=panel.getByRole('combobox',{name:'Test recipient',exact:true});
     await panel.getByRole('option',{name:'reader@trail.example.com',exact:true}).waitFor({state:'attached'});
