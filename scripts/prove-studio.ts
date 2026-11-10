@@ -164,7 +164,7 @@ async function editorJourney(page: Page, site: Awaited<ReturnType<typeof startSt
     .filter({ has: page.getByText('Plain-text version', { exact: true }) })
     .locator('pre');
   assert.match(await plain.innerText(), /Pasted marker\./);
-  assert((await plain.innerText()).includes('https://retailer.example.com/shop'));
+  assert.match(await plain.innerText(), /https:\/\/retailer\.example\.com\/shop/);
   await button(page, 'Desktop').click();
   const desktop = await page.locator('iframe[title="Campaign email preview"]').boundingBox();
   await button(page, 'Mobile').click();
