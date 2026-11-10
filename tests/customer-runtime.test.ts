@@ -649,3 +649,20 @@ it('shares current campaign preflight across read and delivery scopes without re
  await expect(f.service.execute('campaign.preflight',{id:draft.id},read.actor)).rejects.toMatchObject({code:'connection_revoked'});
  owners.delete(f.workspaceId);await expect(f.service.execute('campaign.preflight',{id:draft.id},summary.actor)).rejects.toMatchObject({code:'owner_required'});
 });
+
+
+it('returns redacted preparation observations through the canonical owner command while workflows stay captured', async()=>{
+  const f=await factory();
+  const secret='synthetic-private-credential-value';
+  f.env.FLOCKLETTER_CUSTOMER_STRIPE_KEY=secret;
+  const result=await f.call<CustomerOperationsStatus>('operations.status',{});
+  expect(result.preparation).toEqual(expect.arrayContaining([
+    expect.objectContaining({area:'Billing provider',state:'settings_missing'}),
+    expect.objectContaining({area:'Trial protection',state:'settings_missing'}),
+  ]));
+  expect(JSON.stringify(result)).not.toContain(secret);
+  expect(result.safeguards.externalDelivery).toBe(false);
+  expect(result.safeguards.realCharges).toBe(false);
+  expect(result.gaps).toEqual(expect.arrayContaining([expect.objectContaining({code:'embedded_worker'})]));
+  expect(result.gaps.some(gap=>gap.code==='sleeping_web_worker')).toBe(false);
+});

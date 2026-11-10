@@ -260,6 +260,10 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   // Run the same durable worker through its owner UI; the render dependency is a deterministic
   // injected no-network adapter. The separate pinned Listmonk integration has its own proof.
   await navigate(page, 'Operations');
+  await page.getByRole('heading', {name:'Recorded setup',exact:true}).waitFor({state:'visible'});
+  assert.match(await page.locator('[aria-labelledby="preparation-heading"]').innerText(), /Missing settings/);
+  assert.match(await page.locator('[aria-labelledby="preparation-heading"]').innerText(), /not provider verification/);
+  await photo(page,'operations-preparation');
   await button(page, 'Run saved jobs').click();
   await navigate(page, 'Delivery');
   await button(page, 'View captured email 1').click();

@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Api } from './api.js';
 import { operationKey } from './api.js';
-import type { CustomerOperationsStatus } from '../shared/customer-operations.js';
+import type { CustomerOperationsStatus, CustomerPreparationCheck } from '../shared/customer-operations.js';
 import {WorkerReadiness} from './WorkerReadiness.js';
+
+const preparationStateLabels: Record<CustomerPreparationCheck['state'], string> = {
+  settings_recorded: 'Recorded',
+  settings_missing: 'Missing settings',
+  settings_invalid: 'Needs review',
+};
 
 export function CustomerOperations({ api }: { api: Api }) {
   const requestKey=useRef(operationKey());
@@ -128,6 +134,22 @@ export function CustomerOperations({ api }: { api: Api }) {
               <dd>{status.queue.unknown}</dd>
             </dl>
           </section>
+
+          {status.preparation && status.preparation.length > 0 && (
+            <section aria-labelledby="preparation-heading">
+              <h3 id="preparation-heading" className="badge">Recorded setup</h3>
+              <p className="help">
+                Recorded settings are not provider verification, launch approval or customer eligibility. These observations concern service configuration; external checks remain separate.
+              </p>
+              <ul>
+                {status.preparation.map((check) => (
+                  <li key={`${check.area}-${check.state}`}>
+                    <strong>{check.area}</strong> ({preparationStateLabels[check.state]}): {check.detail}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           <section aria-labelledby="gaps-heading">
             <h3 id="gaps-heading" className="badge">Setup Gaps</h3>
