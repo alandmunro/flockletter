@@ -1,6 +1,8 @@
 import Stripe from 'stripe';
 import { plans } from '../../shared/contracts.js';
 import type { CustomerBillingState, CustomerPlan } from '../../shared/customer-billing.js';
+import { billingPortalMatches, billingProviderEvents, readBillingCatalogue, readBillingPrice, type BillingInspectionTarget } from './configuration-inspection.js';
+import { scheduledDowngradePlan } from './scheduled-plan.js';
 
 export type ProviderIntent = {
   id: string;
@@ -50,6 +52,7 @@ export type ProviderSubscription = {
   failedSince: Date | null;
   previousSubscription?: string | null;
   previousRevision?: string | null;
+  pendingPlan?: CustomerPlan | null;
 };
 export type CustomerBillingProvider = {
   account: string;
@@ -63,7 +66,7 @@ export type CustomerBillingProvider = {
   createTrial?(intent: ProviderTrialActivation): Promise<ProviderSubscription>;
   lookupTrial?(intent: ProviderTrialActivation): Promise<ProviderSubscription | null>;
   inspectSubscription?(id: string): Promise<ProviderSubscription>;
-  portal(customer: string, key: string): Promise<string>;
+  portal(customer: string, key: string, plan?: CustomerPlan, subscription?: string): Promise<string>;
   verify(raw: Buffer, signature: string): ProviderNotice | null;
   resolve(notice: ProviderNotice): Promise<{
     subscription: ProviderSubscription | null;
@@ -89,19 +92,7 @@ function resourceId(value: unknown) {
     throw invalid();
   return value.id;
 }
-const acceptedEvents = new Set([
-  'checkout.session.completed',
-  'checkout.session.async_payment_succeeded',
-  'checkout.session.expired',
-  'customer.subscription.created',
-  'customer.subscription.updated',
-  'customer.subscription.deleted',
-  'invoice.paid',
-  'invoice.payment_failed',
-  'charge.dispute.created',
-  'charge.refunded',
-  'radar.early_fraud_warning.created',
-]);
+const acceptedEvents = new Set<string>(billingProviderEvents);
 /** Public readiness only. No account IDs, keys, prices or secret values leave this function. */
 export function customerBillingConfiguration(env: NodeJS.ProcessEnv) {
   const mode = env.FLOCKLETTER_CUSTOMER_BILLING ?? 'off';
@@ -110,6 +101,10 @@ export function customerBillingConfiguration(env: NodeJS.ProcessEnv) {
     'FLOCKLETTER_CUSTOMER_STRIPE_KEY',
     'FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK',
     'FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG',
+    'FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG',
+    'FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG',
+    'FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG',
+    'FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG',
     'FLOCKLETTER_CUSTOMER_STARTER_PRICE',
     'FLOCKLETTER_CUSTOMER_GROWTH_PRICE',
     'FLOCKLETTER_CUSTOMER_PRO_PRICE',
@@ -143,11 +138,17 @@ export function stripeCustomerProvider(
     account = env.FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT ?? '',
     key = env.FLOCKLETTER_CUSTOMER_STRIPE_KEY ?? '',
     webhook = env.FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK ?? '',
-    card = env.FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG ?? '';
+    card = env.FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG ?? '',
+    portalConfiguration = env.FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG ?? '';
   const prices: Record<CustomerPlan, string> = {
     starter: env.FLOCKLETTER_CUSTOMER_STARTER_PRICE ?? '',
     growth: env.FLOCKLETTER_CUSTOMER_GROWTH_PRICE ?? '',
     pro: env.FLOCKLETTER_CUSTOMER_PRO_PRICE ?? '',
+  };
+  const planPortalConfigurations: Record<CustomerPlan, string> = {
+    starter: env.FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG ?? '',
+    growth: env.FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG ?? '',
+    pro: env.FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG ?? '',
   };
   if (
     !['stripe_test', 'stripe_live'].includes(mode) ||
@@ -155,6 +156,9 @@ export function stripeCustomerProvider(
     !new RegExp('^(sk|rk)_' + (live ? 'live' : 'test') + '_[A-Za-z0-9]+$').test(key) ||
     !webhook.startsWith('whsec_') ||
     !/^pmc_[A-Za-z0-9]+$/.test(card) ||
+    !/^bpc_[A-Za-z0-9]+$/.test(portalConfiguration) ||
+    !Object.values(planPortalConfigurations).every(id => /^bpc_[A-Za-z0-9]+$/.test(id)) ||
+    new Set([portalConfiguration, ...Object.values(planPortalConfigurations)]).size !== 4 ||
     !Object.values(prices).every((v) => /^price_[A-Za-z0-9]+$/.test(v)) ||
     new Set(Object.values(prices)).size !== 3 ||
     new URL(origin).origin !== origin ||
@@ -165,6 +169,7 @@ export function stripeCustomerProvider(
   const stripe = clientFactory
     ? clientFactory(key)
     : new Stripe(key, { maxNetworkRetries: 0, timeout: 7000 });
+  const inspectionTarget: BillingInspectionTarget = { account, live, origin, prices, cardConfiguration: card, portalConfiguration, planPortalConfigurations };
   async function accountCheck() {
     if ((await stripe.accounts.retrieveCurrent()).id !== account) throw invalid();
   }
@@ -202,6 +207,19 @@ export function stripeCustomerProvider(
       plan = planFor(item),
       customer = reference(s.customer);
     if (!customer) throw invalid();
+    let pendingPlan: CustomerPlan | null = null;
+    const scheduleId = reference(s.schedule);
+    if (scheduleId) {
+      const schedule = await stripe.subscriptionSchedules.retrieve(scheduleId);
+      pendingPlan = scheduledDowngradePlan(schedule, {
+        scheduleId, subscriptionId: s.id, customerId: customer, live, currentPlan: plan, prices,
+        periodStart: item.current_period_start, periodEnd: item.current_period_end,
+      });
+      if (pendingPlan) {
+        const nextPrice = await readBillingPrice(stripe, inspectionTarget, pendingPlan);
+        if (!nextPrice.active || planFor({ price: nextPrice, quantity: 1 }) !== pendingPlan) throw invalid();
+      }
+    }
     let payment = s.default_payment_method;
     if (!payment) {
       const c = await stripe.customers.retrieve(customer, {
@@ -235,6 +253,7 @@ export function stripeCustomerProvider(
       failedSince: state === 'past_due' ? date(invoice?.created) : null,
       previousSubscription: s.metadata.fl_rejoin_of ?? null,
       previousRevision: s.metadata.fl_rejoin_revision ?? null,
+      pendingPlan,
     };
   }
   async function checkoutProjection(
@@ -335,6 +354,7 @@ export function stripeCustomerProvider(
       const result = await stripe.checkout.sessions.create(
         {
           mode: 'setup',
+          managed_payments: { enabled: false },
           currency: 'usd',
           client_reference_id: intent.workspace,
           metadata,
@@ -391,7 +411,7 @@ export function stripeCustomerProvider(
     },
     async createTrial(intent) {
       await accountCheck();
-      const price = await stripe.prices.retrieve(prices[intent.plan]);
+      const price = await readBillingPrice(stripe, inspectionTarget, intent.plan);
       // Reuse the same exact monthly-price checks used on authoritative subscription snapshots.
       if (!price.active) throw invalid();
       planFor({ price, quantity: 1 });
@@ -432,7 +452,7 @@ export function stripeCustomerProvider(
         if (matches[0]) return verifyTrial(await snapshot(matches[0].id), intent);
         if (!list.has_more) return null;
         starting_after = list.data.at(-1)?.id;
-        if (!starting_after) return null;
+        if (!starting_after) throw invalid();
       }
       throw invalid();
     },
@@ -442,7 +462,7 @@ export function stripeCustomerProvider(
     },
     async checkout(intent) {
       await accountCheck();
-      const price = await stripe.prices.retrieve(prices[intent.plan]),
+      const price = await readBillingPrice(stripe, inspectionTarget, intent.plan),
         plan = plans.find((p) => p.id === intent.plan)!;
       if (
         !price.active ||
@@ -466,6 +486,7 @@ export function stripeCustomerProvider(
       const result = await stripe.checkout.sessions.create(
         {
           mode: 'subscription',
+          managed_payments: { enabled: false },
           client_reference_id: intent.workspace,
           metadata,
           ...(intent.customer ? { customer: intent.customer } : {}),
@@ -510,14 +531,34 @@ export function stripeCustomerProvider(
         if (matches[0]) return checkoutProjection(matches[0], intent);
         if (!items.has_more) return null;
         starting_after = items.data.at(-1)?.id;
-        if (!starting_after) return null;
+        if (!starting_after) throw invalid();
       }
-      return null;
+      throw invalid();
     },
-    async portal(customer, key) {
+    async portal(customer, key, plan, subscription) {
       await accountCheck();
+      const catalogue = await readBillingCatalogue(stripe, inspectionTarget);
+      const selectedConfiguration = plan ? planPortalConfigurations[plan] : portalConfiguration;
+      if (!selectedConfiguration) throw invalid();
+      const configuration = await stripe.billingPortal.configurations.retrieve(selectedConfiguration, { expand: ['features.subscription_update.products'] });
+      if (!billingPortalMatches(configuration, inspectionTarget, catalogue, plan)) throw invalid();
+      let flow: Stripe.BillingPortal.SessionCreateParams.FlowData | undefined;
+      if (plan) {
+        if (!subscription) throw invalid();
+        const current = await stripe.subscriptions.retrieve(subscription);
+        const item = current.items.data[0];
+        if (current.id !== subscription || current.livemode !== live || reference(current.customer) !== customer ||
+            !['active', 'trialing'].includes(current.status) || current.collection_method !== 'charge_automatically' ||
+            current.items.has_more || current.items.data.length !== 1 || !item || current.schedule ||
+            planFor(item) === plan) throw invalid();
+        flow = {
+          type: 'subscription_update_confirm',
+          subscription_update_confirm: { subscription: current.id, items: [{ id: item.id, price: prices[plan], quantity: 1 }] },
+          after_completion: { type: 'redirect', redirect: { return_url: origin + '/' } },
+        };
+      }
       const result = await stripe.billingPortal.sessions.create(
-        { customer, return_url: origin + '/' },
+        { customer, return_url: origin + '/', configuration: selectedConfiguration, ...(flow ? { flow_data: flow } : {}) },
         { idempotencyKey: 'flockletter-customer-portal-' + key },
       );
       if (new URL(result.url).origin !== 'https://billing.stripe.com') throw invalid();
@@ -613,6 +654,15 @@ export function stripeCustomerProvider(
         if (invoice) {
           if (invoice.livemode !== live) throw invalid();
           subscription = reference(invoice.parent?.subscription_details?.subscription);
+        }
+        if (event.type.startsWith('subscription_schedule.')) {
+          const schedule = await stripe.subscriptionSchedules.retrieve(id);
+          if (schedule.id !== id || schedule.livemode !== live) throw invalid();
+          subscription = reference(schedule.subscription) ?? reference(schedule.released_subscription);
+          if (!subscription) throw invalid();
+          const observed = await snapshot(subscription);
+          if (observed.customer !== reference(schedule.customer)) throw invalid();
+          return { subscription: observed, checkoutId: null, intentId: null, workspace: null };
         }
       }
       return {

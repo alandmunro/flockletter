@@ -452,8 +452,10 @@ export class CustomerBilling {
     }
     if (command === 'customerBilling.rejoin')
       return this.rejoin(actor, customerBillingCommands[command].schema.parse(raw));
-    if (command === 'customerBilling.portal')
-      return this.portal(actor, customerBillingCommands[command].schema.parse(raw).operationKey);
+    if (command === 'customerBilling.portal') {
+      const request = customerBillingCommands[command].schema.parse(raw);
+      return this.portal(actor, request.operationKey, request.plan);
+    }
     requireCondition(
       this.options.exerciseEnabled && this.options.environment !== 'production',
       503,
@@ -1092,7 +1094,7 @@ export class CustomerBilling {
       url: result.url,
     };
   }
-  private async portal(actor: Actor, key: string) {
+  private async portal(actor: Actor, key: string, plan?: CustomerPlan) {
     const gateway = this.provider(),
       workspace = actor.workspaceId;
     const intent = await this.locked(workspace, async (sql) => {
@@ -1101,7 +1103,8 @@ export class CustomerBilling {
         await sql.query<{
           provider_customer: string;
           provider_account: string;
-        }>("SELECT provider_customer,provider_account FROM customer_subscriptions WHERE source='stripe'")
+          provider_subscription: string;
+        }>("SELECT provider_customer,provider_account,provider_subscription FROM customer_subscriptions WHERE source='stripe'")
       ).rows[0];
       if (!subscription) {
         const setup = (
@@ -1137,7 +1140,7 @@ export class CustomerBilling {
           'The pending billing agreement requires support review.',
         );
         await this.requireOwner(actor, sql);
-        subscription = { provider_customer: verified.customer, provider_account: gateway.account };
+        subscription = { provider_customer: verified.customer, provider_account: gateway.account, provider_subscription: verified.id };
       }
       requireCondition(
         subscription?.provider_account === gateway.account,
@@ -1145,7 +1148,9 @@ export class CustomerBilling {
         'subscription_required',
         'A verified billing subscription is required.',
       );
-      const hash = digest(subscription.provider_customer);
+      // Preserve historical management-operation hashes, while binding each new
+      // destination selection to the same durable operation and retry key.
+      const hash = digest(plan ? JSON.stringify([subscription.provider_customer, subscription.provider_subscription, plan]) : subscription.provider_customer);
       const previous = (
         await sql.query<{
           request_hash: string;
@@ -1165,6 +1170,7 @@ export class CustomerBilling {
         );
         return {
           customer: subscription.provider_customer,
+          subscription: subscription.provider_subscription,
           ready: previous.state === 'completed',
           createdAt: previous.created_at,
         };
@@ -1182,6 +1188,7 @@ export class CustomerBilling {
       );
       return {
         customer: subscription.provider_customer,
+        subscription: subscription.provider_subscription,
         ready: false,
         createdAt,
       };
@@ -1196,7 +1203,7 @@ export class CustomerBilling {
     let url: string;
     await this.requireOwner(actor);
     try {
-      url = await gateway.portal(intent.customer, key);
+      url = await gateway.portal(intent.customer, key, plan, intent.subscription);
     } catch {
       throw new AppError(503, 'portal_pending', 'Retry this same portal request.');
     }
@@ -1425,13 +1432,13 @@ export class CustomerBilling {
       }
       const applied = await sql.query(
         `INSERT INTO customer_subscriptions(workspace_id,id,source,state,plan,trial_started_at,trial_end_at,period_start_at,period_end_at,
-        cancel_at,failed_since,effective_end_at,provider_account,provider_customer,provider_subscription,observed_at,risk_hold,risk_reason)
-        VALUES($1,$2,'stripe',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now(),$15,$16)
+        cancel_at,failed_since,effective_end_at,provider_account,provider_customer,provider_subscription,observed_at,risk_hold,risk_reason,pending_plan)
+        VALUES($1,$2,'stripe',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now(),$15,$16,$19)
         ON CONFLICT(workspace_id) DO UPDATE SET state=excluded.state,plan=excluded.plan,revision=customer_subscriptions.revision+1,
         trial_started_at=excluded.trial_started_at,trial_end_at=excluded.trial_end_at,period_start_at=excluded.period_start_at,
         period_end_at=excluded.period_end_at,cancel_at=excluded.cancel_at,
         failed_since=CASE WHEN excluded.state IN ('past_due','suspended') THEN coalesce(customer_subscriptions.failed_since,excluded.failed_since,now()) ELSE NULL END,
-        effective_end_at=excluded.effective_end_at,observed_at=now(),pending_plan=NULL,
+        effective_end_at=excluded.effective_end_at,observed_at=now(),pending_plan=excluded.pending_plan,
         provider_account=excluded.provider_account,provider_customer=excluded.provider_customer,provider_subscription=excluded.provider_subscription,
         risk_hold=customer_subscriptions.risk_hold OR excluded.risk_hold,
         risk_reason=coalesce(excluded.risk_reason,customer_subscriptions.risk_reason)
@@ -1455,6 +1462,7 @@ export class CustomerBilling {
           notice.risk ? notice.kind : null,
           replacing,
           binding?.rejoin?.revision ?? null,
+          snapshot.pendingPlan ?? null,
         ],
       );
       requireCondition(

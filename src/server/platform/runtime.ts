@@ -9,6 +9,7 @@ import type { CustomerWorkflows } from '../customer-runtime.js';
 import { OperatorStore } from './store.js';
 import { platformIdentity } from './auth.js';
 import { PlatformService } from './service.js';
+import {readWorkerHeartbeat} from '../customer-worker-heartbeat.js';
 export async function platformRuntime(config:Config,db:Database,auth:Authenticator,customer:CustomerWorkflows,env:NodeJS.ProcessEnv=process.env){
  const mode=env.FLOCKLETTER_PLATFORM_MODE??'off';
  if(mode==='off')return undefined;
@@ -30,7 +31,7 @@ export async function platformRuntime(config:Config,db:Database,auth:Authenticat
   alerts={provider:new ResendSupportProvider(alertConfiguration.sending,undefined,alertConfiguration.retrieval),
    from:alertConfiguration.from,to:alertConfiguration.to};
  }
- const platform=new PlatformService(db,store,{mode:selected,identity,support:customer.support,databaseName:new URL(config.databaseUrl!).pathname.slice(1),plan:planner?.plan,signing,alerts,gaps:selected==='capture'?['Workspace-only exercise. Global customer controls require a separate operator organization, restricted database role and recent MFA.','Hosted deletion needs configured protected checkpoint storage, exact external-copy inventory and a separate offline executor.','Live support and platform email notifications remain disabled until separately activated.']:['Hosted retention signing is disabled until protected evidence and the separate planner role are configured.']});
+ const platform=new PlatformService(db,store,{mode:selected,identity,support:customer.support,databaseName:new URL(config.databaseUrl!).pathname.slice(1),workerHeartbeat:()=>readWorkerHeartbeat(db,customer.settings.dedicated?'dedicated':'embedded'),plan:planner?.plan,signing,alerts,gaps:selected==='capture'?['Workspace-only exercise. Global customer controls require a separate operator organization, restricted database role and recent MFA.','Hosted deletion needs configured protected checkpoint storage, exact external-copy inventory and a separate offline executor.','Live support and platform email notifications remain disabled until separately activated.']:['Hosted retention signing is disabled until protected evidence and the separate planner role are configured.']});
  customer.support.options.operatorAuthorized=(user,workspace,reference)=>platform.supportAuthorized(user,workspace,reference);
  if(customer.support.options.nativeInbound)customer.support.options.nativeInbound.onUnassigned=email=>platform.unassigned(email);
  customer.observe=status=>platform.observe(status.workspaceId,status.status);

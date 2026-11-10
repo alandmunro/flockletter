@@ -648,7 +648,7 @@ it('applies the active billing company, brand and seat caps without elevating di
   });
 });
 
-async function rejoinFixture() {
+async function rejoinFixture(ended = true) {
   const s = await shop();
   let posts = 0,
     last: import('../src/server/customer-billing/provider.js').ProviderIntent | undefined;
@@ -764,9 +764,11 @@ async function rejoinFixture() {
   await seedLegacyCheckout(s.actor, 'starter', gateway, legacyKey);
   await real.execute('customerBilling.checkout', { operationKey: legacyKey, plan: 'starter' }, s.actor);
   await emit('evt_initial', old, 'cs_old', 'checkout.session.completed');
-  old.state = 'canceled';
-  old.endedAt = new Date(base.getTime() - 3600000);
-  await emit('evt_ended', old);
+  if (ended) {
+    old.state = 'canceled';
+    old.endedAt = new Date(base.getTime() - 3600000);
+    await emit('evt_ended', old);
+  }
   return { s, real, old, emit, sessions, posts: () => posts, last: () => last, active: () => active! };
 }
 
@@ -779,6 +781,13 @@ it('serializes paid rejoin, reuses the existing customer, archives history and i
     f.real.execute('customerBilling.rejoin', first, f.s.actor),
     f.real.execute('customerBilling.rejoin', second, f.s.actor),
   ]);
+  const winner = await db.tenant(f.s.workspaceId, async sql =>
+    (await sql.query<{ operation_key: string }>(
+      "SELECT operation_key FROM customer_billing_intents WHERE command='customerBilling.rejoin'",
+    )).rows[0]!.operation_key,
+  );
+  expect([first.operationKey, second.operationKey]).toContain(winner);
+  const original = { ...first, operationKey: winner };
   expect(f.posts()).toBe(2);
   const restarted = new CustomerBilling(db, f.real.options);
   await restarted.execute('customerBilling.rejoin', first, f.s.actor);
@@ -805,7 +814,7 @@ it('serializes paid rejoin, reuses the existing customer, archives history and i
   await f.emit('evt_old_cancel', f.old);
   await f.emit('evt_rejoined', f.active(), null, 'invoice.paid');
   expect(await f.real.status(f.s.workspaceId)).toEqual(joined);
-  expect(await restarted.execute('customerBilling.rejoin', first, f.s.actor)).toMatchObject({
+  expect(await restarted.execute('customerBilling.rejoin', original, f.s.actor)).toMatchObject({
     state: 'rejoined',
   });
   expect(f.posts()).toBe(2);
@@ -823,6 +832,28 @@ it('serializes paid rejoin, reuses the existing customer, archives history and i
       sql.query('UPDATE customer_subscription_history SET replaced_by=$1', ['forbidden']),
     ),
   ).rejects.toMatchObject({ code: '42501' });
+});
+
+it('persists a verified renewal downgrade, applies future caps and clears it when the provider releases the schedule', async () => {
+  const f = await rejoinFixture(false);
+  f.old.state = 'active';
+  f.old.trialStart = null;
+  f.old.trialEnd = null;
+  f.old.plan = 'growth';
+  f.old.pendingPlan = 'starter';
+  await f.emit('evt_schedule', f.old, null, 'subscription_schedule.updated');
+  expect(await f.real.status(f.s.workspaceId)).toMatchObject({ plan: 'growth', pendingPlan: 'starter' });
+  const reserve = (dueAt: Date) => db.tenant(f.s.workspaceId, sql => f.real.reserve(sql, f.s.workspaceId, {
+    operationKey: randomUUID(), campaignId: f.s.campaign.id, brandId: f.s.brandId, recipients: 3000, dueAt,
+  }));
+  await expect(reserve(new Date('2026-11-20T00:00:00Z'))).resolves.toMatchObject({ recipients: 3000 });
+  await expect(reserve(f.old.periodEnd)).rejects.toMatchObject({ code: 'allowance_exceeded' });
+  f.old.pendingPlan = null;
+  await f.emit('evt_schedule_released', f.old, null, 'subscription_schedule.released');
+  expect(await f.real.status(f.s.workspaceId)).toMatchObject({ plan: 'growth', pendingPlan: null });
+  await expect(reserve(f.old.periodEnd)).resolves.toMatchObject({ recipients: 3000 });
+  await f.emit('evt_schedule_released', f.old, null, 'subscription_schedule.released');
+  expect((await f.real.status(f.s.workspaceId)).pendingPlan).toBeNull();
 });
 
 it('refuses overlapping old provider service and requires an unchanged prior revision for verified rejoin', async () => {

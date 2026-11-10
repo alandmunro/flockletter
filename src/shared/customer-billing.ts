@@ -56,10 +56,10 @@ export const customerBillingCommands = {
     },
   ),
   'customerBilling.portal': commandDefinition(
-    'Open the billing provider’s customer portal for this workspace.',
+    'Open workspace billing management or review a selected destination plan in the provider portal. Access changes require verified provider facts.',
     'owner',
     true,
-    { operationKey: z.uuid() },
+    { operationKey: z.uuid(), plan: customerPlan.optional() },
   ),
   'customerBilling.restartCheckout': commandDefinition(
     'Start normal paid checkout only after the exact previous session is verified expired; the trial is not renewed.',

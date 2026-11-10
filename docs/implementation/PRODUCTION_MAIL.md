@@ -2,6 +2,12 @@
 
 This checklist supports FL-DEL-001–007, FL-AUD-002/004, FL-SUP-001/002 and FL-OPS-001/003/004/006. It records configuration requirements, not evidence that a provider or domain is active. Newsletter delivery currently uses the SES adapter; Resend handles customer confirmations, support and platform alerts. Selecting a provider/plan, issuing its credentials and enabling external mail remain explicit operational actions.
 
+## November 9 sender preparation evidence
+
+The owner approved five SES verification records for `frostyflamingosoftware.com`: three Easy DKIM CNAME records and an MX/SPF pair only at `bounce.flockletter.frostyflamingosoftware.com`. Cloudflare imported all five with DNS proxying disabled, and authoritative DNS lookups returned the exact intended records. Existing root MX, SPF and DMARC values and forwarding rules were preserved. No sender credentials or external messages were created by the DNS import. SES domain/DKIM/MAIL FROM verification is a separate provider observation; at this check it remained pending, and the Ohio account remained in the sandbox.
+
+Owner-supplied business details are kept in the approved sender profile and private review material, outside this public repository. The Flockletter-owned sender profile uses the selected platform sender and support reply address while delivery remains off. This does not populate another customer's brand or issue FFA's complimentary grant. Final legal wording, exact product tax classification, provider configuration and live activation remain separate gates.
+
 ## Resend account and credential boundaries
 
 Use a Flockletter-only Resend account or team. The provider currently offers `sending_access` and `full_access`; retrieval requires the latter and cannot be described as read-only. Sending keys should use `sending_access` restricted to the verified sending domain. Separate sending and retrieval credentials are mandatory for live confirmations, support and approved alerts; the application never falls back to a sending key for retrieval. Keys cannot be shared with another application's mail account. [Resend key permissions](https://resend.com/docs/api-reference/api-keys/create-api-key)

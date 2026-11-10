@@ -16,6 +16,7 @@ import { Database } from '../src/server/db.js';
 import { CommandService, type Actor } from '../src/server/service.js';
 import { CustomerWorkflows } from '../src/server/customer-runtime.js';
 import type { Workspace } from '../src/shared/contracts.js';
+import type { CustomerBillingStatus } from '../src/shared/customer-billing.js';
 
 // Qwen supplied the first harness draft; chat corrected configuration, canonical service
 // wiring, lifecycle cleanup and authority assumptions, then built/reviewed the real journeys.
@@ -281,6 +282,38 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   assert.equal(captured, 1, 'Only the confirmed unsuppressed reader receives the captured newsletter.');
   await button(page, 'Close email').click();
 }
+
+/** Browser presentation/transport proof only; hosted Stripe confirmation is separate. */
+async function proveTargetedBillingSelection(page: Page, status: CustomerBillingStatus) {
+  const statusPath = '**/api/v1/commands/customerBilling.status';
+  const portalPath = '**/api/v1/commands/customerBilling.portal';
+  const requests: Array<{plan?:string;operationKey:string}> = [];
+  await page.route(statusPath, route => route.fulfill({json:{result:{...status,mode:'stripe',source:'stripe',state:'active',plan:'growth',pendingPlan:null,eligible:true,reasons:[]}}}));
+  await page.route(portalPath, route => {
+    requests.push(route.request().postDataJSON() as {plan?:string;operationKey:string});
+    return route.fulfill({json:{result:{alreadyIssued:true,url:null}}});
+  });
+  try {
+    await navigate(page,'Subscription');
+    await button(page,'Manage billing with Stripe').waitFor();
+    await page.getByRole('combobox',{name:/^Plan/}).selectOption('growth');
+    assert.equal(await button(page,'Review selected plan with Stripe').isDisabled(),true);
+    for(const plan of ['pro','starter']) {
+      await page.getByRole('combobox',{name:/^Plan/}).selectOption(plan);
+      await waitForCommand(page,'customerBilling.portal',()=>button(page,'Review selected plan with Stripe').click());
+      assert.equal(requests.at(-1)?.plan,plan);
+      assert.match(requests.at(-1)!.operationKey,/^[a-f0-9-]{36}$/);
+      await button(page,'Manage billing with Stripe').waitFor({state:'visible'});
+    }
+    await waitForCommand(page,'customerBilling.portal',()=>button(page,'Manage billing with Stripe').click());
+    assert.equal(requests.at(-1)?.plan,undefined);
+    assert.equal(new Set(requests.map(request=>request.operationKey)).size,3);
+    await photo(page,'billing-targeted-plan-selection');
+  } finally {
+    await page.unroute(statusPath);
+    await page.unroute(portalPath);
+  }
+}
 async function phaseInfrastructure(page: Page, db: Database, brand: string) {
   await navigate(page, 'Delivery');
   await page.getByLabel('From name', { exact: true }).fill('Trail Notes');
@@ -495,6 +528,7 @@ try {
       await page.goto(origin);await rejectOptionalCookies(page);
       await page.getByRole('navigation', { name: 'Main navigation' }).waitFor();
       await journey(page, db, data.brands[0]!.id);
+      if(index===0) await proveTargetedBillingSelection(page,await service.execute('customerBilling.status',{},actor) as CustomerBillingStatus);
       assert.deepEqual(failures, [], 'No browser runtime errors');
     } catch (error) {
       await photo(page, 'failure-phase-' + (index + 1));

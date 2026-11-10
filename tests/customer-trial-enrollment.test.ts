@@ -550,6 +550,23 @@ it('allows independently verified pending agreement management without granting 
     url: 'https://billing.stripe.com/test',
   });
   expect(opened).toBe(1);
+  const selectedKey = randomUUID();
+  let selectedCalls = 0;
+  p.g.portal = async (_customer, key, plan, subscription) => {
+    expect(subscription).toBe('sub_'+r.setupId);
+    expect(key).toBe(selectedKey);
+    expect(plan).toBe('pro');
+    selectedCalls++;
+    if(selectedCalls===1) throw Error('Lost provider reply');
+    return 'https://billing.stripe.com/test';
+  };
+  await expect(s.call('customerBilling.portal',{operationKey:selectedKey,plan:'pro'})).rejects.toMatchObject({code:'portal_pending'});
+  await expect(s.call('customerBilling.portal',{operationKey:selectedKey,plan:'growth'})).rejects.toMatchObject({code:'operation_conflict'});
+  await expect(s.call('customerBilling.portal',{operationKey:selectedKey})).rejects.toMatchObject({code:'operation_conflict'});
+  expect(selectedCalls).toBe(1);
+  expect(await s.call('customerBilling.portal',{operationKey:selectedKey,plan:'pro'})).toMatchObject({url:'https://billing.stripe.com/test'});
+  expect(await s.call('customerBilling.portal',{operationKey:selectedKey,plan:'pro'})).toMatchObject({alreadyIssued:true,url:null});
+  expect(selectedCalls).toBe(2);
   expect(await s.call('customerBilling.status')).toMatchObject({
     source: 'preparation',
     eligible: false,

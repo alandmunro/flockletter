@@ -39,6 +39,7 @@ describe('production promotion workflow', () => {
       'Confirm the Render service', 'Deploy production', 'Verify production serves'].map(index);
     expect(order.every(i => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(workflow).toContain('git -C candidate rev-parse HEAD');
   });
 
   it('runs release tooling only from the trusted workflow commit, never from the commit being promoted', () => {

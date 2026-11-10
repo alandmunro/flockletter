@@ -376,6 +376,16 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
                             ? 'Resume Stripe checkout'
                             : 'Verify card with Stripe'}
                     </button>
+                    {status.source === 'stripe' && (
+                      <>
+                        <button className="btn secondary" type="button" disabled={busy || plan === status.plan}
+                          onClick={() => void run('customerBilling.portal', { plan })}>
+                          Review selected plan with Stripe
+                        </button>
+                        <p>Stripe shows the final price and timing before you confirm. Upgrades are prorated;
+                          downgrades take effect at renewal. Opening the review changes no plan.</p>
+                      </>
+                    )}
                     {status.source === 'preparation' && (
                       <>
                         <p>

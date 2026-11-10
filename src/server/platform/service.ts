@@ -9,9 +9,9 @@ import { retentionDigest,signRetentionApproval } from '../customer-retention/app
 import type { PlatformStore } from './store.js';
 import type { OperatorIdentity,OperatorSession } from './auth.js';
 import type { SupportProvider } from '../customer-support/provider.js';
-import type { CustomerOperationsStatus } from '../../shared/customer-operations.js';
+import type { CustomerOperationsStatus,CustomerWorkerHeartbeat } from '../../shared/customer-operations.js';
 
-type Options={mode:'capture'|'live';identity:OperatorIdentity;support:CustomerSupport;databaseName:string;plan?:(workspace:string,jobId:string)=>Promise<RetentionPlan>;signing?:{keyId:string;privateKey:string};gaps?:string[];alerts?:{provider:SupportProvider;from:string;to:string};now?:()=>Date};
+type Options={mode:'capture'|'live';identity:OperatorIdentity;support:CustomerSupport;databaseName:string;workerHeartbeat?:()=>Promise<CustomerWorkerHeartbeat>;plan?:(workspace:string,jobId:string)=>Promise<RetentionPlan>;signing?:{keyId:string;privateKey:string};gaps?:string[];alerts?:{provider:SupportProvider;from:string;to:string};now?:()=>Date};
 export class PlatformService {
  constructor(readonly db:Database,readonly store:PlatformStore,readonly options:Options){}
  private now(){return this.options.now?.()??new Date();}
@@ -25,7 +25,14 @@ export class PlatformService {
    return this.options.identity.current({userId:user,sessionId:row.sessionId,verifiedAt:row.verifiedAt,exercise:this.options.mode==='capture',workspaceId:this.options.mode==='capture'?workspace:undefined});
   }catch{return false;}
  }
- async overview(actor:OperatorSession):Promise<PlatformOverview>{await this.current(actor);const workspace=actor.exercise?actor.workspaceId:undefined;return {mode:this.options.mode,authority:actor.exercise?'owner-exercise':'platform-operator',workspaceId:actor.exercise?actor.workspaceId??null:null,gaps:this.options.gaps??[],supportMode:this.options.support.options.mode,writerConfigured:!!this.options.support.options.writer,health:await this.store.read('health',workspace),alerts:await this.store.read('alert',workspace),cases:await this.store.read('case',workspace),sendingEnabled:false,erasureEnabled:false};}
+ private async heartbeat():Promise<CustomerWorkerHeartbeat|null>{
+  // Only the trusted database reader can establish current daemon activity. A failed
+  // read must not reuse a formerly fresh snapshot or a configured dedicated flag.
+  try{return await this.options.workerHeartbeat?.()??null;}catch{return null;}
+ }
+ async overview(actor:OperatorSession):Promise<PlatformOverview>{await this.current(actor);const workspace=actor.exercise?actor.workspaceId:undefined;
+  const heartbeat=await this.heartbeat(),health=(await this.store.read<PlatformHealth>('health',workspace)).map(h=>({...h,heartbeat}));
+  return {mode:this.options.mode,authority:actor.exercise?'owner-exercise':'platform-operator',workspaceId:actor.exercise?actor.workspaceId??null:null,gaps:this.options.gaps??[],supportMode:this.options.support.options.mode,writerConfigured:!!this.options.support.options.writer,health,alerts:await this.store.read('alert',workspace),cases:await this.store.read('case',workspace),sendingEnabled:false,erasureEnabled:false};}
  async observe(workspace:string,status:CustomerOperationsStatus){
   const health:PlatformHealth={workspaceId:workspace,observedAt:this.now().toISOString(),lastPass:status.worker.lastPass,failure:status.worker.lastFailure,pending:Object.entries(status.queue).filter(([key])=>key!=='unknown').reduce((n,[,v])=>n+(v??0),0),unknown:status.queue.unknown};
   await this.store.transaction(workspace,async records=>{
@@ -57,10 +64,18 @@ export class PlatformService {
  async monitor(){
   if(this.options.mode!=='live')return;
   await this.store.cleanup();
+  const heartbeat=await this.heartbeat();
   const health=await this.store.read<PlatformHealth>('health');
   for(const h of health){
    const stale=h.pending>0&&(!h.lastPass||this.now().getTime()-Date.parse(h.lastPass)>5*60000);
-   await this.store.transaction(h.workspaceId,async r=>{const old=await r.get<PlatformAlert>('alert','worker_stale');if(!old&&!stale)return;const next:PlatformAlert={id:old?.id??randomUUID(),workspaceId:h.workspaceId,code:'worker_stale',active:stale,acknowledgedAt:old?.active===stale?old.acknowledgedAt:null,createdAt:old?.createdAt??this.now().toISOString(),updatedAt:this.now().toISOString()};await r.put('alert','worker_stale',next);if(stale&&!old?.active){const id=randomUUID();await r.put('notification',id,{id,code:'worker_stale',workspaceId:h.workspaceId,state:'queued',providerId:null,createdAt:this.now().toISOString()},true);}});
+   await this.store.transaction(h.workspaceId,async r=>{
+    for(const [code,active] of [['worker_stale',stale],['worker_liveness_unverified',heartbeat?.state!=='fresh']] as const){
+     const old=await r.get<PlatformAlert>('alert',code);if(!old&&!active)continue;
+     const next:PlatformAlert={id:old?.id??randomUUID(),workspaceId:h.workspaceId,code,active,acknowledgedAt:old?.active===active?old.acknowledgedAt:null,createdAt:old?.createdAt??this.now().toISOString(),updatedAt:this.now().toISOString()};
+     await r.put('alert',code,next);
+     if(active&&!old?.active){const id=randomUUID();await r.put('notification',id,{id,code,workspaceId:h.workspaceId,state:'queued',providerId:null,createdAt:this.now().toISOString()},true);}
+    }
+   });
    await this.notifications(h.workspaceId);
   }
  }

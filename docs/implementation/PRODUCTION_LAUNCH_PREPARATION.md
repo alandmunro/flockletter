@@ -17,9 +17,12 @@ Before enabling live billing, select the Flockletter merchant account and verify
 - `FLOCKLETTER_CUSTOMER_STRIPE_KEY`: a dedicated matching live key, stored only in the protected service configuration.
 - `FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK`: signing secret for `/api/v1/customer-billing/stripe-events`.
 - `FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG`: a card-enabled `pmc_` payment-method configuration.
+- `FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG`: a dedicated nondefault management `bpc_` with price changes disabled. The distinct `FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG`, `FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG` and `FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG` each expose only their one destination price under D-049; never use the shared merchant default.
 - `FLOCKLETTER_CUSTOMER_STARTER_PRICE`, `FLOCKLETTER_CUSTOMER_GROWTH_PRICE`, `FLOCKLETTER_CUSTOMER_PRO_PRICE`: three distinct active, live, USD monthly licensed/per-unit prices at 1500/2500/3900 minor units, quantity one.
 - Authenticated feedback for Checkout completion/expiry, subscription changes, paid/failed invoices, refunds, disputes and early fraud warnings; replay and unknown-outcome reconciliation remain required.
 - The selected Billing Portal's actual upgrade, downgrade and cancellation behavior. A portal session alone does not establish those commercial policies.
+
+Use the [read-only billing preparation inspector](BILLING_PROVIDER_PREPARATION.md) while billing remains off. The dedicated product/price shape must respect Stripe's same-product renewal-downgrade restriction. Actual sandbox behavior and final [legal review](../legal/README.md) remain separate from a passing configuration inspection.
 
 New trial setup additionally requires `FLOCKLETTER_TRIAL_HMAC_KEY`, `FLOCKLETTER_TRIAL_POLICY_ID`, positive `FLOCKLETTER_TRIAL_POLICY_VERSION`, the separately approved `FLOCKLETTER_TRIAL_RETENTION_APPROVED=true`, and `FLOCKLETTER_TRIAL_HISTORY_BASELINE=verified-empty` or `reviewed-backfill` after real history review. D-048 accepts the minimal lifetime claim exception; a fresh key cannot erase history or establish the baseline. This policy record does not set a flag, install a key or assert those factual checks are complete.
 

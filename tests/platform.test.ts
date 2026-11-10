@@ -13,6 +13,7 @@ import type {SupportTicket} from '../src/shared/customer-support.js';
 import type {CustomerOperationsStatus} from '../src/shared/customer-operations.js';
 import {operatorRoleGrants} from '../src/server/platform/provision.js';
 import {createOperatorMcpServer,operatorApiCaller} from '../src/mcp/operator.js';
+import {readWorkerHeartbeat} from '../src/server/customer-worker-heartbeat.js';
 let fixture:Awaited<ReturnType<typeof startDatabase>>,db:Database,admin:pg.Client;
 let revoked=false;let now=new Date();
 const actor=(workspaceId='org_'+randomUUID().replaceAll('-','')):Actor=>({workspaceId,userId:'user_'+randomUUID(),actorId:'user:test',owner:true,kind:'session',brandIds:null,scopes:['read']});
@@ -27,7 +28,7 @@ async function open(kind:PlatformCase['kind']='support',resourceId:string|null=n
 it('isolates exercise health, cases and inbox from other workspaces',async()=>{
  const status={worker:{lastPass:new Date().toISOString(),lastFailure:null,dedicated:false},queue:{unknown:1,delivery:1,confirmations:0,team:0,support:0,retention:0}} as CustomerOperationsStatus;
  await platform.observe(owner.workspaceId,status);await platform.observe(other.workspaceId,status);
- const result=await platform.execute('platform.overview',{},session) as PlatformOverview;expect(result.workspaceId).toBe(owner.workspaceId);expect(result.health.map(h=>h.workspaceId)).toEqual([owner.workspaceId]);expect(result.alerts.every(a=>a.workspaceId===owner.workspaceId)).toBe(true);
+ const result=await platform.execute('platform.overview',{},session) as PlatformOverview;expect(result.workspaceId).toBe(owner.workspaceId);expect(result.health.map(h=>h.workspaceId)).toEqual([owner.workspaceId]);expect(result.health[0]?.heartbeat).toBeNull();expect(result.alerts.every(a=>a.workspaceId===owner.workspaceId)).toBe(true);
  await expect(platform.execute('platform.openCase',{operationKey:randomUUID(),workspaceId:other.workspaceId,kind:'support',resourceId:null,reason:'Attempt an unrelated workspace access.'},session)).rejects.toMatchObject({code:'exercise_workspace_only'});
  await expect(platform.execute('platform.inbox',{},session)).rejects.toMatchObject({code:'operator_required'});
 });
@@ -65,6 +66,60 @@ it('never blindly retries an unknown platform notification submission',async()=>
  const live=new PlatformService(db,new OperatorStore(db,'capture'),{mode:'live',identity,support:support(),databaseName:'flockletter_test',alerts:{from:'ops@example.test',to:'owner@example.test',provider:{submit:async()=>{submits++;return {state:'unknown'};},lookup:async()=>{lookups++;return {state:'unknown'};}}}});
  const status={worker:{lastPass:new Date().toISOString(),lastFailure:'worker_failed',dedicated:true},queue:{unknown:0,delivery:0,confirmations:0,team:0,support:0,retention:0}} as CustomerOperationsStatus;
  await live.observe(target,status);await live.notifications(target);expect(submits).toBe(1);expect(lookups).toBe(1);await live.close();
+});
+it('monitors current trusted daemon liveness independently from idle queues and manual passes',async()=>{
+ const role='flockletter_heartbeat_operator',password=randomUUID();
+ await admin.query('CREATE ROLE '+role+' LOGIN PASSWORD '+pg.escapeLiteral(password));
+ await admin.query(operatorRoleGrants('flockletter_test',role));
+ const url=new URL(fixture.adminUrl);url.username=role;url.password=password;
+ const store=new OperatorStore(db,'live',url.toString());await store.verify();
+ // The earlier role-boundary test deliberately stored a non-health fixture.
+ await admin.query("DELETE FROM flockletter_retention_control.platform_records WHERE kind='health'");
+ await admin.query('TRUNCATE flockletter_customer_jobs.worker_instances');
+ const target=other.workspaceId,liveSession={...session,exercise:false,workspaceId:undefined};
+ const live=new PlatformService(db,store,{mode:'live',identity,support:support(),databaseName:'flockletter_test',
+  workerHeartbeat:()=>readWorkerHeartbeat(db,'dedicated')});
+ const status={worker:{running:true,lastPass:new Date().toISOString(),lastFailure:null,dedicated:true},
+  queue:{unknown:0,delivery:0,confirmations:0,team:0,support:0,retention:0}} as CustomerOperationsStatus;
+ const alert=async(code:string)=>(await live.overview(liveSession)).alerts.find(a=>a.workspaceId===target&&a.code===code);
+ const notices=async()=>Number((await admin.query("SELECT count(*)::int n FROM flockletter_retention_control.platform_records WHERE workspace_id=$1 AND kind='notification' AND body->>'code'='worker_liveness_unverified'",[target])).rows[0].n);
+ try{
+  await live.observe(target,status);await live.monitor();
+  let view=await live.overview(liveSession);
+  expect(view.health[0]?.heartbeat).toMatchObject({kind:'dedicated',state:'unknown'});
+  expect(view).toMatchObject({sendingEnabled:false,erasureEnabled:false});
+  expect(await alert('worker_liveness_unverified')).toMatchObject({active:true});
+  expect(await alert('worker_stale')).toBeUndefined();
+  expect(await notices()).toBe(1);
+  await live.monitor();expect(await notices()).toBe(1);
+  const active=(await alert('worker_liveness_unverified'))!;
+  await live.execute('platform.alertAck',{operationKey:randomUUID(),alertId:active.id,reason:'Reviewed the missing trusted daemon heartbeat.'},liveSession);
+  await live.monitor();expect((await alert('worker_liveness_unverified'))?.acknowledgedAt).toBeTruthy();
+  const instance=randomUUID();
+  await db.pool.query('SELECT flockletter_customer_jobs.worker_heartbeat($1,$2)',['dedicated',instance]);
+  // No workspace queue pass changed. Overview and monitor still reread the database.
+  view=await live.overview(liveSession);expect(view.health[0]?.heartbeat?.state).toBe('fresh');
+  await live.monitor();expect(await alert('worker_liveness_unverified')).toMatchObject({active:false,acknowledgedAt:null});
+  await live.observe(target,{...status,worker:{...status.worker,lastPass:'2026-01-01T00:00:00.000Z'},queue:{...status.queue,delivery:1}});
+  await live.monitor();expect(await alert('worker_stale')).toMatchObject({active:true});
+  expect(await alert('worker_liveness_unverified')).toMatchObject({active:false});
+  await admin.query("UPDATE flockletter_customer_jobs.worker_instances SET heartbeat_at=clock_timestamp()-interval '61 seconds' WHERE instance_id=$1",[instance]);
+  // A fresh manual pass cannot turn an expired daemon heartbeat into liveness.
+  await live.observe(target,status);await live.monitor();
+  expect((await live.overview(liveSession)).health[0]?.heartbeat?.state).toBe('stale');
+  expect(await alert('worker_liveness_unverified')).toMatchObject({active:true});
+  expect(await alert('worker_stale')).toMatchObject({active:false});
+  expect(await notices()).toBe(2);
+  await db.pool.query('SELECT flockletter_customer_jobs.worker_stop($1,$2)',['dedicated',instance]);
+  await live.monitor();expect((await live.overview(liveSession)).health[0]?.heartbeat?.state).toBe('stopped');
+  expect(await notices()).toBe(2);
+  live.options.workerHeartbeat=async()=>{throw Error('Synthetic unavailable heartbeat');};
+  expect((await live.overview(liveSession)).health[0]?.heartbeat).toBeNull();
+  await live.monitor();expect(await alert('worker_liveness_unverified')).toMatchObject({active:true});
+  live.options.workerHeartbeat=()=>readWorkerHeartbeat(db,'dedicated');
+  await db.pool.query('SELECT flockletter_customer_jobs.worker_heartbeat($1,$2)',['dedicated',randomUUID()]);
+  await live.monitor();expect(await alert('worker_liveness_unverified')).toMatchObject({active:false});
+ }finally{await live.close();}
 });
 it('operator MCP rejects customer connection tokens before any request',()=>{expect(()=>operatorApiCaller('https://example.test','flk_customer.secret')).toThrow();expect(createOperatorMcpServer(async()=>({ok:true}))).toBeTruthy();});
 it('rechecks private erasure at insertion after an earlier tenant preflight passed',async()=>{

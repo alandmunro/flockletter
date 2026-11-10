@@ -93,6 +93,10 @@ D-042 adds the seven customer workflows with canonical UI/API/MCP operations and
 
 ## D-048/049/050 owner policy acceptance
 
+FL-BIL-001/003/004/005/007, FL-ONB-004 and FL-OPS-004/007: [billing provider preparation](implementation/BILLING_PROVIDER_PREPARATION.md) adds a sanitized read-only inspector, dedicated portal policy/catalogue binding and authoritative renewal schedule projection. Installed-SDK interception and disposable PostgreSQL cover provider ownership, exact tier facts, future caps and release/replay; these are not actual Stripe payment evidence. [Legal drafts](legal/README.md) remain unpublished and require factual/owner review.
+
+FL-ONB-004 and FL-OPS-003/005/006: the platform control room and monitor independently read protected [worker liveness](implementation/WORKER_LIVENESS.md), including idle stopped/stale/unknown workers, separately from queue progress. No email transport or global operator access is activated by the diagnostic change.
+
 FL-OPS-006 / D-051: [browser security policy](implementation/BROWSER_SECURITY_POLICY.md) records the explicit same-origin font boundary, HTTP regression matrix in [Clerk CSP tests](../tests/clerk-csp.test.ts), and the owner's accepted remaining Clerk/editor inline-style exception. Font-policy remediation does not close the separate style alert or establish a clean full scan.
 
 On November 9 the owner accepted the minimal indefinite keyed trial-history exception, specified billing defaults and FFA Growth complimentary policy. FL-AT-009/011/016/031/032 now reflect those choices; they remain planned external acceptance where applicable. The [billing playbook](implementation/CUSTOMER_BILLING.md), [trial policy](implementation/PROPOSED_TRIAL_RETENTION_EXCEPTION.md) and [production checklist](implementation/PRODUCTION_LAUNCH_PREPARATION.md) distinguish accepted scope from configuration, selected-provider/history facts, terms/legal/tax evidence, exact customer agreement and actual grant issuance. This documentation change claims no new test, provider, payment, grant or deployment result.
@@ -111,3 +115,8 @@ Local Qwen supplied the first decision-entry draft; chat corrected an overbroad 
 See [remaining integrations](implementation/PLATFORM_COMPLETION.md), [hosted retention](implementation/HOSTED_RETENTION.md) and [trial abuse](implementation/TRIAL_ABUSE.md) for configuration and limitations.
 
 FL-CAM-007, FL-API-001/003 and FL-OPS-006: paginated recipient outcome reporting replaces the operational first50-only limitation while preserving the legacy report. Disposable PostgreSQL/MCP cases verify full traversal, late uncertain outcomes, separate feedback filters, no write/reservation, foreign brand/delivery/cursor denial and revocation. The customer browser proof exercises normal paging, retry, late-response rejection and phone layout. [Outcome report scope](implementation/DELIVERY_OUTCOMES.md). These are captured checks, not live mail evidence.
+
+Billing compatibility correction: FL-BIL-001/003/004/005/007, FL-ONB-004 and FL-API-001 use targeted portal profiles after the actual Stripe sandbox rejected duplicate monthly intervals in one profile. See [billing preparation](implementation/BILLING_PROVIDER_PREPARATION.md); provider/session/intent tests cover destination binding and rejected policy drift. Hosted transition verification remains separate.
+
+
+Real sandbox compatibility follow-up (FL-AT-007/008/009/031): [billing preparation](implementation/BILLING_PROVIDER_PREPARATION.md#real-sandbox-compatibility-checks) records per-Checkout Managed Payments exclusion, exact subscription/item confirmation, actual card/trial/paid/proration observations and scheduled downgrade reconciliation. Provider tests reject wrong customer/mode/items/price/status/schedule. Public delivery and time-advanced renewal/failure evidence remain separate release checks; live billing and sending stay disabled.
