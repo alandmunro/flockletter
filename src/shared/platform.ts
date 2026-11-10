@@ -17,7 +17,7 @@ export const platformCommands={
   'platform.inbox':define('Inspect quarantined unassigned inbound support; sender is not authority.',false,{}),
 };
 export type PlatformCommand=keyof typeof platformCommands;
-export type PlatformCase={id:string;workspaceId:string;kind:'support'|'retention'|'abuse'|'delivery';resourceId:string|null;reason:string;actorId:string;sessionId:string;verifiedAt:string;expiresAt:string;createdAt:string;requestHash:string};
+export type PlatformCase={id:string;workspaceId:string;kind:'support'|'retention'|'abuse'|'delivery';resourceId:string|null;reason:string;actorId:string;sessionId:string;verifiedAt:string;authentication?:'required'|'pre-revenue';expiresAt:string;createdAt:string;requestHash:string};
 export type PlatformAlert={id:string;workspaceId:string;code:string;active:boolean;acknowledgedAt:string|null;createdAt:string;updatedAt:string};
 export type PlatformHealth={workspaceId:string;observedAt:string;lastPass:string|null;failure:string|null;pending:number;unknown:number;heartbeat?:CustomerWorkerHeartbeat|null};
-export type PlatformOverview={mode:'off'|'capture'|'live';authority:'owner-exercise'|'platform-operator';workspaceId:string|null;gaps:string[];supportMode:'off'|'capture'|'live';writerConfigured:boolean;health:PlatformHealth[];alerts:PlatformAlert[];cases:PlatformCase[];sendingEnabled:false;erasureEnabled:false};
+export type PlatformOverview={mode:'off'|'capture'|'live';authority:'owner-exercise'|'platform-operator';authentication:'workspace-exercise'|'required'|'pre-revenue';workspaceId:string|null;gaps:string[];supportMode:'off'|'capture'|'live';writerConfigured:boolean;health:PlatformHealth[];alerts:PlatformAlert[];cases:PlatformCase[];sendingEnabled:false;erasureEnabled:false};

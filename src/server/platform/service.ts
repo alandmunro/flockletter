@@ -17,12 +17,12 @@ export class PlatformService {
  private now(){return this.options.now?.()??new Date();}
  private async current(actor:OperatorSession){requireCondition(actor.exercise===(this.options.mode==='capture')&&await this.options.identity.current(actor),403,'operator_authority_expired','Verify current operator authority again.');}
  private workspace(actor:OperatorSession,target:string){requireCondition(!actor.exercise||actor.workspaceId===target,403,'exercise_workspace_only','The operator exercise is limited to your current workspace.');}
- async case(actor:OperatorSession,id:string){await this.current(actor);const value=(await this.store.read<PlatformCase>('case',actor.exercise?actor.workspaceId:undefined,id))[0];requireCondition(value&&value.actorId===actor.userId&&value.sessionId===actor.sessionId&&Date.parse(value.expiresAt)>this.now().getTime(),403,'operator_case_required','Open a current case for this exact target.');this.workspace(actor,value.workspaceId);return value;}
+ async case(actor:OperatorSession,id:string){await this.current(actor);const value=(await this.store.read<PlatformCase>('case',actor.exercise?actor.workspaceId:undefined,id))[0];requireCondition(value&&value.actorId===actor.userId&&value.sessionId===actor.sessionId&&(value.authentication??'required')===(actor.authentication??'required')&&Date.parse(value.expiresAt)>this.now().getTime(),403,'operator_case_required','Open a current case for this exact target.');this.workspace(actor,value.workspaceId);return value;}
  async supportAuthorized(user:string,workspace:string,reference:string){
   try{const action=(await this.store.read<{caseId:string;userId:string}>('ack',this.options.mode==='capture'?workspace:undefined,reference))[0];if(!action||action.userId!==user)return false;
    const row=(await this.store.read<PlatformCase>('case',this.options.mode==='capture'?workspace:undefined,action.caseId))[0];
    if(!row||row.kind!=='support'||row.workspaceId!==workspace||row.actorId!==user||Date.parse(row.expiresAt)<=this.now().getTime())return false;
-   return this.options.identity.current({userId:user,sessionId:row.sessionId,verifiedAt:row.verifiedAt,exercise:this.options.mode==='capture',workspaceId:this.options.mode==='capture'?workspace:undefined});
+   return this.options.identity.current({userId:user,sessionId:row.sessionId,verifiedAt:row.verifiedAt,authentication:row.authentication,exercise:this.options.mode==='capture',workspaceId:this.options.mode==='capture'?workspace:undefined});
   }catch{return false;}
  }
  private async heartbeat():Promise<CustomerWorkerHeartbeat|null>{
@@ -32,7 +32,7 @@ export class PlatformService {
  }
  async overview(actor:OperatorSession):Promise<PlatformOverview>{await this.current(actor);const workspace=actor.exercise?actor.workspaceId:undefined;
   const heartbeat=await this.heartbeat(),health=(await this.store.read<PlatformHealth>('health',workspace)).map(h=>({...h,heartbeat}));
-  return {mode:this.options.mode,authority:actor.exercise?'owner-exercise':'platform-operator',workspaceId:actor.exercise?actor.workspaceId??null:null,gaps:this.options.gaps??[],supportMode:this.options.support.options.mode,writerConfigured:!!this.options.support.options.writer,health,alerts:await this.store.read('alert',workspace),cases:await this.store.read('case',workspace),sendingEnabled:false,erasureEnabled:false};}
+  return {mode:this.options.mode,authority:actor.exercise?'owner-exercise':'platform-operator',authentication:actor.exercise?'workspace-exercise':this.options.identity.mfaPolicy??'required',workspaceId:actor.exercise?actor.workspaceId??null:null,gaps:this.options.gaps??[],supportMode:this.options.support.options.mode,writerConfigured:!!this.options.support.options.writer,health,alerts:await this.store.read('alert',workspace),cases:await this.store.read('case',workspace),sendingEnabled:false,erasureEnabled:false};}
  async observe(workspace:string,status:CustomerOperationsStatus){
   const health:PlatformHealth={workspaceId:workspace,observedAt:this.now().toISOString(),lastPass:status.worker.lastPass,failure:status.worker.lastFailure,pending:Object.entries(status.queue).filter(([key])=>key!=='unknown').reduce((n,[,v])=>n+(v??0),0),unknown:status.queue.unknown};
   await this.store.transaction(workspace,async records=>{
@@ -96,8 +96,8 @@ export class PlatformService {
     if(p.kind==='retention')requireCondition(p.resourceId&&!!(await sql.query('SELECT FROM customer_retention_jobs WHERE id=$1',[p.resourceId])).rowCount,404,'resource_unavailable','Select the exact retention job.');
     if(p.kind==='delivery')requireCondition(p.resourceId&&!!(await sql.query('SELECT FROM customer_deliveries WHERE id=$1',[p.resourceId])).rowCount,404,'resource_unavailable','Select the exact delivery.');
    });
-   const requestHash=digest(JSON.stringify([p,actor.userId,actor.sessionId]));
-   return this.store.transaction(p.workspaceId,async records=>{await this.current(actor);const old=await records.get<PlatformCase>('case',p.operationKey);if(old){requireCondition(old.requestHash===requestHash,409,'operation_conflict','Retry the original case with this key.');return old;}const createdAt=this.now().toISOString(),value:PlatformCase={id:p.operationKey,workspaceId:p.workspaceId,kind:p.kind,resourceId:p.resourceId,reason:p.reason,actorId:actor.userId,sessionId:actor.sessionId,verifiedAt:actor.verifiedAt,createdAt,expiresAt:new Date(Math.min(this.now().getTime()+5*60000,actor.exercise?Infinity:Date.parse(actor.verifiedAt)+5*60000)).toISOString(),requestHash};await records.put('case',value.id,value,true);return value;});
+   const requestHash=digest(JSON.stringify([p,actor.userId,actor.sessionId,actor.authentication??'required']));
+   return this.store.transaction(p.workspaceId,async records=>{await this.current(actor);const old=await records.get<PlatformCase>('case',p.operationKey);if(old){requireCondition(old.requestHash===requestHash,409,'operation_conflict','Retry the original case with this key.');return old;}const createdAt=this.now().toISOString(),value:PlatformCase={id:p.operationKey,workspaceId:p.workspaceId,kind:p.kind,resourceId:p.resourceId,reason:p.reason,actorId:actor.userId,sessionId:actor.sessionId,verifiedAt:actor.verifiedAt,authentication:actor.authentication,createdAt,expiresAt:new Date(Math.min(this.now().getTime()+5*60000,actor.exercise?Infinity:Date.parse(actor.verifiedAt)+5*60000)).toISOString(),requestHash};await records.put('case',value.id,value,true);return value;});
   }
   if(name==='platform.inbox'){requireCondition(!actor.exercise,403,'operator_required','Unassigned customer email is never exposed to a workspace exercise.');return this.store.read('inbound','_platform_inbox');}
   if(name==='platform.alertAck'){
@@ -133,6 +133,7 @@ export class PlatformService {
    return result;
   }
   requireCondition(review.kind==='retention'&&review.resourceId,403,'case_scope_mismatch','Open an exact retention job case.');
+  if(name==='platform.retentionApprove')requireCondition(this.options.identity.mfaPolicy!=='pre-revenue',403,'operator_mfa_required','Restore administrator MFA before signing hosted erasure approvals.');
   requireCondition(this.options.plan,503,'retention_evidence_required','Configure protected checkpoints, external inventory and private operator review before signing hosted erasure.');
   const plan=await this.options.plan(review.workspaceId,review.resourceId),planDigest=retentionDigest(plan);
   if(name==='platform.retentionPlan')return {plan,digest:planDigest,executable:false};

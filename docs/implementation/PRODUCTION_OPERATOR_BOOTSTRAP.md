@@ -31,7 +31,7 @@ Set these only for the separate verified production operator surface:
 - `FLOCKLETTER_OPERATOR_USER_IDS`: exact named operators
 - `FLOCKLETTER_OPERATOR_DATABASE_URL`: the restricted metadata role, same host/port/logical database as the runtime connection
 
-Each operator must have current admin membership in that organization and an enrolled second factor. Both factor verification ages must be under five minutes. The UI/API/MCP share these checks; a customer connection token cannot substitute for an operator session.
+Each operator must have current admin membership in that organization and, by default, an enrolled second factor. [D-051](PRE_REVENUE_OPERATOR_AUTH.md) permits an explicit production-only temporary first-factor exception while billing, hosted retention and signing remain off. Restore MFA before paid activation. Under the default policy, Both factor verification ages must be under five minutes. The UI/API/MCP share these checks; a customer connection token cannot substitute for an operator session.
 
 Alert delivery additionally requires `FLOCKLETTER_PLATFORM_ALERTS_ENABLED=approved`, a dedicated `FLOCKLETTER_PLATFORM_ALERT_RESEND_KEY`, and reviewed `FLOCKLETTER_PLATFORM_ALERT_FROM` / `_TO` addresses. Acknowledging an alert does not remove its underlying hold or failure. Unknown submissions reconcile rather than blindly retry.
 
