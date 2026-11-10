@@ -467,7 +467,7 @@ async function phaseTwo(page: Page, db: Database) {
 }
 
 const fixture = await startDatabase(),
-  db = new Database(fixture.url);
+  db = new Database(fixture.url,2);
 let browser: Browser | undefined;
 try {
   await db.verifyBoundary();

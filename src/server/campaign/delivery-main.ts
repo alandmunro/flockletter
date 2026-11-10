@@ -16,7 +16,7 @@ const ses = loadSesRuntime(process.env);
 const bindings = deliveryBindings(process.env);
 if (!bindings.length || configurationGaps(config).length)
   throw new Error('Configure the dedicated Flockletter database, identity and synthetic delivery bindings.');
-const db = new Database(config.databaseUrl!);
+const db = new Database(config.databaseUrl!,config.databasePoolMax);
 const identity = config.localIdentity ? localIdentity() : clerkIdentity(config);
 let messenger: Awaited<ReturnType<typeof startPrivateMessenger>>;
 const stop = new AbortController();

@@ -65,8 +65,17 @@ describe('production promotion workflow', () => {
     expect(verify).toContain("if: ${{ env.DRY_RUN != 'true' }}");
     const identity = workflow.slice(workflow.indexOf('- name: Confirm the Render service'), workflow.indexOf('- name: Deploy production'));
     expect(identity).not.toContain('DRY_RUN');  // the identity check always runs
-    expect(identity).toContain('.serviceDetails.url');
-    expect(identity).toContain('web_service');
+    expect(identity).toContain('control/scripts/verify-render-production-targets.mjs');
+    expect(identity).toContain('RENDER_PRODUCTION_WORKER_SERVICE_ID');
+  });
+
+  it('verifies both destinations before deploying the worker then web at the same SHA',()=>{
+    const identity=workflow.slice(workflow.indexOf('- name: Confirm the Render service'),workflow.indexOf('- name: Deploy production'));
+    expect(identity).toContain('verify-render-production-targets.mjs');
+    const deploy=workflow.slice(workflow.indexOf('- name: Deploy production'),workflow.indexOf('- name: Verify production'));
+    expect(deploy).toContain('set -euo pipefail');
+    const calls=[...deploy.matchAll(/control\/scripts\/render-deploy\.sh "\$\{([^}]+)\}" "\$\{SHA\}"/g)].map(match=>match[1]);
+    expect(calls).toEqual(['RENDER_PRODUCTION_WORKER_SERVICE_ID','RENDER_PRODUCTION_SERVICE_ID']);
   });
 
   it('asks the CI and restore-drill workflows directly and refuses unknown or changed migrations without confirmation', () => {

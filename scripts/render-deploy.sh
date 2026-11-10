@@ -32,8 +32,7 @@ http_status="$(
     --data "${body}"
 )"
 if [[ ! "${http_status}" =~ ^2 ]]; then
-  message="$(jq -r '.message // "Render refused the deploy"' "${response_file}" 2>/dev/null || true)"
-  echo "${message} (HTTP ${http_status})" >&2
+  echo "Render refused the deploy (HTTP ${http_status})" >&2
   exit 1
 fi
 
@@ -42,35 +41,42 @@ if [ -z "${deploy_id}" ]; then
   echo "Render returned no deploy id" >&2
   exit 1
 fi
-echo "service=${service_id} deploy=${deploy_id} commit=${commit_sha}"
+echo "Render deployment started: commit=${commit_sha}"
 
 deadline=$(( $(date +%s) + timeout_seconds ))
 last_status=""
 while [ "$(date +%s)" -lt "${deadline}" ]; do
-  status="$(
-    curl -fsS --max-time 30 "${api}/services/${service_id}/deploys/${deploy_id}" \
-      -H "Authorization: Bearer ${RENDER_API_KEY}" \
-    | jq -r '.status // empty'
-  )" || status=""
+  status=""
+  if curl -fsS --max-time 30 "${api}/services/${service_id}/deploys/${deploy_id}" \
+    -H "Authorization: Bearer ${RENDER_API_KEY}" -o "${response_file}"; then
+    status="$(jq -r '.status // empty' "${response_file}")" || status=""
+  fi
+  case "${status}" in
+    ""|created|queued|build_in_progress|update_in_progress|pre_deploy_in_progress|live|build_failed|update_failed|pre_deploy_failed|canceled|deactivated) ;;
+    *) echo "Render deployment returned an unknown status" >&2; exit 1 ;;
+  esac
   if [ -n "${status}" ] && [ "${status}" != "${last_status}" ]; then
     echo "status=${status}"
     last_status="${status}"
   fi
   case "${status}" in
-    live) exit 0 ;;
+    live)
+      actual_commit="$(jq -r '.commit.id // empty' "${response_file}")"
+      [ "${actual_commit}" = "${commit_sha}" ] || { echo "deploy commit does not match the reviewed release" >&2; exit 1; }
+      exit 0 ;;
     build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
-      echo "deploy ${deploy_id} ended in ${status}" >&2
+      echo "Render deployment ended in ${status}" >&2
       exit 1
       ;;
     ""|created|queued|build_in_progress|update_in_progress|pre_deploy_in_progress)
       sleep 10
       ;;
     *)
-      echo "deploy ${deploy_id} returned unknown status ${status}" >&2
+      echo "Render deployment returned an unknown status" >&2
       exit 1
       ;;
   esac
 done
 
-echo "deploy ${deploy_id} timed out in status ${last_status:-unknown}" >&2
+echo "Render deployment timed out in status ${last_status:-unknown}" >&2
 exit 1
