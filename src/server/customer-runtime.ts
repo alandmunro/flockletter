@@ -84,7 +84,7 @@ export class CustomerWorkflows {
       currentOwner:w=>this.currentOwner(w)});
     this.engine=settings.renderer&&settings.delivery!=='off'?new CustomerEnginePool(settings.engineCount):undefined;
     this.ses=customerSesRuntime(config.origin,env);
-    this.delivery=new CustomerDelivery(db,{mode:settings.delivery,environment:config.environment,origin:config.origin,
+    this.delivery=new CustomerDelivery(db,{mode:settings.delivery,scope:settings.deliveryScope,environment:config.environment,origin:config.origin,
       billing:this.billing,eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),isOwner:identity.isOwner,
       render:this.engine?message=>this.engine!.render(message):undefined,optOut:createCustomerOptOut,liveConsent:productionConsentEligible,liveConsentBatch:productionConsentEligibleBatch,
       provider:this.ses?.provider});
@@ -198,7 +198,7 @@ export class CustomerWorkflows {
         brands.push({id:brand.id,name:brand.name,confirmed,senderProfileConfigured:!!profile,senderVerified:liveSender});
       }
       return {initialized,canPrepare:initialized,canSend:false,reviewRequired:true,observedAt,
-        mode:this.settings.delivery,capturedExercise:this.settings.delivery==='capture',rendererConfigured:!!this.engine,scopes,brandIds,
+        mode:this.settings.delivery,deliveryScope:this.settings.deliveryScope,capturedExercise:this.settings.delivery==='capture',rendererConfigured:!!this.engine,scopes,brandIds,
         service:owner?{source:service.source,state:service.state,eligible:service.eligible,reasons:service.reasons}:null,
         limits,allowance:owner?service.limits:null,brands,gaps};
     });
@@ -317,6 +317,7 @@ export class CustomerWorkflows {
     for(const area of ['billing','delivery','audience','team','support','retention','infrastructure'] as const)if(modes[area]==='off')
       gaps.push({area,code:'disabled',detail:'This workflow is switched off. Recorded settings and external verification are separate from activation.'});
     if(modes.delivery!=='off'&&!this.engine)gaps.push({area:'delivery',code:'private_renderer_required',detail:'Enable the private Listmonk renderer.'});
+    if(modes.deliveryScope==='tests')gaps.push({area:'delivery',code:'broadcasts_disabled',detail:'Only separately reviewed one-recipient tests are permitted. Broadcasts and schedules are disabled.'});
     if(!modes.dedicated)gaps.push({area:'operations',code:'embedded_worker',detail:'Queues share this web service. Continuous operation depends on its hosting plan and process health; verify capacity or provision a dedicated worker before launch.'});
     if(modes.infrastructure==='aws'&&!this.infrastructure.options.provider)gaps.push({area:'infrastructure',code:'provider_configuration_required',detail:'Configure the dedicated provisioning account, US region and credentials.'});
     if(modes.infrastructure==='aws'&&!modes.provisioningMonthlyLimit)gaps.push({area:'infrastructure',code:'platform_budget_required',detail:'An operator must approve a bounded platform provisioning allowance.'});
@@ -325,8 +326,8 @@ export class CustomerWorkflows {
     return {environment:this.config.environment,exercise:Object.values(modes).some(value=>value==='capture'||value==='exercise'),
       worker:{running:heartbeat.state==='fresh',dedicated:modes.dedicated,localProcessRunning:this.running,heartbeat,
         lastPass:recorded?.last_pass_at?.toISOString()??null,lastFailure:recorded?.last_failure_code??null},
-      modes:{billing:modes.billing,delivery:modes.delivery,audience:modes.audience,team:modes.team,support:modes.support,retention:modes.retention,infrastructure:modes.infrastructure},
-      preparation:customerPreparation(this.env),gaps,queue,safeguards:{externalDelivery:modes.delivery==='ses',realCharges:modes.billing==='stripe_live',hostedErasure:false,openTracking:false,clickTracking:false}};
+      modes:{billing:modes.billing,delivery:modes.delivery,deliveryScope:modes.deliveryScope,audience:modes.audience,team:modes.team,support:modes.support,retention:modes.retention,infrastructure:modes.infrastructure},
+      preparation:customerPreparation(this.env),gaps,queue,safeguards:{externalDelivery:modes.delivery==='ses'&&modes.deliveryScope==='all',testDelivery:modes.delivery==='ses',realCharges:modes.billing==='stripe_live',hostedErasure:false,openTracking:false,clickTracking:false}};
   }
   async close(){this.closing=true;const providerClose=Promise.resolve(this.infrastructure.options.provider?.close?.());this.ses?.close();await Promise.all([providerClose,this.engine?.close()]);await Promise.allSettled(this.active.values());}
 }

@@ -1,5 +1,7 @@
 # Single-recipient test-send playbook
 
+D-052 adds a [test-only delivery scope](TEST_ONLY_DELIVERY.md) that can keep broadcasts disabled independently of the test transport. The exact review/approval and all D-047 bounds below still apply; this code change activates no external sending.
+
 D-047 accepts the bounded policy for FL-CAM-010, FL-CAM-003/005/006/007, FL-USG-001/002 and FL-API-001/003. The source implementation uses the canonical contracts described below. Integration, staging and live-provider verification are recorded separately; this policy record does not activate mail.
 
 A test uses exactly one existing confirmed contact in the selected saved campaign’s brand. The workspace shares a ceiling of five approved test requests per UTC day across every brand; failure, rejection or cancellation does not refund that daily admission. Accepted real tests use one recipient-email allowance unit, including trial limits, and no monthly campaign slot. Existing photos and commerce settings are preserved.

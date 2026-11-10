@@ -4556,7 +4556,7 @@
     "/api/v1/commands/delivery.status": {
       "post": {
         "operationId": "delivery_status",
-        "summary": "View delivery mode, workspace usage and current sender checks for an optional authorized brand.",
+        "summary": "View delivery mode and allowed sending scope, workspace usage and current sender checks for an optional authorized brand. Test-only scope never permits broadcasts.",
         "security": [
           {
             "bearerAuth": []

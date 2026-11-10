@@ -10,11 +10,11 @@ export type CustomerOperationsStatus = {
   exercise:boolean;
   worker:{running:boolean;dedicated:boolean;lastPass:string|null;lastFailure:string|null;
     localProcessRunning?:boolean;heartbeat?:CustomerWorkerHeartbeat};
-  modes:{billing:string;delivery:string;audience:string;team:string;support:string;retention:string;infrastructure?:string};
+  modes:{billing:string;delivery:string;deliveryScope?:'all'|'tests';audience:string;team:string;support:string;retention:string;infrastructure?:string};
   preparation?:CustomerPreparationCheck[];
   gaps:{area:string;code:string;detail:string}[];
   queue:{delivery:number;confirmations:number;team:number;support:number;retention:number;unknown:number;infrastructure?:number};
-  safeguards:{externalDelivery:boolean;realCharges:boolean;hostedErasure:false;openTracking:false;clickTracking:false};
+  safeguards:{externalDelivery:boolean;testDelivery?:boolean;realCharges:boolean;hostedErasure:false;openTracking:false;clickTracking:false};
 };
 export type CustomerWorkerHeartbeat = {
   kind:'embedded'|'dedicated';state:'fresh'|'stale'|'unknown'|'stopped';

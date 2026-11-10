@@ -10,6 +10,16 @@ const config = (environment: Config['environment'] = 'staging'): Config => ({
   localIdentity: false,
   databasePoolMax:2,
 });
+it('independently gates test-only mailing without enabling broadcasts or billing',()=>{
+  const env={FLOCKLETTER_CUSTOMER_DELIVERY:'ses',FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE:'tests',FLOCKLETTER_TEST_MAILING_APPROVED:'true'};
+  expect(customerSettings(config('production'),env)).toMatchObject({delivery:'ses',deliveryScope:'tests',billing:'off'});
+  for(const approved of [undefined,'false','TRUE','1'])expect(()=>customerSettings(config('production'),{...env,FLOCKLETTER_TEST_MAILING_APPROVED:approved,FLOCKLETTER_LIVE_MAILING_APPROVED:'true'})).toThrow();
+  for(const environment of ['local','test','staging'] as const)expect(()=>customerSettings(config(environment),env)).toThrow('production');
+  expect(()=>customerSettings(config('production'),{...env,FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE:'all'})).toThrow('approval');
+  expect(()=>customerSettings(config('production'),{...env,FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE:undefined})).toThrow('approval');
+  expect(()=>customerSettings(config('production'),{...env,FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE:'testing'})).toThrow();
+  expect(customerSettings(config(),{FLOCKLETTER_CUSTOMER_DELIVERY:'capture',FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE:'tests'})).toMatchObject({delivery:'capture',deliveryScope:'tests'});
+});
 it.each(['production', 'staging', 'local'] as const)('rejects an invalid private-engine switch in %s', environment => {
   expect(() => customerSettings(config(environment), { FLOCKLETTER_PRIVATE_ENGINE: 'embeddedd' })).toThrow();
 });
@@ -17,6 +27,7 @@ it('starts all customer workflows disabled and bounds embedded engine capacity',
   expect(customerSettings(config(), {})).toEqual({
     billing: 'off',
     delivery: 'off',
+    deliveryScope:'all',
     audience: 'off',
     team: 'off',
     support: 'off',

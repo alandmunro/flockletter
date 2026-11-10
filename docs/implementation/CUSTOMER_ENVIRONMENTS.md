@@ -19,6 +19,8 @@ FLOCKLETTER_CUSTOMER_ENGINE_COUNT=1
 
 The service retains its isolated database and verified Clerk configuration. This mode records captured outcomes in PostgreSQL and supports owner review without sending customer email, charging a card, creating external team invitations or erasing hosted data. The embedded worker runs while the staging web service is awake; sleeping free staging does not provide continuous scheduling. A dedicated worker is a separately configured hosting decision.
 
+For D-052's captured test-only rehearsal, additionally set `FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE=tests`. Production SES in this scope requires its separate exact `FLOCKLETTER_TEST_MAILING_APPROVED=true`; a broad-mail flag alone cannot authorize it. Scope `all` still requires `FLOCKLETTER_LIVE_MAILING_APPROVED=true`, and the tests flag cannot enable broadcasts. Both use the same verified provider, consent, sender and service controls. Keep all production activation flags false during code promotion. [Test-only deployment and first-letter gaps](TEST_ONLY_DELIVERY.md)
+
 | Area | External mode | Additional gate |
 | --- | --- | --- |
 | Customer delivery | `FLOCKLETTER_CUSTOMER_DELIVERY=ses` | Production only; exact `FLOCKLETTER_LIVE_MAILING_APPROVED=true`, dedicated sender/tenant/feedback routes and credentials, verified sender and provider readiness, protected subscriber consent and limits. |

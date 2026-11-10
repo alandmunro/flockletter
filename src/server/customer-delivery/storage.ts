@@ -56,7 +56,7 @@ export async function originalEnvelope(sql:Sql,row:DeliveryRow,person:PersonRow,
     if(!image || image.sha256!==expected.sha256 || createHash('sha256').update(image.bytes).digest('hex')!==expected.sha256)return null;
     images.push(image);
   }
-  return {operationKey:person.id,workspaceId:row.workspace_id,brandId:row.brand_id,to:address,
+  return {purpose:row.purpose,operationKey:person.id,workspaceId:row.workspace_id,brandId:row.brand_id,to:address,
     subject:row.content.subject,html:row.rendered_html,text:row.rendered_text,images,
     ...(row.sender_profile?{sender:{name:row.sender_profile.fromName,replyTo:row.sender_profile.replyTo}}:{})};
 }

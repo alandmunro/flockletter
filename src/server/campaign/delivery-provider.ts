@@ -3,6 +3,8 @@ import type { Sql } from '../db.js';
 import { isPracticeAddress } from './rehearsal.js';
 
 export type DeliveryEnvelope = {
+  /** Server-derived immutable review purpose; never taken from customer message content. */
+  purpose?:'broadcast'|'test';
   operationKey: string;
   workspaceId: string;
   brandId: string;

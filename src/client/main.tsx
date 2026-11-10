@@ -9,7 +9,7 @@ import {CookieControls} from './CookieControls.js';
 import {Privacy} from './Privacy.js';
 import './app.css';
 
-type PublicConfig = { environment: string; localIdentity: boolean; clerkPublishableKey: string | null; setupGaps: string[]; sendingEnabled: false };
+type PublicConfig = { environment: string; localIdentity: boolean; clerkPublishableKey: string | null; setupGaps: string[]; sendingEnabled: boolean;testSendingEnabled?:boolean };
 const HostedPortal=lazy(()=>import('./Hosted.js'));
 const localToken = async () => 'local-development-only';
 function Root() {

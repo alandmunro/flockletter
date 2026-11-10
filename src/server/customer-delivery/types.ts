@@ -3,7 +3,7 @@ import type { CustomerBilling } from '../customer-billing/service.js';
 import type { Actor } from '../service.js';
 import type { CampaignContent } from '../../shared/contracts.js';
 import type { DeliveryEnvelope, DeliveryOutcome } from '../campaign/delivery-provider.js';
-import type { DeliveryMode } from '../../shared/customer-delivery.js';
+import type { DeliveryMode,DeliveryScope } from '../../shared/customer-delivery.js';
 import type { CustomerSenderProfile } from '../../shared/customer-delivery.js';
 import type { CustomerBillingStatus } from '../../shared/customer-billing.js';
 
@@ -29,6 +29,7 @@ export type CustomerProvider = {
 };
 export type DeliveryOptions = {
   mode:DeliveryMode; origin:string; environment:'local'|'test'|'staging'|'production';
+  scope?:DeliveryScope;
   billing:Pick<CustomerBilling,'eligibility'|'reserve'|'settle'|'release'>;
   eligibilitySql?:(sql:Sql,workspace:string)=>Promise<CustomerBillingStatus>;
   isOwner:(user:string,workspace:string)=>Promise<boolean>;

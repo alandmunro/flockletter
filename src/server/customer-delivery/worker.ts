@@ -8,6 +8,7 @@ import type { DeliveryEnvelope,DeliveryOutcome } from '../campaign/delivery-prov
 import { locked,deliveryRow,originalEnvelope } from './storage.js';
 import type { DeliveryOptions,DeliveryRow,PersonRow } from './types.js';
 import { senderProfile,senderEligible,profileFingerprint } from './sender.js';
+import {deliveryPurposeAllowed} from './policy.js';
 
 type Work={id:string;deliveryId:string;brand:string;kind:'render'|'submit'|'reconcile';claim:string|null};
 type StoredEnvelope=Pick<DeliveryEnvelope,'to'|'subject'|'html'|'text'|'unsubscribe'>;
@@ -64,6 +65,7 @@ export class CustomerDeliveryWorker {
   async block(sql:Sql,row:DeliveryRow):Promise<string|null> {
     if((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount)return 'workspace_erased';
     if(row.state!=='queued')return row.reason??'cancelled_by_owner';
+    if(!deliveryPurposeAllowed(this.options.scope,row.purpose))return 'broadcasts_disabled';
     if(row.mode!==this.options.mode)return 'delivery_configuration_changed';
     if(row.purpose==='test') {
       if(!await sameTestDay(sql,row))return 'test_day_expired';

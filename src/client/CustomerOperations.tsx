@@ -102,6 +102,8 @@ export function CustomerOperations({ api }: { api: Api }) {
               <dd>{status.modes.billing}</dd>
               <dt>Delivery</dt>
               <dd>{status.modes.delivery}</dd>
+              <dt>Sending scope</dt>
+              <dd>{status.modes.deliveryScope==='tests'?'One-recipient tests only · broadcasts disabled':'Campaigns and tests · separate approval required'}</dd>
               <dt>Audience</dt>
               <dd>{status.modes.audience}</dd>
               <dt>Team</dt>

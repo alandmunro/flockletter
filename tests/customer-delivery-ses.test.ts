@@ -62,6 +62,29 @@ function makeProvider(
   return new CustomerSesProvider(validRoute(), origin, send, ready);
 }
 
+it('test-only transport refuses broadcast or missing purpose even with a test-like subject',async()=>{
+  const send=vi.fn(async(_input:SendEmailCommandInput)=>({MessageId:'synthetic-test'}));
+  const provider=new CustomerSesProvider(validRoute(),origin,send,async()=>true,'tests');
+  for(const purpose of [undefined,'broadcast'] as const){
+    expect(await provider.submit(validEnvelope({purpose,subject:'[TEST] cannot override purpose'}))).toEqual({outcome:'rejected'});
+  }
+  expect(send).not.toHaveBeenCalled();
+  expect(await provider.submit(validEnvelope({purpose:'test'}))).toEqual({outcome:'accepted',messageId:'synthetic-test'});
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls[0]![0].Destination).toEqual({ToAddresses:['reader@example.com']});
+});
+
+it('the SES runtime enforces the same independent test activation gate',()=>{
+  const env={APP_ENV:'production',FLOCKLETTER_CUSTOMER_DELIVERY:'ses',FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE:'tests',FLOCKLETTER_TEST_MAILING_APPROVED:'true',
+    FLOCKLETTER_CUSTOMER_SES_ACCESS_KEY_ID:'synthetic-only',FLOCKLETTER_CUSTOMER_SES_SECRET_ACCESS_KEY:'synthetic-only',
+    FLOCKLETTER_CUSTOMER_SES_BINDINGS:JSON.stringify([{...validRoute(),fingerprint:undefined}])};
+  const runtime=customerSesRuntime(origin,env);
+  try{expect(runtime?.provider(workspaceId,brandId)).toBeDefined();}finally{runtime?.close();}
+  expect(()=>customerSesRuntime(origin,{...env,FLOCKLETTER_TEST_MAILING_APPROVED:'false',FLOCKLETTER_LIVE_MAILING_APPROVED:'true'})).toThrow('test activation');
+  expect(()=>customerSesRuntime(origin,{...env,FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE:'all'})).toThrow('approval');
+  expect(()=>customerSesRuntime(origin,{...env,APP_ENV:'staging'})).toThrow('production');
+});
+
 it('builds valid SES request with exact fields', async () => {
   const send = vi.fn(async (_input: SendEmailCommandInput) => ({ MessageId: 'mid-1' }));
   const provider = makeProvider(send);

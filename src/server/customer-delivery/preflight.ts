@@ -8,6 +8,7 @@ import { contentGaps,digest } from '../content.js';
 import { senderProfile,senderEligible } from './sender.js';
 import { requireCondition } from '../errors.js';
 import { planAllowance,utcMonth } from '../customer-billing/policy.js';
+import {deliveryPurposeAllowed} from './policy.js';
 import { usage as customerUsage } from '../customer-billing/service.js';
 
 /** Observations, never send authorization. Review and execution repeat every critical check. */
@@ -29,6 +30,7 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
  const add=(code:string,title:string,detail:string,area:Gap['area'])=>gaps.push({code,title,detail,area});
  if(input.expectedVersion!==undefined&&input.expectedVersion!==campaign.version)add('version_conflict','Reload the campaign','The saved revision changed. Review the current version.','content');
  if(options.mode==='off')add('delivery_off','Configure delivery','A platform operator must configure the delivery mode.','delivery');
+ if(!deliveryPurposeAllowed(options.scope,purpose))add('broadcasts_disabled','Use a one-recipient test','Only separately reviewed tests to one confirmed contact are enabled. Broadcasts and schedules are disabled.','delivery');
  if(!options.render)add('renderer_required','Configure the renderer','The private message renderer is not available.','delivery');
  const profile=await senderProfile(sql,campaign.brandId),provider=options.provider?.(actor.workspaceId,campaign.brandId);
  if(options.mode==='ses') {
@@ -84,5 +86,5 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
     add('allowance_exceeded','Review remaining allowance','This review cannot fit the shared remaining campaign or recipient allowance.','billing');
  }
  return {purpose,...(budget?{testBudget:budget}:{}),campaignId:campaign.id,version:campaign.version,brandId:campaign.brandId,segmentId:input.segmentId??null,senderRevision:profile?.revision??null,
-  observedAt:new Date().toISOString(),mode:options.mode,canSend:false,reviewRequired:true,contentReady:!gaps.some(g=>g.area==='content'),gaps,audience,...(allowance?{allowance}:{})};
+  observedAt:new Date().toISOString(),mode:options.mode,deliveryScope:options.scope??'all',canSend:false,reviewRequired:true,contentReady:!gaps.some(g=>g.area==='content'),gaps,audience,...(allowance?{allowance}:{})};
 }
