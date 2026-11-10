@@ -5,11 +5,9 @@ export function operatorMfaPolicy(environment:string,env:NodeJS.ProcessEnv):Oper
   const policy=env.FLOCKLETTER_OPERATOR_MFA_POLICY??'required';
   if(policy!=='required'&&policy!=='pre-revenue')throw Error('Use an explicit supported operator MFA policy.');
   if(policy==='pre-revenue'&&(environment!=='production'||
-    (env.FLOCKLETTER_CUSTOMER_BILLING??'off')!=='off'||
-    (env.FLOCKLETTER_BILLING_MODE??'off')!=='off'||
     (env.FLOCKLETTER_RETENTION_SIGNING_ENABLED??'off')!=='off'||
     (env.FLOCKLETTER_CUSTOMER_RETENTION??'off')!=='off'))
-    throw Error('The pre-revenue operator exception requires production with billing, hosted retention and signing off. Restore MFA before paid activation.');
+    throw Error('The temporary operator exception requires production with hosted retention and signing off.');
   return policy;
 }
 

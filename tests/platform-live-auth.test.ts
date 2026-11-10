@@ -29,11 +29,13 @@ describe('explicit temporary operator policy',()=>{
     for(const APP_ENV of ['staging','test','local'])expect(()=>loadConfig({...env,APP_ENV,FLOCKLETTER_OPERATOR_MFA_POLICY:'pre-revenue'})).toThrow('requires production');
   });
   it.each([
-    ['FLOCKLETTER_CUSTOMER_BILLING','stripe_live'],['FLOCKLETTER_CUSTOMER_BILLING','stripe_test'],
-    ['FLOCKLETTER_BILLING_MODE','sandbox'],['FLOCKLETTER_BILLING_MODE','live'],
     ['FLOCKLETTER_RETENTION_SIGNING_ENABLED','approved'],['FLOCKLETTER_CUSTOMER_RETENTION','live'],
   ])('refuses %s=%s even while platform access is off', (key,value)=>{
-    expect(()=>loadConfig({...env,FLOCKLETTER_OPERATOR_MFA_POLICY:'pre-revenue',FLOCKLETTER_PLATFORM_MODE:'off',[key]:value})).toThrow('Restore MFA');
+    expect(()=>loadConfig({...env,FLOCKLETTER_OPERATOR_MFA_POLICY:'pre-revenue',FLOCKLETTER_PLATFORM_MODE:'off',[key]:value})).toThrow('hosted retention and signing off');
+  });
+  it('does not make the Clerk upgrade a prerequisite to a first paid customer',()=>{
+    expect(loadConfig({...env,FLOCKLETTER_OPERATOR_MFA_POLICY:'pre-revenue',FLOCKLETTER_CUSTOMER_BILLING:'stripe_live',FLOCKLETTER_LIVE_BILLING_APPROVED:'true'}).operatorMfaPolicy).toBe('pre-revenue');
+    expect(operatorMfaPolicy('production',{FLOCKLETTER_OPERATOR_MFA_POLICY:'pre-revenue',FLOCKLETTER_BILLING_MODE:'sandbox'})).toBe('pre-revenue');
   });
   it('permits required policy with live-billing configuration for its separate checks',()=>{
     expect(loadConfig({...env,FLOCKLETTER_CUSTOMER_BILLING:'stripe_live'}).operatorMfaPolicy).toBe('required');

@@ -6,7 +6,7 @@ The owner explicitly deferred production operator MFA until paid customers. The 
 
 Even under the exception, the server verifies the signed Clerk session, exact dedicated operator organization, named operator allowlist, active user-bound session and current admin membership. The first factor must have been verified within five minutes; missing or malformed verification ages are rejected. The browser requests first-factor reverification when needed. Customer API/MCP connection tokens never substitute for an operator session. Current authority is rechecked when a case authorizes later work, including queued support actions. Cases record their authentication policy; changing policy cannot silently upgrade an older case.
 
-The exception is rejected outside production or when any customer/legacy billing mode, hosted retention or erasure-approval signing is enabled. Restore and verify MFA **before enabling paid billing**, rather than waiting for a first charge. This interlock does not inspect or certify provider revenue history. The exception is explicitly selected for the owner’s pre-revenue deployment with live billing off; it does not certify historic billing or trial eligibility. Operators must not reapply the exception after paid operation begins.
+The exception is rejected outside production or when hosted retention or erasure-approval signing is enabled. It does not block paid billing or inspect/certify provider revenue history. Restoring MFA once paying customers arrive is an explicit owner follow-up, not an automatic revenue-triggered switch. The exception is explicitly selected for the owner’s pre-revenue deployment with live billing off; it does not certify historic billing or trial eligibility. The owner must revisit this exception when paying customers arrive.
 
 UI, HTTP API and MCP use the same canonical command checks. The control room and owner Operations setup observations identify the exception without claiming MFA. Signing hosted erasure approvals stays unavailable. Ordinary customer sign-in, restricted database roles, origin checks, exact case/resource scoping, audit, sending limits and external-action gates remain intact.
 
@@ -15,12 +15,12 @@ The residual risk is that compromise of the operator's single sign-in factor can
 ## Restore MFA
 
 1. Enable production MFA in Clerk and enroll the named operator's authenticator and recovery method.
-2. Set `FLOCKLETTER_OPERATOR_MFA_POLICY=required` (or remove the explicit exception) on the production web and worker, keeping billing and sending off during verification.
+2. Set `FLOCKLETTER_OPERATOR_MFA_POLICY=required` (or remove the explicit exception) on the production web and worker, preserving the separately approved external-action settings during verification.
 3. Deploy the tested release and verify fresh two-factor operator authentication, expiry and revocation. Reopen exact cases under the restored policy.
-4. Only then consider the separate paid-activation approval and all remaining billing/legal/provider gates.
+4. This restoration is an owner follow-up once paying customers arrive. Paid billing retains its independent legal, provider and activation gates, but the temporary authentication policy does not block the first sale.
 
 ## Evidence
 
-`platform-live-auth.test.ts` exercises production identity logic with synthetic Clerk responses, including the explicit exception, strict default, freshness, enrollment, session/user binding, named membership, revocation and paid-activation refusal. HTTP and service tests exercise the canonical first-factor challenge and recorded case assurance. These are controlled checks, not proof of a real production operator sign-in. Hosted release results are recorded separately.
+`platform-live-auth.test.ts` exercises production identity logic with synthetic Clerk responses, including the explicit exception, strict default, freshness, enrollment, session/user binding, named membership, revocation and billing independence. HTTP and service tests exercise the canonical first-factor challenge and recorded case assurance. These are controlled checks, not proof of a real production operator sign-in. Hosted release results are recorded separately.
 
 Local Qwen drafted the policy documentation. Chat narrowed its wording to the actual startup interlock, removed an invented mandatory incident policy, and owns security design, implementation, tests, integration and deployment review. No token or cost percentage is inferred.

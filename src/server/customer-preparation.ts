@@ -32,6 +32,6 @@ export function customerPreparation(env:NodeJS.ProcessEnv):CustomerPreparationCh
     }
     return {area,state:'settings_recorded',detail:'This configuration group is recorded. Additional sender routes, receiving, operator and hosting setup may still be needed. Settings do not verify permissions, provider acceptance, history, legal/tax readiness or approval to activate.'};
   });
-  if(env.FLOCKLETTER_OPERATOR_MFA_POLICY==='pre-revenue')checks.push({area:'Administrator sign-in',state:'settings_recorded',detail:'Temporary single-factor exception: named operators still need the separate operator organization, current admin membership and a sign-in verified within five minutes. Restore MFA before paid billing; hosted erasure signing stays disabled. This setting does not activate operator access.'});
+  if(env.FLOCKLETTER_OPERATOR_MFA_POLICY==='pre-revenue')checks.push({area:'Administrator sign-in',state:'settings_recorded',detail:'Temporary single-factor exception: named operators still need the separate operator organization, current admin membership and a sign-in verified within five minutes. Restore MFA once paying customers arrive; hosted erasure signing stays disabled. This setting does not activate operator access.'});
   return checks;
 }
