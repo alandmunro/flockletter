@@ -120,3 +120,6 @@ Billing compatibility correction: FL-BIL-001/003/004/005/007, FL-ONB-004 and FL-
 
 
 Real sandbox compatibility follow-up (FL-AT-007/008/009/031): [billing preparation](implementation/BILLING_PROVIDER_PREPARATION.md#real-sandbox-compatibility-checks) records per-Checkout Managed Payments exclusion, exact subscription/item confirmation, actual card/trial/paid/proration observations and scheduled downgrade reconciliation. Provider tests reject wrong customer/mode/items/price/status/schedule. Public delivery and time-advanced renewal/failure evidence remain separate release checks; live billing and sending stay disabled.
+
+
+FL-ONB-004, FL-API-001/003, FL-OPS-002/003/005/006: [worker and preparation diagnostics](implementation/WORKER_LIVENESS.md#standalone-startup-and-preparation-diagnostics) distinguish disabled workflows from selected recorded settings, redact values, preserve activation gates and reject an embedded standalone worker before database access. Provider verification remains separate. Completed real-sandbox renewal/failure/cancellation and paused production credential evidence are recorded in [billing preparation](implementation/BILLING_PROVIDER_PREPARATION.md#completed-sandbox-lifecycle-follow-up); no live billing or sending is enabled.

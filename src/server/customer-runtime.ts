@@ -1,4 +1,5 @@
 import type {WorkspacePreflight,WorkspaceSetupGap} from '../shared/workspace-preflight.js';
+import {customerPreparation} from './customer-preparation.js';
 import { trialRegistryFromEnvironment } from './customer-abuse/registry.js';
 import {readWorkerHeartbeat,runWorkerHeartbeat} from './customer-worker-heartbeat.js';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -314,9 +315,9 @@ export class CustomerWorkflows {
     if(heartbeat.state!=='fresh')gaps.push({area:'operations',code:'worker_heartbeat_'+heartbeat.state,
       detail:'Worker liveness is '+heartbeat.state+'. Check the worker process and the separate queue-pass history.'});
     for(const area of ['billing','delivery','audience','team','support','retention','infrastructure'] as const)if(modes[area]==='off')
-      gaps.push({area,code:'not_configured',detail:'Configure this workflow before activation.'});
+      gaps.push({area,code:'disabled',detail:'This workflow is switched off. Recorded settings and external verification are separate from activation.'});
     if(modes.delivery!=='off'&&!this.engine)gaps.push({area:'delivery',code:'private_renderer_required',detail:'Enable the private Listmonk renderer.'});
-    if(!modes.dedicated)gaps.push({area:'operations',code:'sleeping_web_worker',detail:'Queues run while this web service is awake. A dedicated worker is required for continuous service.'});
+    if(!modes.dedicated)gaps.push({area:'operations',code:'embedded_worker',detail:'Queues share this web service. Continuous operation depends on its hosting plan and process health; verify capacity or provision a dedicated worker before launch.'});
     if(modes.infrastructure==='aws'&&!this.infrastructure.options.provider)gaps.push({area:'infrastructure',code:'provider_configuration_required',detail:'Configure the dedicated provisioning account, US region and credentials.'});
     if(modes.infrastructure==='aws'&&!modes.provisioningMonthlyLimit)gaps.push({area:'infrastructure',code:'platform_budget_required',detail:'An operator must approve a bounded platform provisioning allowance.'});
     const billing=customerBillingConfiguration(this.env);
@@ -325,7 +326,7 @@ export class CustomerWorkflows {
       worker:{running:heartbeat.state==='fresh',dedicated:modes.dedicated,localProcessRunning:this.running,heartbeat,
         lastPass:recorded?.last_pass_at?.toISOString()??null,lastFailure:recorded?.last_failure_code??null},
       modes:{billing:modes.billing,delivery:modes.delivery,audience:modes.audience,team:modes.team,support:modes.support,retention:modes.retention,infrastructure:modes.infrastructure},
-      gaps,queue,safeguards:{externalDelivery:modes.delivery==='ses',realCharges:modes.billing==='stripe_live',hostedErasure:false,openTracking:false,clickTracking:false}};
+      preparation:customerPreparation(this.env),gaps,queue,safeguards:{externalDelivery:modes.delivery==='ses',realCharges:modes.billing==='stripe_live',hostedErasure:false,openTracking:false,clickTracking:false}};
   }
   async close(){this.closing=true;const providerClose=Promise.resolve(this.infrastructure.options.provider?.close?.());this.ses?.close();await Promise.all([providerClose,this.engine?.close()]);await Promise.allSettled(this.active.values());}
 }

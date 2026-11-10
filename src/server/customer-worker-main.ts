@@ -4,11 +4,13 @@ import { loadConfig,configurationGaps } from './config.js';
 import { Database } from './db.js';
 import { platformRuntime } from './platform/runtime.js';
 import { Authenticator,clerkIdentity,localIdentity } from './auth.js';
+import {customerSettings} from './customer-settings.js';
 import { CustomerWorkflows } from './customer-runtime.js';
 
 if(existsSync('.env'))loadEnvFile('.env');
 const config=loadConfig();
 if(configurationGaps(config).length)throw Error('Configure the dedicated Flockletter worker before starting it.');
+if(!customerSettings(config).dedicated)throw Error('The standalone worker requires FLOCKLETTER_CUSTOMER_WORKER=dedicated.');
 const db=new Database(config.databaseUrl!);
 await db.verifyBoundary();
 if((await db.pool.query('SELECT public.flockletter_restore_blocked() blocked')).rows[0]?.blocked)throw Error('Restore quarantine blocks the worker.');

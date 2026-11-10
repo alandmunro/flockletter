@@ -1,0 +1,35 @@
+import type {CustomerPreparationCheck} from '../shared/customer-operations.js';
+import {trialRegistryFromEnvironment} from './customer-abuse/registry.js';
+
+/** Pure, redacted configuration observations. Never constructs a transport or changes activation. */
+export function customerPreparation(env:NodeJS.ProcessEnv):CustomerPreparationCheck[] {
+  const groups:Record<string,string[]>={
+    'Billing provider':[
+      'FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT','FLOCKLETTER_CUSTOMER_STRIPE_KEY',
+      'FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK','FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG',
+      'FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG','FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG',
+      'FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG','FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG',
+      'FLOCKLETTER_CUSTOMER_STARTER_PRICE','FLOCKLETTER_CUSTOMER_GROWTH_PRICE','FLOCKLETTER_CUSTOMER_PRO_PRICE'],
+    'Trial protection':[
+      'FLOCKLETTER_TRIAL_HMAC_KEY','FLOCKLETTER_TRIAL_POLICY_ID','FLOCKLETTER_TRIAL_POLICY_VERSION',
+      'FLOCKLETTER_TRIAL_RETENTION_APPROVED','FLOCKLETTER_TRIAL_HISTORY_BASELINE'],
+    'Newsletter transport credentials':['FLOCKLETTER_CUSTOMER_SES_ACCESS_KEY_ID','FLOCKLETTER_CUSTOMER_SES_SECRET_ACCESS_KEY'],
+    'Subscription confirmations':[
+      'FLOCKLETTER_CUSTOMER_CONFIRMATION_KEY','FLOCKLETTER_CUSTOMER_CONFIRMATION_RETRIEVE_KEY',
+      'FLOCKLETTER_CUSTOMER_CONFIRMATION_FROM','FLOCKLETTER_CUSTOMER_CONFIRMATION_WEBHOOK_SECRET',
+      'FLOCKLETTER_CUSTOMER_CONFIRMATION_ROUTING_KEY','FLOCKLETTER_CUSTOMER_CONFIRMATION_SIGNING_KEY'],
+    'Support transport credentials':['FLOCKLETTER_SUPPORT_RESEND_KEY','FLOCKLETTER_SUPPORT_RESEND_RETRIEVE_KEY','FLOCKLETTER_SUPPORT_SENDER'],
+  };
+  return Object.entries(groups).map(([area,keys])=>{
+    const missing=keys.filter(key=>!env[key]?.trim()).length;
+    if(missing)return {area,state:'settings_missing',detail:`${missing} required setting${missing===1?' is':'s are'} missing. This workflow remains subject to its activation and verification checks.`};
+    if(area==='Trial protection') {
+      try {
+        const source=env.APP_ENV==='production'?'stripe_live':'stripe_test';
+        if(!/^acct_[A-Za-z0-9]+$/.test(env.FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT??'')||
+          !trialRegistryFromEnvironment(env,source,env.FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT!))throw Error('Invalid trial configuration.');
+      }catch{return {area,state:'settings_invalid',detail:'Trial settings do not satisfy the protected registry configuration. Review the stable key, approved policy and history baseline; do not reset existing history.'};}
+    }
+    return {area,state:'settings_recorded',detail:'This configuration group is recorded. Additional sender routes, receiving, operator and hosting setup may still be needed. Settings do not verify permissions, provider acceptance, history, legal/tax readiness or approval to activate.'};
+  });
+}
