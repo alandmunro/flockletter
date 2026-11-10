@@ -30,7 +30,7 @@ let platform:PlatformService|undefined;
 const stop = new AbortController();
 const tasks: Promise<void>[] = [];
 if (configurationGaps(config).length === 0) {
-  const db = new Database(config.databaseUrl!);
+  const db = new Database(config.databaseUrl!,config.databasePoolMax);
   await db.verifyBoundary();
   if((await db.pool.query('SELECT public.flockletter_restore_blocked() blocked')).rows[0]?.blocked)throw Error('Restored data remains quarantined. Complete protected checkpoint reconciliation and operator release before startup.');
   const identity = config.localIdentity ? localIdentity() : clerkIdentity(config);

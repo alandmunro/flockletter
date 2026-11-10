@@ -126,3 +126,5 @@ FL-ONB-004, FL-API-001/003, FL-OPS-002/003/005/006: [worker and preparation diag
 
 
 FL-OPS-001/002/003/004/005/007: [dedicated worker release](implementation/RELEASE_PARITY.md#dedicated-production-worker-release) binds both production resources, stages a reviewed immutable source, verifies provider-reported deployed commit and deploys worker before web. Negative destination and mocked shell-transport tests do not establish hosted liveness; protected heartbeat verification is separate. No provider activation or migration is added.
+
+FL-OPS-002: the deployed runtime role has a ten-connection cap. Hosted web/worker pools default to two (only 1–2 accepted); single-instance destination checks keep four rolling instances within eight pool slots. Role grants/limits remain unchanged. Disposable client-queue and seven-workflow tests exercise this bound; additional services, replicas and live engines need a new capacity review.

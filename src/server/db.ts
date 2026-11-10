@@ -7,8 +7,9 @@ export type Sql = Pick<PoolClient, 'query'>;
 export class Database {
   readonly pool: pg.Pool;
   private readonly disconnects = new Set<Promise<void>>();
-  constructor(connectionString: string) {
-    this.pool = new pg.Pool({ connectionString, max: 5, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000, statement_timeout: 10000 });
+  constructor(connectionString: string, maxConnections=5) {
+    if(!Number.isSafeInteger(maxConnections)||maxConnections<1||maxConnections>5)throw Error('Database pool size is outside the supported budget.');
+    this.pool = new pg.Pool({ connectionString, max: maxConnections, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000, statement_timeout: 10000 });
     this.pool.on('connect', client => {
       const ended = new Promise<void>(resolve => client.once('end', resolve));
       this.disconnects.add(ended);

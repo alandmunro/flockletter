@@ -1,6 +1,7 @@
 import {loadInvitationBinding,type InvitationBinding} from './team-invitation-provider.js';
 export type Config = {
   environment: 'local' | 'test' | 'staging' | 'production'; origin: string; browserOrigins: string[]; host: string; port: number;
+  databasePoolMax:number;
   localIdentity: boolean; databaseUrl?: string; clerkSecretKey?: string; clerkPublishableKey?: string;
   invitationBinding?: InvitationBinding; buildSha?: string;
 };
@@ -13,6 +14,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const url = new URL(origin);
   if (url.origin !== origin || url.username || url.password) throw new Error('APP_ORIGIN must be a single exact origin.');
   const hosted = environment === 'staging' || environment === 'production';
+  const databasePoolMax=Number(env.FLOCKLETTER_DATABASE_POOL_MAX??(hosted?'2':'5'));
+  if(!Number.isSafeInteger(databasePoolMax)||databasePoolMax<1||databasePoolMax>(hosted?2:5))
+    throw new Error('Database pool size must fit the local or hosted web/worker connection budget.');
   const host = env.HOST ?? (hosted ? '0.0.0.0' : '127.0.0.1');
   const localIdentity = env.LOCAL_TEST_IDENTITY === 'true';
   if (localIdentity && (hosted || env.RENDER || env.NODE_ENV === 'production' || host !== '127.0.0.1' || !['127.0.0.1', 'localhost'].includes(url.hostname) || url.protocol !== 'http:')) throw new Error('Synthetic identity is permitted only on a local loopback development/test server.');
@@ -31,7 +35,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if(environment==='production' && (!env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') || !env.CLERK_SECRET_KEY?.startsWith('sk_live_')))
     throw new Error('Production requires a dedicated Clerk production instance.');
   const buildSha = (env.RENDER_GIT_COMMIT ?? env.BUILD_SHA ?? '').toLowerCase();
-  return { buildSha: /^[0-9a-f]{40}$/.test(buildSha) ? buildSha : undefined, environment: environment as Config['environment'], origin, browserOrigins, host, port, localIdentity, databaseUrl: env.DATABASE_URL, clerkSecretKey: env.CLERK_SECRET_KEY, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY, invitationBinding:loadInvitationBinding(env) };
+  return { buildSha: /^[0-9a-f]{40}$/.test(buildSha) ? buildSha : undefined, environment: environment as Config['environment'], origin, browserOrigins, host, port, localIdentity, databasePoolMax, databaseUrl: env.DATABASE_URL, clerkSecretKey: env.CLERK_SECRET_KEY, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY, invitationBinding:loadInvitationBinding(env) };
 }
 export const configurationGaps = (c: Config) => [
   ...(!c.databaseUrl ? ['database_not_configured'] : []),

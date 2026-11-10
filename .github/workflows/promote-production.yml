@@ -144,7 +144,9 @@ jobs:
             || { echo "::error::Render rejected the API key or the service id (read-only check failed)."; exit 1; }
           worker="$(curl -fsS --max-time 30 -H "Authorization: Bearer ${RENDER_API_KEY}" "https://api.render.com/v1/services/${RENDER_PRODUCTION_WORKER_SERVICE_ID}")" \
             || { echo "::error::Render rejected the worker identity check."; exit 1; }
-          jq -nc --argjson web "${service}" --argjson worker "${worker}" '{web:$web,worker:$worker}' | \
+          version="$(curl -fsS --max-time 30 "${PRODUCTION_URL}/api/health/version")" \
+            || { echo "::error::Current production application identity is unavailable."; exit 1; }
+          jq -nc --argjson web "${service}" --argjson worker "${worker}" --argjson version "${version}" '{web:$web,worker:$worker,version:$version}' | \
             node control/scripts/verify-render-production-targets.mjs "https://github.com/${{ github.repository }}" \
               "${PRODUCTION_URL}" "${RENDER_PRODUCTION_SERVICE_ID}" "${RENDER_PRODUCTION_WORKER_SERVICE_ID}"
 

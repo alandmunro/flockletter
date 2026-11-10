@@ -11,8 +11,9 @@ const envId='e-1';
 
 function base(){
   return {
-    web:{id:webId,type:'web_service',repo,branch:'main',autoDeploy:'no',suspended:'not_suspended',ownerId,environmentId:envId,serviceDetails:{url,region:'oregon'}},
-    worker:{id:workerId,type:'background_worker',repo,branch:'main',autoDeploy:'no',suspended:'not_suspended',ownerId,environmentId:envId,serviceDetails:{region:'oregon',envSpecificDetails:{startCommand:'node dist/server/server/customer-worker-main.js'}}}
+    version:{appId:'flockletter',environment:'production'},
+    web:{id:webId,type:'web_service',repo,branch:'main',autoDeploy:'no',suspended:'not_suspended',ownerId,environmentId:envId,serviceDetails:{numInstances:1,url,region:'oregon'}},
+    worker:{id:workerId,type:'background_worker',repo,branch:'main',autoDeploy:'no',suspended:'not_suspended',ownerId,environmentId:envId,serviceDetails:{numInstances:1,region:'oregon',envSpecificDetails:{startCommand:'node dist/server/server/customer-worker-main.js'}}}
   };
 }
 
@@ -25,6 +26,8 @@ describe('productionTargetsMatch',()=>{
   });
 
   it.each<[string,(input:ReturnType<typeof base>)=>void]>([
+    ['staging application cannot be production',i=>{i.version.environment='staging'}],
+    ['foreign application cannot be production',i=>{i.version.appId='other'}],
     ['wrong web id',i=>{i.web.id=`srv-${'c'.repeat(20)}`}],
     ['wrong worker id',i=>{i.worker.id=`srv-${'d'.repeat(20)}`}],
     ['wrong web type',i=>{i.web.type='x'}],
@@ -34,6 +37,8 @@ describe('productionTargetsMatch',()=>{
     ['owner mismatch',i=>{i.worker.ownerId='o-2'}],
     ['empty env id web',i=>{i.web.environmentId='  '}],
     ['env mismatch',i=>{i.worker.environmentId='e-2'}],
+    ['web replicas exceed the role budget',i=>{i.web.serviceDetails.numInstances=2}],
+    ['worker replicas exceed the role budget',i=>{i.worker.serviceDetails.numInstances=2}],
     ['region mismatch',i=>{i.worker.serviceDetails.region='us-east-1'}],
     ['web autoDeploy yes',i=>{i.web.autoDeploy='yes'}],
     ['worker autoDeploy yes',i=>{i.worker.autoDeploy='yes'}],
@@ -54,6 +59,7 @@ describe('productionTargetsMatch',()=>{
   });
 
   it.each([
+    ['missing application identity',()=>({web:base().web,worker:base().worker})],
     ['missing web',()=>({worker:base().worker})],
     ['missing worker',()=>({web:base().web})],
     ['null input',()=>null],

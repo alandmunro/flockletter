@@ -13,7 +13,7 @@ const config = loadConfig();
 const binding = loadIntakeBinding(config);
 if (!binding || !config.databaseUrl)
   throw new Error('The Flockletter confirmation worker needs an explicit staging binding and database.');
-const db = new Database(config.databaseUrl);
+const db = new Database(config.databaseUrl,config.databasePoolMax);
 if (!config.localIdentity && (!config.clerkSecretKey || !config.clerkPublishableKey))
   throw new Error('A hosted confirmation worker requires the Flockletter Clerk instance.');
 const identity = config.localIdentity ? localIdentity() : clerkIdentity(config);

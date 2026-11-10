@@ -6,7 +6,8 @@ import console from 'node:console';
 /** Service metadata only. This verifies deployment destinations, never credentials or queue liveness. */
 export function productionTargetsMatch(input,{repository,productionUrl,webId,workerId}) {
   const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
-  if(!object(input)||!object(input.web)||!object(input.worker))return false;
+  if(!object(input)||!object(input.web)||!object(input.worker)||!object(input.version))return false;
+  if(input.version.appId!=='flockletter'||input.version.environment!=='production')return false;
   const {web,worker}=input;
   try {
     const url=new URL(productionUrl);
@@ -17,6 +18,7 @@ export function productionTargetsMatch(input,{repository,productionUrl,webId,wor
   if(web.id!==webId||worker.id!==workerId||web.type!=='web_service'||worker.type!=='background_worker'||
     web.repo!==repository||worker.repo!==repository||web.branch!=='main'||worker.branch!=='main'||
     web.autoDeploy!=='no'||worker.autoDeploy!=='no'||web.suspended!=='not_suspended'||worker.suspended!=='not_suspended'||
+    web.serviceDetails?.numInstances!==1||worker.serviceDetails?.numInstances!==1||
     web.serviceDetails?.url!==productionUrl||
     worker.serviceDetails?.envSpecificDetails?.startCommand!=='node dist/server/server/customer-worker-main.js')return false;
   for(const key of ['ownerId','environmentId'])if(typeof web[key]!=='string'||!web[key].trim()||web[key]!==worker[key])return false;

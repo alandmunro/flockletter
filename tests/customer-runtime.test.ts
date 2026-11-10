@@ -29,7 +29,7 @@ const workflows = new Set<CustomerWorkflows>();
 
 beforeAll(async () => {
   fixture = await startDatabase();
-  db = new Database(fixture.url);
+  db = new Database(fixture.url,2);
   operator = new Database(fixture.adminUrl);
 });
 
@@ -420,7 +420,7 @@ it('recovers the durable directory and worker receipt after application and conn
   expect(before.worker.lastPass).not.toBeNull();
   await f.runtime.close();
   workflows.delete(f.runtime);
-  const freshDb = new Database(fixture.url);
+  const freshDb = new Database(fixture.url,2);
   restartedDatabases.push(freshDb);
   const restarted = new CustomerWorkflows(freshDb, f.config, f.identity, f.env);
   workflows.add(restarted);
