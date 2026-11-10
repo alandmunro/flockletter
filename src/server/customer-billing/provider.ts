@@ -66,7 +66,7 @@ export type CustomerBillingProvider = {
   createTrial?(intent: ProviderTrialActivation): Promise<ProviderSubscription>;
   lookupTrial?(intent: ProviderTrialActivation): Promise<ProviderSubscription | null>;
   inspectSubscription?(id: string): Promise<ProviderSubscription>;
-  portal(customer: string, key: string, plan?: CustomerPlan): Promise<string>;
+  portal(customer: string, key: string, plan?: CustomerPlan, subscription?: string): Promise<string>;
   verify(raw: Buffer, signature: string): ProviderNotice | null;
   resolve(notice: ProviderNotice): Promise<{
     subscription: ProviderSubscription | null;
@@ -354,6 +354,7 @@ export function stripeCustomerProvider(
       const result = await stripe.checkout.sessions.create(
         {
           mode: 'setup',
+          managed_payments: { enabled: false },
           currency: 'usd',
           client_reference_id: intent.workspace,
           metadata,
@@ -485,6 +486,7 @@ export function stripeCustomerProvider(
       const result = await stripe.checkout.sessions.create(
         {
           mode: 'subscription',
+          managed_payments: { enabled: false },
           client_reference_id: intent.workspace,
           metadata,
           ...(intent.customer ? { customer: intent.customer } : {}),
@@ -533,15 +535,30 @@ export function stripeCustomerProvider(
       }
       throw invalid();
     },
-    async portal(customer, key, plan) {
+    async portal(customer, key, plan, subscription) {
       await accountCheck();
       const catalogue = await readBillingCatalogue(stripe, inspectionTarget);
       const selectedConfiguration = plan ? planPortalConfigurations[plan] : portalConfiguration;
       if (!selectedConfiguration) throw invalid();
       const configuration = await stripe.billingPortal.configurations.retrieve(selectedConfiguration, { expand: ['features.subscription_update.products'] });
       if (!billingPortalMatches(configuration, inspectionTarget, catalogue, plan)) throw invalid();
+      let flow: Stripe.BillingPortal.SessionCreateParams.FlowData | undefined;
+      if (plan) {
+        if (!subscription) throw invalid();
+        const current = await stripe.subscriptions.retrieve(subscription);
+        const item = current.items.data[0];
+        if (current.id !== subscription || current.livemode !== live || reference(current.customer) !== customer ||
+            !['active', 'trialing'].includes(current.status) || current.collection_method !== 'charge_automatically' ||
+            current.items.has_more || current.items.data.length !== 1 || !item || current.schedule ||
+            planFor(item) === plan) throw invalid();
+        flow = {
+          type: 'subscription_update_confirm',
+          subscription_update_confirm: { subscription: current.id, items: [{ id: item.id, price: prices[plan], quantity: 1 }] },
+          after_completion: { type: 'redirect', redirect: { return_url: origin + '/' } },
+        };
+      }
       const result = await stripe.billingPortal.sessions.create(
-        { customer, return_url: origin + '/', configuration: selectedConfiguration },
+        { customer, return_url: origin + '/', configuration: selectedConfiguration, ...(flow ? { flow_data: flow } : {}) },
         { idempotencyKey: 'flockletter-customer-portal-' + key },
       );
       if (new URL(result.url).origin !== 'https://billing.stripe.com') throw invalid();
