@@ -25,6 +25,24 @@ let platform:PlatformService;
 beforeAll(async()=>{fixture=await startDatabase();db=new Database(fixture.url);admin=new pg.Client({connectionString:fixture.adminUrl});await admin.connect();for(const a of [owner,other])await new CommandService(db).execute('workspace.initialize',{operationKey:randomUUID(),name:'Operator test',brandName:'Trail'},a);platform=new PlatformService(db,new OperatorStore(db,'capture'),{mode:'capture',identity,support:support(),databaseName:'flockletter_test',now:()=>now});});
 afterAll(async()=>{await platform?.close();await admin?.end();await db?.close();await fixture?.stop();});
 async function open(kind:PlatformCase['kind']='support',resourceId:string|null=null){return platform.execute('platform.openCase',{operationKey:randomUUID(),workspaceId:owner.workspaceId,kind,resourceId,reason:'Review the exact bounded customer issue.'},session) as Promise<PlatformCase>;}
+it('records case assurance and cannot reuse a single-factor case after restoring MFA',async()=>{
+ const weak={...session,authentication:'pre-revenue' as const};
+ const review=await platform.execute('platform.openCase',{operationKey:randomUUID(),workspaceId:owner.workspaceId,kind:'support',resourceId:null,reason:'Review the exact bounded customer issue.'},weak) as PlatformCase;
+ expect(review.authentication).toBe('pre-revenue');
+ expect(await platform.case(weak,review.id)).toMatchObject({authentication:'pre-revenue'});
+ await expect(platform.case({...session,authentication:'required'},review.id)).rejects.toMatchObject({code:'operator_case_required'});
+});
+it('carries the recorded assurance into deferred support authority checks',async()=>{
+ const original=platform.options.identity;
+ const weak={...session,authentication:'pre-revenue' as const};
+ const review=await platform.execute('platform.openCase',{operationKey:randomUUID(),workspaceId:owner.workspaceId,kind:'support',resourceId:null,reason:'Review a bounded pending support authorization.'},weak) as PlatformCase;
+ const reference='support:'+randomUUID();
+ await platform.store.transaction(owner.workspaceId,r=>r.put('ack',reference,{caseId:review.id,userId:owner.userId},true));
+ let observed:OperatorSession|undefined;
+ platform.options.identity={...original,current:async value=>{observed=value;return value.authentication==='pre-revenue';}};
+ try{expect(await platform.supportAuthorized(owner.userId,owner.workspaceId,reference)).toBe(true);expect(observed?.authentication).toBe('pre-revenue');}
+ finally{platform.options.identity=original;}
+});
 it('isolates exercise health, cases and inbox from other workspaces',async()=>{
  const status={worker:{lastPass:new Date().toISOString(),lastFailure:null,dedicated:false},queue:{unknown:1,delivery:1,confirmations:0,team:0,support:0,retention:0}} as CustomerOperationsStatus;
  await platform.observe(owner.workspaceId,status);await platform.observe(other.workspaceId,status);
@@ -54,6 +72,13 @@ it('keeps hold and acknowledgement intents idempotent without clearing the alert
 it('cannot sign hosted erasure without independently configured protected evidence',async()=>{
  // A support case cannot be repurposed as erasure approval, even with a valid hash.
  const c=await open();await expect(platform.execute('platform.retentionApprove',{operationKey:randomUUID(),caseId:c.id,expectedDigest:'a'.repeat(64)},session)).rejects.toMatchObject({code:'case_scope_mismatch'});
+});
+it('refuses erasure signing under the temporary exception before loading protected evidence',async()=>{
+ const c=await open(),original=platform.options.identity;
+ await platform.store.transaction(owner.workspaceId,r=>r.put('case',c.id,{...c,kind:'retention',resourceId:randomUUID()}));
+ platform.options.identity={...original,mfaPolicy:'pre-revenue'};
+ try{await expect(platform.execute('platform.retentionApprove',{operationKey:randomUUID(),caseId:c.id,expectedDigest:'a'.repeat(64)},session)).rejects.toMatchObject({code:'operator_mfa_required'});}
+ finally{platform.options.identity=original;}
 });
 it('uses a separate exact operator database role and blocks tenant reads',async()=>{
  const role='flockletter_test_operator';const password=randomUUID();await admin.query('CREATE ROLE '+role+' LOGIN PASSWORD '+pg.escapeLiteral(password));await admin.query(operatorRoleGrants('flockletter_test',role));

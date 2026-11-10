@@ -4,7 +4,7 @@ D-043 implements the three remaining engineering areas: cross-workspace trial pr
 
 ## Authority and publication boundaries
 
-`/operator` uses the separate canonical `/api/operator/v1/commands/*` surface. Live mode requires the exact server-configured operator Clerk organization, an explicit user allowlist, current admin membership, an active session, enrolled second factor and both factor ages under five minutes. Customer connection tokens never grant operator access. No implicit first-factor downgrade is accepted. The UI uses Clerk reverification; disabling MFA, revoking membership or expiring a case blocks further submission.
+`/operator` uses the separate canonical `/api/operator/v1/commands/*` surface. Except for [D-051’s explicit pre-revenue policy](PRE_REVENUE_OPERATOR_AUTH.md), live mode requires the exact server-configured operator Clerk organization, an explicit user allowlist, current admin membership, an active session, enrolled second factor and both factor ages under five minutes. Customer connection tokens never grant operator access. No implicit first-factor downgrade is accepted. The UI uses Clerk reverification; disabling MFA, revoking membership or expiring a case blocks further submission.
 
 Capture mode grants a current customer owner a clearly labelled exercise limited to that owner's selected workspace. It cannot inspect another customer or the global email quarantine. Capture authority never signs destructive artifacts. The separate stdio operator MCP bridge exposes the same canonical commands, accepts short-lived Clerk sessions and has no persistent elevated customer token.
 

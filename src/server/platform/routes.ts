@@ -13,7 +13,7 @@ export function platformRoutes(app:Express,config:Config,service?:PlatformServic
  });
  app.get('/api/operator/v1/schema',async(req,res)=>{await service!.options.identity.authenticate(req);res.json({commands:Object.fromEntries(Object.entries(platformCommands).map(([name,c])=>[name,{description:c.description,mutation:c.mutation,inputSchema:c.schema.toJSONSchema({io:'input'})}]))});});
  app.post('/api/operator/v1/commands/:name',async(req,res,next)=>{
-  let actor;try{actor=await service!.options.identity.authenticate(req);}catch(error){if(error instanceof AppError&&error.code==='operator_mfa_required'){res.status(403).json({clerk_error:{type:'forbidden',reason:'reverification-error',metadata:{reverification:{level:'multi_factor',afterMinutes:5}}}});return;}throw error;}
+  let actor;try{actor=await service!.options.identity.authenticate(req);}catch(error){if(error instanceof AppError&&['operator_mfa_required','operator_first_factor_required'].includes(error.code)){res.status(403).json({clerk_error:{type:'forbidden',reason:'reverification-error',metadata:{reverification:{level:error.code==='operator_mfa_required'?'multi_factor':'first_factor',afterMinutes:5}}}});return;}throw error;}
   const name=String(req.params.name);if(!Object.hasOwn(platformCommands,name))throw new AppError(404,'unknown_command','This operator command is unavailable.');
   if(!req.is('application/json'))throw new AppError(415,'json_required','Send application/json.');
   express.json({limit:'32kb',strict:true})(req,res,error=>{if(error)return next(error);void service!.execute(name as PlatformCommand,req.body,actor).then(result=>res.json({result})).catch(next);});

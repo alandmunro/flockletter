@@ -20,7 +20,7 @@ export function customerPreparation(env:NodeJS.ProcessEnv):CustomerPreparationCh
       'FLOCKLETTER_CUSTOMER_CONFIRMATION_ROUTING_KEY','FLOCKLETTER_CUSTOMER_CONFIRMATION_SIGNING_KEY'],
     'Support transport credentials':['FLOCKLETTER_SUPPORT_RESEND_KEY','FLOCKLETTER_SUPPORT_RESEND_RETRIEVE_KEY','FLOCKLETTER_SUPPORT_SENDER'],
   };
-  return Object.entries(groups).map(([area,keys])=>{
+  const checks:CustomerPreparationCheck[]=Object.entries(groups).map(([area,keys])=>{
     const missing=keys.filter(key=>!env[key]?.trim()).length;
     if(missing)return {area,state:'settings_missing',detail:`${missing} required setting${missing===1?' is':'s are'} missing. This workflow remains subject to its activation and verification checks.`};
     if(area==='Trial protection') {
@@ -32,4 +32,6 @@ export function customerPreparation(env:NodeJS.ProcessEnv):CustomerPreparationCh
     }
     return {area,state:'settings_recorded',detail:'This configuration group is recorded. Additional sender routes, receiving, operator and hosting setup may still be needed. Settings do not verify permissions, provider acceptance, history, legal/tax readiness or approval to activate.'};
   });
+  if(env.FLOCKLETTER_OPERATOR_MFA_POLICY==='pre-revenue')checks.push({area:'Administrator sign-in',state:'settings_recorded',detail:'Temporary single-factor exception: named operators still need the separate operator organization, current admin membership and a sign-in verified within five minutes. Restore MFA before paid billing; hosted erasure signing stays disabled. This setting does not activate operator access.'});
+  return checks;
 }

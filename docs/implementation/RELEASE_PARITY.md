@@ -40,7 +40,7 @@ For later releases, `APP_ENV=production node scripts/migrate-production.mjs <ope
 | Login and workspace persistence | Existing development Clerk and staging database | Separate production Clerk, database and roles; verify hosted sign-in |
 | Customer workflows | Existing capture/exercise modes | Default off until each external integration is configured and verified |
 | Team invitations | Exercise | Enable real Clerk invitations only after production membership setup is verified |
-| Global operator access | Own-workspace capture only | Off until separate operator organization, named users, recent MFA and restricted role are verified |
+| Global operator access | Own-workspace capture only | Off until separate operator organization, named users, the required authentication policy (MFA by default; D-051’s temporary exception only) and restricted role are verified |
 | Paid trial history | Synthetic namespace | D-048 policy accepted; actual stable key/policy configuration, disclosure, provider/history baseline and current-owner agreement still required |
 | Hosted erasure | Disposable capture | Independent restricted executor and exact approvals; no customer HTTP/MCP deletion |
 

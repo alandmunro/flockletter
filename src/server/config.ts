@@ -1,9 +1,11 @@
 import {loadInvitationBinding,type InvitationBinding} from './team-invitation-provider.js';
+import {operatorMfaPolicy,type OperatorMfaPolicy} from './platform/auth-policy.js';
 export type Config = {
   environment: 'local' | 'test' | 'staging' | 'production'; origin: string; browserOrigins: string[]; host: string; port: number;
   databasePoolMax:number;
   localIdentity: boolean; databaseUrl?: string; clerkSecretKey?: string; clerkPublishableKey?: string;
   invitationBinding?: InvitationBinding; buildSha?: string;
+  operatorMfaPolicy?:OperatorMfaPolicy;
 };
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const environment = env.APP_ENV ?? 'local';
@@ -35,7 +37,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if(environment==='production' && (!env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') || !env.CLERK_SECRET_KEY?.startsWith('sk_live_')))
     throw new Error('Production requires a dedicated Clerk production instance.');
   const buildSha = (env.RENDER_GIT_COMMIT ?? env.BUILD_SHA ?? '').toLowerCase();
-  return { buildSha: /^[0-9a-f]{40}$/.test(buildSha) ? buildSha : undefined, environment: environment as Config['environment'], origin, browserOrigins, host, port, localIdentity, databasePoolMax, databaseUrl: env.DATABASE_URL, clerkSecretKey: env.CLERK_SECRET_KEY, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY, invitationBinding:loadInvitationBinding(env) };
+  return { operatorMfaPolicy:operatorMfaPolicy(environment,env), buildSha: /^[0-9a-f]{40}$/.test(buildSha) ? buildSha : undefined, environment: environment as Config['environment'], origin, browserOrigins, host, port, localIdentity, databasePoolMax, databaseUrl: env.DATABASE_URL, clerkSecretKey: env.CLERK_SECRET_KEY, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY, invitationBinding:loadInvitationBinding(env) };
 }
 export const configurationGaps = (c: Config) => [
   ...(!c.databaseUrl ? ['database_not_configured'] : []),

@@ -58,7 +58,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     res.status(gaps.length ? 503 : 200).json({ ready: gaps.length === 0, gaps, sendingEnabled: service?.customer?.settings.delivery==='ses' });
   });
   platformRoutes(app,config,platform);
-  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), platformMode:platform?.options.mode??'off', plans, sendingEnabled: service?.customer?.settings.delivery==='ses',
+  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), operatorMfaPolicy:config.operatorMfaPolicy??'required', platformMode:platform?.options.mode??'off', plans, sendingEnabled: service?.customer?.settings.delivery==='ses',
     customerWorkflows:service?.customer?{billing:service.customer.settings.billing,delivery:service.customer.settings.delivery,audience:service.customer.settings.audience,team:service.customer.settings.team,support:service.customer.settings.support,retention:service.customer.settings.retention}:null }));
   app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false,
     skip: req => (['HEAD','POST'].includes(req.method) && /^\/brands\/[^/]+\/subscriber-signups\/?$/i.test(req.path)) ||

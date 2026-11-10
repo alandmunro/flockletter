@@ -10,6 +10,7 @@ import { platformRuntime } from '../src/server/platform/runtime.js';
 import type { PlatformService } from '../src/server/platform/service.js';
 import { CustomerWorkflows } from '../src/server/customer-runtime.js';
 import { randomUUID } from 'node:crypto';
+import {AppError} from '../src/server/errors.js';
 
 let fixture: Awaited<ReturnType<typeof startDatabase>>;
 let db: Database;
@@ -82,6 +83,18 @@ afterAll(async () => {
 });
 
 describe('Platform HTTP authority and exercise boundary', () => {
+  it.each([
+    ['operator_first_factor_required','first_factor'],
+    ['operator_mfa_required','multi_factor'],
+  ])('returns the canonical %s reverification level without running a command',async(code,level)=>{
+    const original=platform!.options.identity;
+    platform!.options.identity={authenticate:async()=>{throw new AppError(403,code,'Synthetic verification required.');},current:async()=>false};
+    try {
+      const response=await post('/api/operator/v1/commands/platform.overview',{});
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({clerk_error:{type:'forbidden',reason:'reverification-error',metadata:{reverification:{level,afterMinutes:5}}}});
+    }finally{platform!.options.identity=original;}
+  });
   it('accepts customer connection identity but rejects operator commands for that token', async () => {
     const created = await service.execute('connection.create', { operationKey: randomUUID(), name: 'Customer API', scopes: ['read'], brandIds: [(await service.execute('workspace.get',{},ownerActor) as {brands:{id:string}[]}).brands[0]!.id], expiresInDays: 30 }, ownerActor) as { token: string; connection: { id: string } };
 

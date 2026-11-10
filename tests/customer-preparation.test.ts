@@ -15,6 +15,12 @@ function trialEnv(overrides: Partial<Record<string, string>> = {}): Record<strin
 }
 
 describe('customerPreparation', () => {
+  it('describes the temporary operator exception without claiming MFA or activating access',()=>{
+    const result=customerPreparation({FLOCKLETTER_OPERATOR_MFA_POLICY:'pre-revenue'});
+    expect(result.find(c=>c.area==='Administrator sign-in')).toMatchObject({state:'settings_recorded',detail:expect.stringContaining('Temporary single-factor exception')});
+    expect(result.find(c=>c.area==='Administrator sign-in')?.detail).toContain('does not activate operator access');
+    expect(customerPreparation({FLOCKLETTER_OPERATOR_MFA_POLICY:'required'}).some(c=>c.area==='Administrator sign-in')).toBe(false);
+  });
   it('reports all groups missing when env is empty', () => {
     const result = customerPreparation({});
     expect(result.every((c) => c.state === 'settings_missing')).toBe(true);

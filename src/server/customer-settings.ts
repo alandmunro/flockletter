@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import type { Config } from './config.js';
+import {operatorMfaPolicy} from './platform/auth-policy.js';
 
 export function customerSettings(config:Config,env:NodeJS.ProcessEnv=process.env) {
+  operatorMfaPolicy(config.environment,env);
   const mode=<const T extends readonly [string,...string[]]>(key:string,values:T)=>z.enum(values).parse(env[key]??'off');
   const settings={
     billing:mode('FLOCKLETTER_CUSTOMER_BILLING',['off','exercise','stripe_test','stripe_live']),
