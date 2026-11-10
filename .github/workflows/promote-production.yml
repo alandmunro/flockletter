@@ -66,19 +66,30 @@ jobs:
           [[ "${MIGRATIONS_APPLIED}" =~ ^(true|false)$ ]] || { echo "::error::migrations_applied must be true or false."; exit 1; }
           [[ -z "${REQUEST_ID}" || "${REQUEST_ID}" =~ ^[0-9a-f]{32}$ ]] || { echo "::error::request_id must be 32 hex characters."; exit 1; }
 
-      - name: Check out promotion tooling from main
+      # The release tooling always comes from the reviewed workflow commit, never from the commit being
+      # promoted: that commit's scripts must not run with the Render key, and an older commit may not
+      # contain the tooling at all. The candidate is checked out separately, only to be inspected.
+      - name: Check out the trusted release tooling
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          # An older staged commit may predate these verification scripts.
-          ref: main
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+
+      - name: Check out the exact release commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.sha }}
+          path: candidate
           fetch-depth: 0
           persist-credentials: false
 
       - name: Confirm the commit is on main
         run: |
           set -euo pipefail
-          git cat-file -e "${SHA}^{commit}" || { echo "::error::The requested commit is not available in this repository."; exit 1; }
-          git merge-base --is-ancestor "${SHA}" origin/main || { echo "::error::The requested commit is not on main."; exit 1; }
+          [ "${GITHUB_REF}" = "refs/heads/main" ] || { echo "::error::Releases must be dispatched from main."; exit 1; }
+          [ "$(git -C candidate rev-parse HEAD)" = "${SHA}" ] || { echo "::error::Checkout did not resolve to the requested commit."; exit 1; }
+          git -C candidate merge-base --is-ancestor "${SHA}" origin/main || { echo "::error::The requested commit is not on main."; exit 1; }
 
       - name: Require the release checks for this exact commit
         env:
@@ -99,7 +110,7 @@ jobs:
           node-version: '24'
 
       - name: Verify staging serves this exact commit and is ready
-        run: node scripts/verify-release.mjs --environment staging --url "${STAGING_URL}" --expected-sha "${SHA}" --timeout-ms 300000
+        run: node control/scripts/verify-release.mjs --environment staging --url "${STAGING_URL}" --expected-sha "${SHA}" --timeout-ms 300000
 
       - name: Require the protected migration when the schema changed
         run: |
@@ -108,8 +119,8 @@ jobs:
           # before that endpoint existed) the change set cannot be ruled out, so it counts as changed.
           production_sha="$(curl -fsS --max-time 30 "${PRODUCTION_URL}/api/health/version" | jq -r '.buildSha // empty' || true)"
           changed=unknown
-          if [[ "${production_sha}" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "${production_sha}^{commit}" 2>/dev/null; then
-            if git diff --quiet "${production_sha}" "${SHA}" -- migrations; then changed=false; else changed=true; fi
+          if [[ "${production_sha}" =~ ^[0-9a-f]{40}$ ]] && git -C candidate cat-file -e "${production_sha}^{commit}" 2>/dev/null; then
+            if git -C candidate diff --quiet "${production_sha}" "${SHA}" -- migrations; then changed=false; else changed=true; fi
           fi
           echo "production_sha=${production_sha:-unknown} migrations_changed=${changed}"
           if [ "${changed}" != "false" ] && [ "${MIGRATIONS_APPLIED}" != "true" ]; then
@@ -140,12 +151,12 @@ jobs:
         run: |
           set -euo pipefail
           [ -n "${RENDER_PRODUCTION_SERVICE_ID}" ] || { echo "::error::Repository variable RENDER_PRODUCTION_SERVICE_ID is not set."; exit 1; }
-          scripts/render-deploy.sh "${RENDER_PRODUCTION_SERVICE_ID}" "${SHA}"
+          control/scripts/render-deploy.sh "${RENDER_PRODUCTION_SERVICE_ID}" "${SHA}"
 
       - name: Verify production serves the exact release on both addresses
         if: ${{ env.DRY_RUN != 'true' }}
         run: |
-          node scripts/verify-release.mjs --environment production \
+          node control/scripts/verify-release.mjs --environment production \
             --url "${PRODUCTION_URL}" --url "${PRODUCTION_ALIAS_URL}" \
             --expected-sha "${SHA}" --timeout-ms 300000
 
