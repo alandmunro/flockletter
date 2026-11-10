@@ -123,3 +123,6 @@ Real sandbox compatibility follow-up (FL-AT-007/008/009/031): [billing preparati
 
 
 FL-ONB-004, FL-API-001/003, FL-OPS-002/003/005/006: [worker and preparation diagnostics](implementation/WORKER_LIVENESS.md#standalone-startup-and-preparation-diagnostics) distinguish disabled workflows from selected recorded settings, redact values, preserve activation gates and reject an embedded standalone worker before database access. Provider verification remains separate. Completed real-sandbox renewal/failure/cancellation and paused production credential evidence are recorded in [billing preparation](implementation/BILLING_PROVIDER_PREPARATION.md#completed-sandbox-lifecycle-follow-up); no live billing or sending is enabled.
+
+
+FL-OPS-001/002/003/004/005/007: [dedicated worker release](implementation/RELEASE_PARITY.md#dedicated-production-worker-release) binds both production resources, stages a reviewed immutable source, verifies provider-reported deployed commit and deploys worker before web. Negative destination and mocked shell-transport tests do not establish hosted liveness; protected heartbeat verification is separate. No provider activation or migration is added.

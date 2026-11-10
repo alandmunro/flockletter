@@ -1,13 +1,14 @@
 name: Promote to production
 run-name: Promote to production · ${{ inputs.request_id || 'manual' }}
 
-# Deploys ONE exact, already-staged commit to the production Render service. Dispatched from
+# Deploys ONE exact, already-staged commit to the production Render worker and web service. Dispatched from
 # Mission Control (Tailscale-gated) or by hand. It never runs database migrations: those use the
 # protected release runner on Render's private network (docs/implementation/RELEASE_PARITY.md).
 #
 # One-time setup in the repository settings:
 #   secret RENDER_API_KEY                  Render API key allowed to deploy the production service
 #   variable RENDER_PRODUCTION_SERVICE_ID  the production web service id (srv-...)
+#   variable RENDER_PRODUCTION_WORKER_SERVICE_ID  the dedicated production worker id (srv-...)
 #   optional variables FLOCKLETTER_STAGING_URL, FLOCKLETTER_PRODUCTION_URL, FLOCKLETTER_PRODUCTION_ALIAS_URL
 #   an Environment named "production" (add required reviewers there if a second approval is wanted)
 on:
@@ -45,7 +46,7 @@ permissions:
 jobs:
   promote:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 70
     environment:
       name: production
       url: ${{ vars.FLOCKLETTER_PRODUCTION_ALIAS_URL || 'https://preview.flockletter.frostyflamingosoftware.com' }}
@@ -132,25 +133,31 @@ jobs:
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_PRODUCTION_SERVICE_ID: ${{ vars.RENDER_PRODUCTION_SERVICE_ID }}
+          RENDER_PRODUCTION_WORKER_SERVICE_ID: ${{ vars.RENDER_PRODUCTION_WORKER_SERVICE_ID }}
         run: |
           set -euo pipefail
           [[ "${RENDER_PRODUCTION_SERVICE_ID}" =~ ^srv-[a-z0-9]{20}$ ]] || { echo "::error::Repository variable RENDER_PRODUCTION_SERVICE_ID is missing or malformed."; exit 1; }
+          [[ "${RENDER_PRODUCTION_WORKER_SERVICE_ID}" =~ ^srv-[a-z0-9]{20}$ ]] || { echo "::error::Repository variable RENDER_PRODUCTION_WORKER_SERVICE_ID is missing or malformed."; exit 1; }
+          [ "${RENDER_PRODUCTION_SERVICE_ID}" != "${RENDER_PRODUCTION_WORKER_SERVICE_ID}" ] || { echo "::error::Web and worker must be separate services."; exit 1; }
           # Read-only. Refuse to deploy to anything that is not the Flockletter production web service.
           service="$(curl -fsS --max-time 30 -H "Authorization: Bearer ${RENDER_API_KEY}" "https://api.render.com/v1/services/${RENDER_PRODUCTION_SERVICE_ID}")" \
             || { echo "::error::Render rejected the API key or the service id (read-only check failed)."; exit 1; }
-          [ "$(jq -r '.type' <<<"${service}")" = "web_service" ] || { echo "::error::The Render service is not a web service."; exit 1; }
-          [ "$(jq -r '.repo' <<<"${service}")" = "https://github.com/${{ github.repository }}" ] || { echo "::error::The Render service does not deploy this repository."; exit 1; }
-          [ "$(jq -r '.serviceDetails.url // empty' <<<"${service}")" = "${PRODUCTION_URL}" ] || { echo "::error::The Render service is not the one serving ${PRODUCTION_URL}."; exit 1; }
-          echo "Render service $(jq -r '.name' <<<"${service}") is the Flockletter production web service."
+          worker="$(curl -fsS --max-time 30 -H "Authorization: Bearer ${RENDER_API_KEY}" "https://api.render.com/v1/services/${RENDER_PRODUCTION_WORKER_SERVICE_ID}")" \
+            || { echo "::error::Render rejected the worker identity check."; exit 1; }
+          jq -nc --argjson web "${service}" --argjson worker "${worker}" '{web:$web,worker:$worker}' | \
+            node control/scripts/verify-render-production-targets.mjs "https://github.com/${{ github.repository }}" \
+              "${PRODUCTION_URL}" "${RENDER_PRODUCTION_SERVICE_ID}" "${RENDER_PRODUCTION_WORKER_SERVICE_ID}"
 
       - name: Deploy production
         if: ${{ env.DRY_RUN != 'true' }}
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_PRODUCTION_SERVICE_ID: ${{ vars.RENDER_PRODUCTION_SERVICE_ID }}
+          RENDER_PRODUCTION_WORKER_SERVICE_ID: ${{ vars.RENDER_PRODUCTION_WORKER_SERVICE_ID }}
         run: |
           set -euo pipefail
           [ -n "${RENDER_PRODUCTION_SERVICE_ID}" ] || { echo "::error::Repository variable RENDER_PRODUCTION_SERVICE_ID is not set."; exit 1; }
+          control/scripts/render-deploy.sh "${RENDER_PRODUCTION_WORKER_SERVICE_ID}" "${SHA}"
           control/scripts/render-deploy.sh "${RENDER_PRODUCTION_SERVICE_ID}" "${SHA}"
 
       - name: Verify production serves the exact release on both addresses
