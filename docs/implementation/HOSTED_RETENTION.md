@@ -47,3 +47,9 @@ Static refusal categories distinguish disabled feature, wrong identity, invalid/
 Focused approval, checkpoint and external-operation tests use generated keys, injected fixed AWS command clients, synthetic targets and real disposable PostgreSQL. They establish software contracts, tenant separation and private/runtime denial. They do not establish live AWS account protection, actual hosted renderer disposal or an authorized customer purge. The protected restore test keeps two synthetic workspaces, reapplies only the targeted suppression, checks fixed function search paths and proves runtime cannot inspect or clear private quarantine.
 
 Local model: initial type declarations and operator checklist draft. Chat: architecture, signatures, schema/grants, planner, adapters, journals, CLI, recovery, security review and tests. The local checklist's ambiguous “live capture prohibition” wording was replaced with an explicit evidence distinction. An initial local test draft attempt could not reach the local service through restricted command access; the documentation draft succeeded using approved local network access.
+
+### Checkpoint lock and backup age
+
+Set `minimumRetentionMs` from the oldest backup eligible for recovery, including exported copies, plus time for an operator to complete quarantine and reconciliation. Record the actual provider recovery range and the creation dates and expiry policy of separately retained exports before adopting a value. A provider plan limit alone does not establish the age of a usable Flockletter backup.
+
+For new versions, the publisher requests COMPLIANCE retention until the signed creation time plus the allowed freshness window, the required remaining retention, and one minute of margin. A reader still checks the actual version's retention deadline and signature. Existing versions keep their original deadlines. If a version lacks sufficient remaining protection, a restore stays quarantined.
