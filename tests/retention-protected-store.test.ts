@@ -17,23 +17,28 @@ it('reads latest signed immutable checkpoint with exact account, version and ret
 it('refuses stale checkpoints, changed versions, wrong owners, tampered seals, and governance locks',async()=>{for(const override of [{age:300001},{owner:'999999999999'},{mutate:true},{mode:'GOVERNANCE' as const}])await expect(fixture(override).store.load(scope)).rejects.toThrow();const f=fixture({version:'v2'});await expect(f.store.load(scope,{versionId:'v1',digest:retentionDigest(f.document),sequence:1})).rejects.toThrow();});
 it('refuses arbitrary provider endpoints and unprotected bucket/prefix config',()=>{const f=fixture();expect(()=>new ProtectedCheckpointStore({...f.store.options,prefix:'../other/'})).toThrow();expect(()=>new ProtectedCheckpointStore({...f.store.options,bucket:'shared-bucket'})).toThrow();expect(()=>new ProtectedCheckpointStore({...f.store.options,region:'custom-endpoint'})).toThrow();});
 
-it('preserves the full remaining lock through the last fresh read',async()=>{
+it.each([['flockletter_test',1],['flockletter_production',14]] as const)('preserves the remaining lock through the last fresh read for %s',async(databaseName,days)=>{
  const {store,document}=fixture();
  let clock=now;
  let retainUntil:Date|undefined;
+ let bytes=Buffer.alloc(0);
  const backend=store.options.client!;
- const client={send:async(command:{constructor:{name:string};input:{ObjectLockRetainUntilDate?:Date}})=>{
+ const client={send:async(command:{constructor:{name:string};input:{ObjectLockRetainUntilDate?:Date;Body?:Uint8Array}})=>{
    switch(command.constructor.name){
      case 'ListObjectVersionsCommand': return {};
-     case 'PutObjectCommand': retainUntil=command.input.ObjectLockRetainUntilDate;return {VersionId:'v1'};
+     case 'GetObjectCommand': return {VersionId:'v1',ContentLength:bytes.length,Body:Readable.from([bytes])};
+     case 'PutObjectCommand': bytes=Buffer.from(command.input.Body!);retainUntil=command.input.ObjectLockRetainUntilDate;return {VersionId:'v1'};
      case 'GetObjectRetentionCommand': return {Retention:{Mode:'COMPLIANCE',RetainUntilDate:retainUntil}};
      default: return backend.send(command as never);
    }
  }} as unknown as Pick<S3Client,'send'>;
  const publisher=new ProtectedCheckpointStore({...store.options,client,now:()=>clock});
- await publisher.publish(document,null);
+ const checkpointScope={...scope,databaseName};
+ const signed=signRetentionCheckpoint({...document.payload,scope:checkpointScope},privatePem,'seal');
+ await publisher.publish(signed,null);
+ expect(retainUntil?.getTime()).toBe(now.getTime()+store.options.maxAgeMs+days*86400000+60000);
  clock=new Date(now.getTime()+store.options.maxAgeMs);
- await expect(publisher.load(scope)).resolves.toHaveProperty('reference.sequence',1);
+ await expect(publisher.load(checkpointScope)).resolves.toHaveProperty('reference.sequence',1);
  clock=new Date(clock.getTime()+1);
- await expect(publisher.load(scope)).rejects.toMatchObject({code:'checkpoint_stale'});
+ await expect(publisher.load(checkpointScope)).rejects.toMatchObject({code:'checkpoint_stale'});
 });

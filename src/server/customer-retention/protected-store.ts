@@ -25,6 +25,12 @@ export class ProtectedCheckpointStore {
   }
   close(){this.owned?.destroy();this.ownedIdentity?.destroy();}
   key(scope:RetentionScope){return this.options.prefix+createHash('sha256').update(scope.databaseName+'\0'+scope.workspaceId).digest('hex')+'/checkpoint.json';}
+  private minimumRetentionMs(scope:RetentionScope){
+    const productionMinimum=14*24*60*60*1000;
+    return scope.databaseName==='flockletter_production'
+      ? Math.max(productionMinimum,this.options.minimumRetentionMs)
+      : this.options.minimumRetentionMs;
+  }
   private async account(signal:AbortSignal){
     const owner=await this.identity.send(new GetCallerIdentityCommand({}),{abortSignal:signal});
     requireRetention(owner.Account===this.options.accountId,'checkpoint_account_mismatch');
@@ -48,7 +54,7 @@ export class ProtectedCheckpointStore {
     const ref={versionId:object.VersionId,digest:retentionDigest(document),sequence:facts.sequence};
     if(expected)requireRetention(canonicalRetention(expected)===canonicalRetention(ref),'checkpoint_version_changed');
     const retention=await this.client.send(new GetObjectRetentionCommand({...base,VersionId:object.VersionId}),{abortSignal:signal});
-    requireRetention(retention.Retention?.Mode==='COMPLIANCE'&&retention.Retention.RetainUntilDate&&retention.Retention.RetainUntilDate.getTime()>=now.getTime()+this.options.minimumRetentionMs,'checkpoint_retention_insufficient');
+    requireRetention(retention.Retention?.Mode==='COMPLIANCE'&&retention.Retention.RetainUntilDate&&retention.Retention.RetainUntilDate.getTime()>=now.getTime()+this.minimumRetentionMs(scope),'checkpoint_retention_insufficient');
     const result:VerifiedCheckpoint={reference:ref,facts,verifiedAt:now.toISOString(),retainUntil:retention.Retention.RetainUntilDate.toISOString()};verified.add(result);return result;
   }
   async publish(document:SignedDocument<CheckpointFacts>,previous:{versionId:string;digest:string;sequence:number}|null){
@@ -56,7 +62,7 @@ export class ProtectedCheckpointStore {
     const signedAt=Date.parse(checked.payload.createdAt), age=now.getTime()-signedAt;
     requireRetention(age>=-30000&&age<=this.options.maxAgeMs,'checkpoint_stale');
     // Keep the full remaining lock through the last valid read.
-    const retainUntil=new Date(signedAt+this.options.maxAgeMs+this.options.minimumRetentionMs+60000);
+    const retainUntil=new Date(signedAt+this.options.maxAgeMs+this.minimumRetentionMs(scope)+60000);
     await this.account(signal);let etag:string|undefined;
     if(previous){const current=await this.load(scope,previous);requireRetention(current.facts.sequence+1===checked.payload.sequence,'checkpoint_sequence_invalid');const object=await this.client.send(new HeadObjectCommand({Bucket:this.options.bucket,Key:this.key(scope),ExpectedBucketOwner:this.options.accountId}),{abortSignal:signal});requireRetention(object.VersionId===previous.versionId&&object.ETag,'checkpoint_version_changed');etag=object.ETag;}
     else {requireRetention(checked.payload.sequence===1,'checkpoint_sequence_invalid');const history=await this.client.send(new ListObjectVersionsCommand({Bucket:this.options.bucket,Prefix:this.key(scope),MaxKeys:1,ExpectedBucketOwner:this.options.accountId}),{abortSignal:signal});requireRetention(!(history.Versions?.length||history.DeleteMarkers?.length),'checkpoint_history_exists');}
