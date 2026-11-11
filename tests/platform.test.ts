@@ -22,7 +22,7 @@ const session:OperatorSession={userId:owner.userId,sessionId:'verified_session',
 const support=()=>new CustomerSupport(db,{mode:'capture',isOwner:async(u,w)=>u===owner.userId&&w===owner.workspaceId});
 const identity={authenticate:async()=>session,current:async()=>!revoked};
 let platform:PlatformService;
-beforeAll(async()=>{fixture=await startDatabase();db=new Database(fixture.url);admin=new pg.Client({connectionString:fixture.adminUrl});await admin.connect();for(const a of [owner,other])await new CommandService(db).execute('workspace.initialize',{operationKey:randomUUID(),name:'Operator test',brandName:'Trail'},a);platform=new PlatformService(db,new OperatorStore(db,'capture'),{mode:'capture',identity,support:support(),databaseName:'flockletter_test',now:()=>now});});
+beforeAll(async()=>{fixture=await startDatabase();db=new Database(fixture.url);admin=new pg.Client({connectionString:fixture.adminUrl});await admin.connect();for(const a of [owner,other])await new CommandService(db).execute('workspace.initialize',{operationKey:randomUUID(),name:'Operator test',brandName:'Trail'},a);platform=new PlatformService(db,new OperatorStore(db,'capture'),{environment:'test',mode:'capture',identity,support:support(),databaseName:'flockletter_test',now:()=>now});});
 afterAll(async()=>{await platform?.close();await admin?.end();await db?.close();await fixture?.stop();});
 async function open(kind:PlatformCase['kind']='support',resourceId:string|null=null){return platform.execute('platform.openCase',{operationKey:randomUUID(),workspaceId:owner.workspaceId,kind,resourceId,reason:'Review the exact bounded customer issue.'},session) as Promise<PlatformCase>;}
 it('records case assurance and cannot reuse a single-factor case after restoring MFA',async()=>{
@@ -88,7 +88,7 @@ it('uses a separate exact operator database role and blocks tenant reads',async(
 });
 it('never blindly retries an unknown platform notification submission',async()=>{
  let submits=0,lookups=0;const target=actor().workspaceId;
- const live=new PlatformService(db,new OperatorStore(db,'capture'),{mode:'live',identity,support:support(),databaseName:'flockletter_test',alerts:{from:'ops@example.test',to:'owner@example.test',provider:{submit:async()=>{submits++;return {state:'unknown'};},lookup:async()=>{lookups++;return {state:'unknown'};}}}});
+ const live=new PlatformService(db,new OperatorStore(db,'capture'),{environment:'production',mode:'live',identity,support:support(),databaseName:'flockletter_test',alerts:{from:'ops@example.test',to:'owner@example.test',provider:{submit:async()=>{submits++;return {state:'unknown'};},lookup:async()=>{lookups++;return {state:'unknown'};}}}});
  const status={worker:{lastPass:new Date().toISOString(),lastFailure:'worker_failed',dedicated:true},queue:{unknown:0,delivery:0,confirmations:0,team:0,support:0,retention:0}} as CustomerOperationsStatus;
  await live.observe(target,status);await live.notifications(target);expect(submits).toBe(1);expect(lookups).toBe(1);await live.close();
 });
@@ -102,7 +102,7 @@ it('monitors current trusted daemon liveness independently from idle queues and 
  await admin.query("DELETE FROM flockletter_retention_control.platform_records WHERE kind='health'");
  await admin.query('TRUNCATE flockletter_customer_jobs.worker_instances');
  const target=other.workspaceId,liveSession={...session,exercise:false,workspaceId:undefined};
- const live=new PlatformService(db,store,{mode:'live',identity,support:support(),databaseName:'flockletter_test',
+ const live=new PlatformService(db,store,{environment:'production',mode:'live',identity,support:support(),databaseName:'flockletter_test',
   workerHeartbeat:()=>readWorkerHeartbeat(db,'dedicated')});
  const status={worker:{running:true,lastPass:new Date().toISOString(),lastFailure:null,dedicated:true},
   queue:{unknown:0,delivery:0,confirmations:0,team:0,support:0,retention:0}} as CustomerOperationsStatus;
@@ -160,4 +160,85 @@ it('fails busy inserts immediately so an erasure table freeze cannot deadlock ag
  const workspace='org_erasure_lock_'+randomUUID().replaceAll('-','');await admin.query('BEGIN');await admin.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[workspace]);
  try{await expect(db.tenant(workspace,sql=>sql.query('INSERT INTO workspaces(workspace_id,name) VALUES($1,$2)',[workspace,'Busy']))).rejects.toMatchObject({code:'workspace_busy'});await admin.query('LOCK TABLE public.workspaces IN SHARE ROW EXCLUSIVE MODE');}finally{await admin.query('ROLLBACK');}
  expect((await admin.query('SELECT FROM public.workspaces WHERE workspace_id=$1',[workspace])).rowCount).toBe(0);
+});
+
+it('captures routine staging notices and escalates a persistent failure once per incident',async()=>{
+  let submits = 0;
+  const provider = {
+    submit: async () => {
+      submits++;
+      return { state: 'unknown' as const };
+    },
+    lookup: async () => ({ state: 'unknown' as const }),
+  };
+
+  let clock = new Date();
+  const live = new PlatformService(db, new OperatorStore(db,'capture'), {
+    mode: 'live',
+    environment: 'staging' as const,
+    identity,
+    support: support(),
+    databaseName: 'flockletter_test',
+    now: () => clock,
+    alerts: {
+      from: 'ops@example.test',
+      to: 'owner@example.test',
+      provider,
+    },
+  });
+
+  const target = actor().workspaceId;
+  const status = {
+    worker: { lastPass: clock.toISOString(), lastFailure: 'worker_failed', dedicated: false },
+    queue: { unknown: 1, delivery: 1, confirmations: 0, team: 0, support: 0, retention: 0 },
+  } as CustomerOperationsStatus;
+
+  try {
+    await live.observe(target, status);
+    expect(submits).toBe(0);
+
+    clock = new Date(clock.getTime() + 14 * 60000);
+    await live.observe(target, status);
+    expect(submits).toBe(0);
+
+    clock = new Date(clock.getTime() + 60000);
+    await live.observe(target, status);
+    expect(submits).toBe(1);
+
+    clock = new Date(clock.getTime() + 60000);
+    await live.observe(target, status);
+    expect(submits).toBe(1);
+    const notices=await live.store.read<{state:string;code:string}>('notification',target);
+    expect(notices.filter(n=>n.state==='captured').map(n=>n.code).sort()).toEqual(
+      ['provider_outcome_unknown','queue_without_continuous_worker','worker_failed']);
+    await live.observe(target,{...status,worker:{...status.worker,lastFailure:null}});
+    await live.observe(target,status);
+    expect(submits).toBe(1);
+    clock=new Date(clock.getTime()+15*60000);
+    await live.observe(target,status);
+    expect(submits).toBe(2);
+  } finally {
+    await live.close();
+  }
+});
+it('filters queued staging notices under the claim lock and reconciles prior submissions',async()=>{
+ const target=actor().workspaceId,store=new OperatorStore(db,'capture');
+ const submissions:string[]=[],lookups:string[]=[];
+ const service=new PlatformService(db,store,{environment:'staging',mode:'live',identity,support:support(),databaseName:'flockletter_test',
+  alerts:{from:'ops@example.test',to:'owner@example.test',provider:{
+   submit:async input=>{submissions.push(input.operationKey);return {state:'accepted',id:input.operationKey};},
+   lookup:async key=>{lookups.push(key);return {state:'accepted',id:key};}
+  }}});
+ const codes=['migration_failed','security_incident','deployment_failure_persistent','unrecognized','worker_liveness_unverified'];
+ const prior=randomUUID();
+ await store.transaction(target,async r=>{
+  for(const code of codes)await r.put('notification',code,{id:code,code,state:'queued',workspaceId:target,createdAt:now.toISOString(),providerId:null});
+  await r.put('notification',prior,{id:prior,code:'worker_liveness_unverified',state:'unknown',workspaceId:target,createdAt:now.toISOString(),providerId:null});
+ });
+ await service.notifications(target);
+ expect(submissions.sort()).toEqual(codes.slice(0,3).sort());
+ expect(lookups).toEqual([prior]);
+ await service.notifications(target);
+ expect(submissions).toHaveLength(3);
+ await service.close();
 });
