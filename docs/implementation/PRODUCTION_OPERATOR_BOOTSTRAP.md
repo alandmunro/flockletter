@@ -22,6 +22,16 @@ The fixed target is `flockletter_production`, the fixed metadata role is `flockl
 
 The active store independently checks the database/role match, distinct metadata-only identity, effective table privileges/ownership, CREATE/membership authority, and function/column/sequence drift at startup. PostgreSQL 17+ MAINTAIN is included in its permission vocabulary; it is not an allowed operator capability.
 
+## Bounded administrator deployment
+
+The owner authorized completing production operator access as launch item 5. Keep the separate Clerk operator organization and an exact named-user allowlist; D-051 retains its explicit temporary pre-revenue authentication policy. Do not repurpose a customer organization or issue a customer connection token for platform authority. No mailing, billing, hosted erasure, signing or email-alert transport activation follows.
+
+Install the metadata-only operator connection on the single production web service only. Leave the standalone queue worker's platform mode off and do not copy this credential there. Each operator pool uses one connection; the marked production role's limit of two therefore covers the steady web process and one rolling replacement. Increasing web instances or adding another operator process requires a new measured connection budget before activation. Runtime web/worker pools retain their independent ten-connection role budget.
+
+Before activation, review actual host capacity and the exact database-owner/migrator identities. Run the fixed role/database/object phases on the internal release helper, then the shared read-only foreign-catalog audit for only the operator role. Refuse unexpected ownership, active/adopted roles or foreign effective access without changing another application's grants. Issue and retain one private operator credential, verify it through `OperatorStore.verify()`, and prove a synthetic metadata transaction works while ordinary tenant reads and metadata DELETE fail. Elevated connections stay off the customer services. Remove the temporary helper and its credential links after verification.
+
+Promote the tested source through Free staging, preserving existing integrations and external-action switches. After the separately confirmed identity/credential installation, verify `/operator` using the selected operator organization and a real fresh owner sign-in; a customer organization, stale verification or customer MCP token must fail. Review the same canonical command schema/denials in HTTP and the operator MCP bridge. Record actual hosted results separately from disposable tests.
+
 ## Live operator identity and alerts
 
 Set these only for the separate verified production operator surface:
@@ -74,3 +84,5 @@ The new disposable PostgreSQL tests exercise exact owner/migrator phases, NOLOGI
 The initial operator-bootstrap change passed lint, type checking, the production build and all 91 local test files (588 tests passed, two explicitly gated engine tests skipped). Its focused production-bootstrap/platform suites passed all 13 tests. The subsequent release-guard change passed the full check again (91 files, 589 passing tests and two explicitly gated engine skips), including lint, type checking and production build. Its regression checks cover the real driver's query parsing, both roles' foreign table/column/MAINTAIN/database-create grants, no-login refusal, preservation and idempotent retry, and standalone membership refusal. No hosted configuration was changed by these checks.
 
 Local Qwen formatted the trial-policy proposal from supplied facts. Chat corrected its misleading approved-default and physical reservation-expiry wording. Chat retained privileged SQL design, authority decisions, implementation, integration, acceptance tests and review. No token or cost percentage is inferred.
+
+The launch-item-5 preparation passed lint, type checking, 987 tests across 124 files (two existing gated tests skipped), production build, API generation and a production dependency audit with zero vulnerabilities. The isolated desktop/mobile control-room journey passed. The rolling connection-limit regression also fails against the former two-connection pool. Local Qwen drafted its scaffold; chat corrected its invalid import depth, self-referencing promise initialization, ineffective entry barrier and cleanup deadlock, then verified the counterexample. Hosted identity/role activation remains separately recorded after observation.

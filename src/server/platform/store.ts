@@ -12,7 +12,14 @@ export interface PlatformStore {
 export class OperatorStore implements PlatformStore {
  private pool?:pg.Pool;
  private operatorUrl?:URL;
- constructor(readonly db:Database,readonly mode:'capture'|'live',url?:string){if(mode==='live'){requireCondition(!!url&&['hostname','port','pathname'].every(key=>new URL(url)[key as 'hostname'|'port'|'pathname']===new URL(db.pool.options.connectionString!)[key as 'hostname'|'port'|'pathname']),503,'operator_database_required','Use a restricted operator connection to this Flockletter database.');this.operatorUrl=new URL(url);requireCondition([...this.operatorUrl.searchParams.keys()].every(k=>k==='sslmode'),503,'operator_database_unsafe','Do not override the reviewed database host, user or database through query parameters.');this.pool=new pg.Pool({connectionString:url,max:2,connectionTimeoutMillis:5000,statement_timeout:10000});}}
+ constructor(readonly db:Database,readonly mode:'capture'|'live',url?:string){
+  if(mode!=='live')return;
+  requireCondition(!!url&&['hostname','port','pathname'].every(key=>new URL(url)[key as 'hostname'|'port'|'pathname']===new URL(db.pool.options.connectionString!)[key as 'hostname'|'port'|'pathname']),503,'operator_database_required','Use a restricted operator connection to this Flockletter database.');
+  this.operatorUrl=new URL(url);
+  requireCondition([...this.operatorUrl.searchParams.keys()].every(k=>k==='sslmode'),503,'operator_database_unsafe','Do not override the reviewed database host, user or database through query parameters.');
+  // One web pool plus its rolling replacement fits the restricted role's two connections.
+  this.pool=new pg.Pool({connectionString:url,max:1,connectionTimeoutMillis:5000,statement_timeout:10000});
+ }
  async verify(){
   if(!this.pool)return;
   const identity=(await this.pool.query(`SELECT current_database() db,current_user role,r.rolsuper,r.rolbypassrls,r.rolcreatedb,r.rolcreaterole,r.rolreplication,
