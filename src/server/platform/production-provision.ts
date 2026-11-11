@@ -2,13 +2,16 @@ import {operatorObjectGrants} from './provision.js';
 import {productionRestrictedRoleGuard,productionRestrictedRoleCreationSql} from '../production-role-provision.js';
 
 export type ProductionOperatorPhase = 'role' | 'database' | 'objects';
-const database='flockletter_production',role='flockletter_production_operator';
+const database='flockletter_production';
+export type ProductionOperatorKind='operator'|'webOperator';
 
 /** SQL for review only. No connections, credentials or LOGIN activation. */
-export function productionOperatorGrantSql(phase:ProductionOperatorPhase):string {
- if(phase==='role')return productionRestrictedRoleCreationSql('operator');
+export function productionOperatorGrantSql(phase:ProductionOperatorPhase,kind:ProductionOperatorKind='operator'):string {
+ if(kind!=='operator'&&kind!=='webOperator')throw Error('Choose a fixed production operator identity.');
+ const role=kind==='operator'?'flockletter_production_operator':'flockletter_production_web_operator';
+ if(phase==='role')return productionRestrictedRoleCreationSql(kind);
  if(phase!=='database'&&phase!=='objects')throw Error('Choose database or objects phase.');
- const checks=productionRestrictedRoleGuard('operator',phase);
+ const checks=productionRestrictedRoleGuard(kind,phase);
  const grants=phase==='database'
   ? `REVOKE ALL ON DATABASE "${database}" FROM "${role}";\nGRANT CONNECT ON DATABASE "${database}" TO "${role}";`
   : operatorObjectGrants(role);
