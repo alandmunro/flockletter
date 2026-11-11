@@ -2,6 +2,9 @@
 
 ## Current authorization
 
+D-054 authorizes animated GIF/WebP and safe static SVG import, plus optional single opt-in and explicitly permission-based contact confirmation. Double opt-in remains the default. Preserve original raster bytes; rasterize validated inert SVG only. Never reactivate suppression, claim mailbox verification for attestation, or promote exercise evidence to live consent. Delegated confirmation needs a new explicit `audience:confirm` grant; existing grants remain unchanged. Keep live sending/billing off and verify staging first.
+
+
 D-053 authorizes finishing the protected production complimentary-access writer and issuing FFA's accepted Growth grant to the owner-selected existing workspace, after staging verification. Read [the grant playbook](docs/implementation/COMPLIMENTARY_ACCESS.md). Preserve exact source/target/role binding, current revision, billing-history refusal, audit and replay/revocation. Customer runtime roles and UI/API/MCP connections gain no grant-writing authority. Sending/billing stay off. Policy approval and local tests do not establish actual issuance.
 
 D-052 authorizes building and testing a separately gated test-only delivery scope toward the first test letter. Retain D-047's exact confirmed-recipient review, daily admission and usage rules. Deny broadcasts at preflight, review, approval, resume, new worker submission and transport while preserving reconciliation of already-submitted unknown outcomes. Keep the UI, HTTP, MCP and operator reports consistent. Test on captured staging first, preserve Free compute and keep production sending/billing off until their separate activation approvals and provider-readiness evidence. Read [the test-only playbook](docs/implementation/TEST_ONLY_DELIVERY.md). This does not issue the FFA grant, authorize a message or waive SES production access, consent or other release checks.

@@ -18,6 +18,7 @@ export const audiencePolicyInput = {
     .min(3)
     .max(253)
     .regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/),
+  confirmationMode: z.enum(['double_opt_in', 'single_opt_in']).optional(),
 };
 export const customerAudienceCommands = {
   'audienceOnboarding.status': commandDefinition(
@@ -27,13 +28,13 @@ export const customerAudienceCommands = {
     { brandId },
   ),
   'audienceOnboarding.configure': commandDefinition(
-    'Configure a brand signup form and its consent wording.',
+    'Configure brand consent wording and email-confirmation choice. Owner session required.',
     'owner',
     true,
     audiencePolicyInput,
   ),
   'audienceOnboarding.import': commandDefinition(
-    'Import authorized contacts as pending without changing existing subscription choices.',
+    'Import contacts with permission. Immediate subscription additionally requires audience:confirm and the current consent policy. Existing suppression is preserved.',
     'audience:write',
     true,
     {
@@ -41,7 +42,15 @@ export const customerAudienceCommands = {
       operationKey,
       permissionAffirmed: z.literal(true),
       source: z.string().trim().min(3).max(250),
+      confirmWithoutEmail: z.boolean().optional(),
+      consentPolicyVersion: z.string().trim().min(1).max(80).optional(),
     },
+  ),
+  'audienceOnboarding.confirmContacts': commandDefinition(
+    'Subscribe up to 250 selected pending contacts without email verification, recording existing permission and current policy. Requires audience:confirm. Suppressed contacts cannot be reactivated.',
+    'audience:confirm', true,
+    { brandId, operationKey, subscriberIds: z.array(z.uuid()).min(1).max(250).refine(ids => new Set(ids).size === ids.length, 'Choose each contact once.'),
+      permissionAffirmed: z.literal(true), source: z.string().trim().min(3).max(250), policyVersion: z.string().trim().min(1).max(80) },
   ),
   'audienceOnboarding.signup': commandDefinition(
     'Exercise a brand signup with the currently configured consent text.',
@@ -90,6 +99,7 @@ export type AudienceSettingsView = {
   policyVersion: string;
   consentText: string;
   sourceDomain: string;
+  confirmationMode: 'double_opt_in' | 'single_opt_in';
   publicUrl: string | null;
   trackingEnabled: false;
   messages: { id: string; email: string; state: string; mode: string; createdAt: string; transport?: {kind: 'accepted'|'delivered'|'hard_bounce'|'complaint'|'failed'|'delayed'; occurredAt: string}|null }[];

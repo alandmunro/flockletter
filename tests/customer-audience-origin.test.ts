@@ -5,7 +5,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { customerAudienceRoutes } from '../src/server/customer-audience/routes.js';
 import type { CustomerAudience } from '../src/server/customer-audience/service.js';
 const origin = 'https://flockletter.example.com';
-const signup = vi.fn(async () => ({ received: true }));
+const signup = vi.fn(async () => ({ status: 'pending_confirmation', message: 'Check your email for a confirmation if this address is eligible.' }));
 let server: Server, port: number;
 beforeAll(async () => {
   const app = express();

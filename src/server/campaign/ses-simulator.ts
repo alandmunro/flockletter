@@ -154,7 +154,7 @@ export function inlineOriginals(message: DeliveryEnvelope) {
     if (
       !referenced.has(image.sha256) ||
       createHash('sha256').update(image.bytes).digest('hex') !== image.sha256 ||
-      !['image/jpeg', 'image/png', 'image/webp'].includes(image.mime) ||
+      !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(image.mime) ||
       /[\p{Cc}]/u.test(image.name)
     ) {
       return null;

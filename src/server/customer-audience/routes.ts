@@ -153,12 +153,13 @@ export function customerAudienceRoutes(service: CustomerAudience) {
             '<label><input required type="checkbox" name="consentAffirmed" value="yes"> ' +
             escape(form.consentText) +
             '</label>' +
-            '<button type="submit">Subscribe</button></form><p>Email confirmation is required. Tracking is off.</p>',
+            '<button type="submit">Subscribe</button></form><p>' +
+            (form.confirmationMode === 'single_opt_in' ? 'No email confirmation is required. You can unsubscribe from any newsletter.' : 'Email confirmation is required.') + ' Tracking is off.</p>',
         ),
       );
   });
   router.post('/:form', async (req, res) => {
-    await service.publicSignup(String(req.params.form), {
+    const receipt = await service.publicSignup(String(req.params.form), {
       email: req.body?.email,
       consentAffirmed: req.body?.consentAffirmed === 'yes',
       policyVersion: req.body?.policyVersion,
@@ -167,8 +168,8 @@ export function customerAudienceRoutes(service: CustomerAudience) {
       .type('html')
       .send(
         page(
-          'Check your email',
-          '<p>If this address can be subscribed, a confirmation message is queued.</p>',
+          receipt.status === 'request_received' ? 'Request received' : 'Check your email',
+          '<p>' + escape(receipt.message) + '</p>',
         ),
       );
   });

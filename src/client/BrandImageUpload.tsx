@@ -4,7 +4,7 @@ import { base64, operationKey, type Api } from './api.js';
 
 type Props = { api: Api; brandId: string; onUploaded: (assets: AssetSummary[]) => void };
 type Batch = { operationKey: string; items: { itemKey: string; file: File }[] };
-type FileResult = { itemKey: string; ok: boolean; asset?: AssetSummary; error?: { message: string } };
+type FileResult = { itemKey: string; ok: boolean; asset?: AssetSummary; error?: { message: string }; notice?: string };
 
 export function BrandImageUpload(props: Props) {
   // Switching brands discards the previous selection and its in-flight completion handler.
@@ -76,18 +76,19 @@ function UploadForm({ api, brandId, onUploaded }: Props) {
   return (
     <div className="brand-image-upload">
       <div className="field">
-        <label htmlFor={field}>Add JPEG, PNG or WebP images</label>
+        <label htmlFor={field}>Add JPEG, PNG, GIF, WebP or SVG images</label>
         <input
           id={field}
           type="file"
-          accept="image/png,image/jpeg,image/webp"
+          accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
           multiple
           disabled={busy}
           aria-describedby={field + '-limits'}
           onChange={(e) => choose(Array.from(e.currentTarget.files ?? []))}
         />
         <p id={field + '-limits'} className="help">
-          Up to 10 files, 5 MiB each, 20 MiB per batch. Animated images and SVG are not supported.
+          Up to 10 files, 5 MiB each, 20 MiB per batch. GIF and WebP animation is preserved;
+          some email apps show only the first frame. Static SVG artwork is converted to PNG for email.
         </p>
       </div>
       {error && (
@@ -110,6 +111,7 @@ function UploadForm({ api, brandId, onUploaded }: Props) {
               {result.ok
                 ? `Saved: ${result.asset?.name ?? name}`
                 : `${name}: ${result.error?.message ?? 'Upload failed.'}`}
+              {result.ok && result.notice ? ` — ${result.notice}` : null}
             </li>
           );
         })}

@@ -33,6 +33,8 @@ export type ConsentEvent = {
   source: string;
   sourceDomain: string;
   recordedAt: string;
+  evidenceSource?: string;
+  recordedBy?: string;
 };
 export type ContactDetail = {
   contact: AudienceContact; events: ConsentEvent[]; nextCursor: string | null;

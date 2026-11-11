@@ -1611,7 +1611,7 @@
     "/api/v1/commands/audienceOnboarding.configure": {
       "post": {
         "operationId": "audienceOnboarding_configure",
-        "summary": "Configure a brand signup form and its consent wording.",
+        "summary": "Configure brand consent wording and email-confirmation choice. Owner session required.",
         "security": [
           {
             "bearerAuth": []
@@ -1660,6 +1660,13 @@
                     "minLength": 3,
                     "maxLength": 253,
                     "pattern": "^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$"
+                  },
+                  "confirmationMode": {
+                    "type": "string",
+                    "enum": [
+                      "double_opt_in",
+                      "single_opt_in"
+                    ]
                   }
                 },
                 "required": [
@@ -1710,7 +1717,7 @@
     "/api/v1/commands/audienceOnboarding.import": {
       "post": {
         "operationId": "audienceOnboarding_import",
-        "summary": "Import authorized contacts as pending without changing existing subscription choices.",
+        "summary": "Import contacts with permission. Immediate subscription additionally requires audience:confirm and the current consent policy. Existing suppression is preserved.",
         "security": [
           {
             "bearerAuth": []
@@ -1754,6 +1761,14 @@
                     "type": "string",
                     "minLength": 3,
                     "maxLength": 250
+                  },
+                  "confirmWithoutEmail": {
+                    "type": "boolean"
+                  },
+                  "consentPolicyVersion": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
                   }
                 },
                 "required": [
@@ -1763,6 +1778,104 @@
                   "operationKey",
                   "permissionAffirmed",
                   "source"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/audienceOnboarding.confirmContacts": {
+      "post": {
+        "operationId": "audienceOnboarding_confirmContacts",
+        "summary": "Subscribe up to 250 selected pending contacts without email verification, recording existing permission and current policy. Requires audience:confirm. Suppressed contacts cannot be reactivated.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "audience:confirm",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "operationKey": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "subscriberIds": {
+                    "minItems": 1,
+                    "maxItems": 250,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "permissionAffirmed": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "source": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 250
+                  },
+                  "policyVersion": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  }
+                },
+                "required": [
+                  "brandId",
+                  "operationKey",
+                  "subscriberIds",
+                  "permissionAffirmed",
+                  "source",
+                  "policyVersion"
                 ],
                 "additionalProperties": false
               }
@@ -10818,7 +10931,7 @@
     "/api/v1/commands/asset.uploadBatch": {
       "post": {
         "operationId": "asset_uploadBatch",
-        "summary": "Upload original JPEG, PNG or WebP images with per-file outcomes. Max 10 files, 5 MiB each, 20 MiB total. Names are metadata; files are never fetched from URLs.",
+        "summary": "Upload JPEG, PNG, GIF, WebP or SVG with per-file outcomes. GIF/WebP animation is preserved; static SVG is safely converted to PNG. Max 10 files, 5 MiB each, 20 MiB total. Names are metadata; files are never fetched from URLs.",
         "security": [
           {
             "bearerAuth": []
@@ -11894,7 +12007,7 @@
                   },
                   "scopes": {
                     "minItems": 1,
-                    "maxItems": 9,
+                    "maxItems": 10,
                     "type": "array",
                     "items": {
                       "type": "string",
@@ -11907,7 +12020,8 @@
                         "campaign:rehearse",
                         "campaign:simulate",
                         "campaign:send",
-                        "audience:write"
+                        "audience:write",
+                        "audience:confirm"
                       ]
                     }
                   },

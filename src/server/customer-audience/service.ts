@@ -20,6 +20,7 @@ type Settings = {
   source_domain: string;
   form_token: string;
   exercise_key: Buffer;
+  confirmation_mode: 'double_opt_in' | 'single_opt_in';
 };
 type Confirmation = {
   id: string;
@@ -96,7 +97,7 @@ function policy(row: Settings): Policy {
 async function settings(sql: Sql) {
   return (
     await sql.query<Settings>(
-      'SELECT enabled,purpose,policy_version,consent_text,source_domain,form_token,exercise_key FROM customer_audience_settings',
+      'SELECT enabled,purpose,policy_version,consent_text,source_domain,form_token,exercise_key,confirmation_mode FROM customer_audience_settings',
     )
   ).rows[0];
 }
@@ -134,9 +135,9 @@ export async function productionConsentEligible(sql: Sql, subscriberId: string) 
     await sql.query<{ exercise: boolean; live: boolean }>(
       `
     SELECT EXISTS(SELECT FROM subscriber_consent_events WHERE subscriber_id=$1 AND event='confirmed'
-      AND source='customer-exercise-confirmation') AS exercise,
+      AND source IN ('customer-exercise-confirmation','customer-exercise-single-opt-in','customer-exercise-owner-attestation')) AS exercise,
     EXISTS(SELECT FROM subscriber_consent_events WHERE subscriber_id=$1 AND event='confirmed'
-      AND source='customer-live-confirmation') AS live`,
+      AND source IN ('customer-live-confirmation','customer-live-single-opt-in','customer-live-owner-attestation')) AS live`,
       [subscriberId],
     )
   ).rows[0]!;
@@ -145,8 +146,8 @@ export async function productionConsentEligible(sql: Sql, subscriberId: string) 
 /** The same exercise-vs-live provenance rule as productionConsentEligible, evaluated in one scoped query. */
 export async function productionConsentEligibleBatch(sql:Sql,ids:string[]) {
  return (await sql.query<{id:string}>(`SELECT s.id FROM subscribers s WHERE s.id=ANY($1::uuid[]) AND (
-  NOT EXISTS(SELECT FROM subscriber_consent_events e WHERE e.subscriber_id=s.id AND e.event='confirmed' AND e.source='customer-exercise-confirmation')
-  OR EXISTS(SELECT FROM subscriber_consent_events e WHERE e.subscriber_id=s.id AND e.event='confirmed' AND e.source='customer-live-confirmation'))`,[ids])).rows.map(row=>row.id);
+  NOT EXISTS(SELECT FROM subscriber_consent_events e WHERE e.subscriber_id=s.id AND e.event='confirmed' AND e.source IN ('customer-exercise-confirmation','customer-exercise-single-opt-in','customer-exercise-owner-attestation'))
+  OR EXISTS(SELECT FROM subscriber_consent_events e WHERE e.subscriber_id=s.id AND e.event='confirmed' AND e.source IN ('customer-live-confirmation','customer-live-single-opt-in','customer-live-owner-attestation')))`,[ids])).rows.map(row=>row.id);
 }
 async function factualEvent(
   sql: Sql,
@@ -156,10 +157,12 @@ async function factualEvent(
   event: string,
   p: Policy,
   source: string,
+  evidenceSource = '',
+  recordedBy = '',
 ) {
   await sql.query(
-    `INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    `INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain,evidence_source,recorded_by)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [
       workspace,
       brand,
@@ -171,6 +174,8 @@ async function factualEvent(
       hash(p.consentText),
       source,
       p.sourceDomain,
+      evidenceSource,
+      recordedBy,
     ],
   );
 }
@@ -190,13 +195,13 @@ export class CustomerAudience {
       'Use a current workspace owner session.',
     );
   }
-  private async authority(sql: Sql, actor: Actor, brand: string, delegable: boolean) {
+  private async authority(sql: Sql, actor: Actor, brand: string, requiredScope: 'audience:write' | 'audience:confirm' | null) {
     if (actor.kind === 'session') return this.owner(actor);
-    requireCondition(delegable, 403, 'owner_required', 'Use a current workspace owner session.');
+    requireCondition(requiredScope, 403, 'owner_required', 'Use a current workspace owner session.');
     requireCondition(
       actor.owner &&
         actor.actorId.startsWith('connection:') &&
-        actor.scopes.includes('audience:write') &&
+        actor.scopes.includes(requiredScope) &&
         actor.brandIds !== null &&
         actor.brandIds.includes(brand) &&
         (await this.options.checkOwner(actor.userId, actor.workspaceId)),
@@ -206,9 +211,9 @@ export class CustomerAudience {
     );
     const grant = await sql.query(
       `SELECT id FROM connections WHERE id::text=$1 AND issuer_id=$2
-      AND revoked_at IS NULL AND expires_at>clock_timestamp() AND 'audience:write'=ANY(scopes)
+      AND revoked_at IS NULL AND expires_at>clock_timestamp() AND $4::text=ANY(scopes)
       AND $3::uuid=ANY(brand_ids) FOR SHARE`,
-      [actor.actorId.slice('connection:'.length), actor.userId, brand],
+      [actor.actorId.slice('connection:'.length), actor.userId, brand, requiredScope],
     );
     requireCondition(
       grant.rowCount,
@@ -244,7 +249,8 @@ export class CustomerAudience {
   async execute(name: string, raw: unknown, actor: Actor): Promise<unknown> {
     if (!(name in customerAudienceCommands)) return undefined;
     const definition = customerAudienceCommands[name as keyof typeof customerAudienceCommands];
-    const delegable = definition.scope === 'audience:write';
+    const requiredScope = definition.scope === 'audience:write' || definition.scope === 'audience:confirm' ? definition.scope : null;
+    const delegable = requiredScope !== null;
     if (!delegable)
       requireCondition(
         actor.kind === 'session' && actor.owner,
@@ -259,7 +265,7 @@ export class CustomerAudience {
     return this.db.brand(actor.workspaceId, input.brandId, async (sql) => {
       if (definition.mutation || delegable)
         await lockWorkspace(sql,actor.workspaceId);
-      await this.authority(sql, actor, input.brandId, delegable);
+      await this.authority(sql, actor, input.brandId, requiredScope);
       const brandName = await assertBrand(sql, actor, input.brandId);
       if (!definition.mutation) {
         if (name === 'audienceOnboarding.status') return this.status(sql, input.brandId, brandName);
@@ -300,6 +306,7 @@ export class CustomerAudience {
       let result: unknown;
       if (name === 'audienceOnboarding.configure') result = await this.configure(sql, actor, input);
       else if (name === 'audienceOnboarding.import') result = await this.importContacts(sql, actor, raw);
+      else if (name === 'audienceOnboarding.confirmContacts') result = await this.confirmContacts(sql, actor, raw);
       else if (name === 'audienceOnboarding.exerciseConfirm') {
         requireCondition(
           this.options.mode === 'exercise',
@@ -396,6 +403,7 @@ export class CustomerAudience {
       policyVersion: row?.policy_version ?? 'v1',
       consentText: row?.consent_text ?? '',
       sourceDomain: row?.source_domain ?? '',
+      confirmationMode: row?.confirmation_mode ?? 'double_opt_in',
       publicUrl: row ? this.options.origin + '/newsletter/' + row.form_token : null,
       trackingEnabled: false,
       imports: imports.map(({ created_at, ...item }) => ({ ...item, createdAt: created_at.toISOString() })),
@@ -405,12 +413,13 @@ export class CustomerAudience {
   private async configure(sql: Sql, actor: Actor, raw: unknown) {
     const input = customerAudienceCommands['audienceOnboarding.configure'].schema.parse(raw),
       old = await settings(sql);
+    const confirmationMode = input.confirmationMode ?? old?.confirmation_mode ?? 'double_opt_in';
     if (old && old.policy_version === input.policyVersion)
       requireCondition(
-        old.consent_text === input.consentText && old.purpose === input.purpose,
+        old.consent_text === input.consentText && old.purpose === input.purpose && old.confirmation_mode === confirmationMode,
         409,
         'policy_version_required',
-        'Use a new policy version when consent wording changes.',
+        'Use a new policy version when consent wording or confirmation mode changes.',
       );
     const form =
       old?.form_token ??
@@ -418,10 +427,10 @@ export class CustomerAudience {
         JSON.stringify([actor.workspaceId, input.brandId, randomBytes(24).toString('hex')]),
       ).toString('base64url');
     await sql.query(
-      `INSERT INTO customer_audience_settings(workspace_id,brand_id,enabled,purpose,policy_version,consent_text,source_domain,form_token,exercise_key)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(workspace_id,brand_id) DO UPDATE SET
+      `INSERT INTO customer_audience_settings(workspace_id,brand_id,enabled,purpose,policy_version,consent_text,source_domain,form_token,exercise_key,confirmation_mode)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(workspace_id,brand_id) DO UPDATE SET
       enabled=excluded.enabled,purpose=excluded.purpose,policy_version=excluded.policy_version,consent_text=excluded.consent_text,
-      source_domain=excluded.source_domain,updated_at=now()`,
+      source_domain=excluded.source_domain,confirmation_mode=excluded.confirmation_mode,updated_at=now()`,
       [
         actor.workspaceId,
         input.brandId,
@@ -432,10 +441,12 @@ export class CustomerAudience {
         input.sourceDomain,
         form,
         randomBytes(32),
+        confirmationMode,
       ],
     );
     return {
       configured: true,
+      confirmationMode: confirmationMode,
       brandId: input.brandId,
       publicUrl: this.options.origin + '/newsletter/' + form,
       mode: this.options.mode,
@@ -443,6 +454,11 @@ export class CustomerAudience {
   }
   private async importContacts(sql: Sql, actor: Actor, raw: unknown) {
     const input = customerAudienceCommands['audienceOnboarding.import'].schema.parse(raw);
+    let consent: Settings | undefined;
+    if (input.confirmWithoutEmail) {
+      await this.authority(sql, actor, input.brandId, 'audience:confirm');
+      consent = await this.consentPolicy(sql, input.consentPolicyVersion);
+    }
     const rows = importRows(input),
       emails = await workspaceContactEmails(sql, input.brandId),
       maximum = await this.maximum(sql, actor.workspaceId);
@@ -460,7 +476,8 @@ export class CustomerAudience {
         )
       ).rows[0];
       if (prior) {
-        outcomes.push({ row: row.row, outcome: 'kept_' + prior.state, subscriberId: prior.id });
+        const outcome = consent ? await this.subscribeWithoutEmail(sql, actor.workspaceId, input.brandId, prior.id, consent, 'owner-attestation', input.source, actor.actorId) : 'kept_' + prior.state;
+        outcomes.push({ row: row.row, outcome, subscriberId: prior.id });
         continue;
       }
       if (!remaining && !emails.has(row.address)) {
@@ -472,11 +489,15 @@ export class CustomerAudience {
         "INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES($1,$2,$3,$4,'pending')",
         [actor.workspaceId, input.brandId, id, row.address],
       );
+      if (consent) {
+        await factualEvent(sql, actor.workspaceId, input.brandId, id, 'signup_requested', policy(consent), 'customer-' + this.options.mode + '-import', input.source, actor.actorId);
+        await this.subscribeWithoutEmail(sql, actor.workspaceId, input.brandId, id, consent, 'owner-attestation', input.source, actor.actorId);
+      }
       if (!emails.has(row.address)) {
         remaining--;
         emails.add(row.address);
       }
-      outcomes.push({ row: row.row, outcome: 'pending_added', subscriberId: id });
+      outcomes.push({ row: row.row, outcome: consent ? 'subscribed_added' : 'pending_added', subscriberId: id });
     }
     const id = randomUUID(),
       result = {
@@ -484,7 +505,7 @@ export class CustomerAudience {
         brandId: input.brandId,
         source: input.source,
         mode: this.options.mode,
-        confirmationRequired: true,
+        confirmationRequired: !input.confirmWithoutEmail,
         rows: outcomes,
       };
     await sql.query(
@@ -502,6 +523,33 @@ export class CustomerAudience {
     );
     return result;
   }
+  private async consentPolicy(sql: Sql, version: unknown) {
+    const row = await settings(sql);
+    requireCondition(row?.enabled, 422, 'signup_disabled', 'Configure and enable the brand consent policy first.');
+    requireCondition(version === row.policy_version, 409, 'consent_changed', 'Review the current consent policy before subscribing contacts.');
+    return row;
+  }
+  private async confirmContacts(sql: Sql, actor: Actor, raw: unknown) {
+    const input = customerAudienceCommands['audienceOnboarding.confirmContacts'].schema.parse(raw);
+    const row = await this.consentPolicy(sql, input.policyVersion);
+    const results: { subscriberId: string; outcome: string }[] = [];
+    for (const id of input.subscriberIds) results.push({ subscriberId: id,
+      outcome: await this.subscribeWithoutEmail(sql, actor.workspaceId, input.brandId, id, row, 'owner-attestation', input.source, actor.actorId) });
+    return { brandId: input.brandId, mode: this.options.mode, emailVerificationPerformed: false, results };
+  }
+  private async subscribeWithoutEmail(sql: Sql, workspace: string, brand: string, id: string, row: Settings,
+    method: 'single-opt-in' | 'owner-attestation', evidenceSource: string, recordedBy: string) {
+    const person = (await sql.query<{state: string}>('SELECT state FROM subscribers WHERE id=$1 FOR UPDATE', [id])).rows[0];
+    if (!person) return 'unavailable';
+    if (!['pending', 'confirmed'].includes(person.state)) return 'kept_' + person.state;
+    if (person.state === 'confirmed' && (this.options.mode === 'exercise' || await productionConsentEligible(sql, id))) return 'kept_confirmed';
+    await sql.query("UPDATE subscribers SET state='confirmed',confirmed_at=now(),updated_at=now() WHERE id=$1 AND state IN ('pending','confirmed')", [id]);
+    await factualEvent(sql, workspace, brand, id, 'confirmed', policy(row), 'customer-' + this.options.mode + '-' + method, evidenceSource, recordedBy);
+    // Never resubmit an in-flight/unknown confirmation. Its transport can still reconcile.
+    await sql.query("UPDATE customer_audience_confirmations SET state='cancelled',consumed_at=now() WHERE subscriber_id=$1 AND attempts=0 AND state IN ('queued','captured')", [id]);
+    await sql.query("UPDATE subscriber_outbox SET state='cancelled',lease_id=NULL,lease_until=NULL WHERE subscriber_id=$1 AND attempts=0 AND state IN ('pending','leased')", [id]);
+    return 'subscribed_without_email';
+  }
   private async signupInTransaction(
     sql: Sql,
     workspace: string,
@@ -510,13 +558,16 @@ export class CustomerAudience {
     email: string,
     source: string,
   ) {
+    const receipt = row.confirmation_mode === 'single_opt_in'
+      ? { status: 'request_received', message: 'Your signup request has been received. You can unsubscribe from any newsletter.' }
+      : genericReceipt;
     const prior = (
       await sql.query<{ id: string; state: string }>(
         'SELECT id,state FROM subscribers WHERE email_normalized=$1 FOR UPDATE',
         [email],
       )
     ).rows[0];
-    if (prior && ['unsubscribed', 'hard_bounced', 'complained'].includes(prior.state)) return genericReceipt;
+    if (prior && ['unsubscribed', 'hard_bounced', 'complained'].includes(prior.state)) return receipt;
     let id = prior?.id;
     if (!id) {
       const emails = await workspaceContactEmails(sql, brand);
@@ -532,10 +583,12 @@ export class CustomerAudience {
         [workspace, brand, id, email],
       );
     }
-    if (prior?.state === 'confirmed' && (await productionConsentEligible(sql, id))) return genericReceipt;
+    if (prior?.state === 'confirmed' && (await productionConsentEligible(sql, id))) return receipt;
     await factualEvent(sql, workspace, brand, id, 'signup_requested', policy(row), source);
-    await this.queue(sql, workspace, brand, row, id);
-    return genericReceipt;
+    if (row.confirmation_mode === 'single_opt_in')
+      await this.subscribeWithoutEmail(sql, workspace, brand, id, row, 'single-opt-in', source, 'subscriber-form');
+    else await this.queue(sql, workspace, brand, row, id);
+    return receipt;
   }
   private async queue(sql: Sql, workspace: string, brand: string, row: Settings, subscriber: string) {
     const existing = (
@@ -676,7 +729,7 @@ export class CustomerAudience {
       if (!row?.enabled || row.form_token !== form || this.options.mode === 'off') throw invalidLink();
       const name = (await sql.query<{ name: string }>('SELECT name FROM brands WHERE id=$1', [brand])).rows[0]
         ?.name;
-      return { brandName: name, ...policy(row), mode: this.options.mode };
+      return { brandName: name, ...policy(row), mode: this.options.mode, confirmationMode: row.confirmation_mode };
     });
   }
   async publicSignup(form: string, raw: unknown) {
@@ -708,7 +761,8 @@ export class CustomerAudience {
           [workspace, brand, 'customer-signup/' + hash(email.data)],
         )
       ).rows[0]!;
-      if (budget.requests > 10) return genericReceipt;
+      if (budget.requests > 10) return row.confirmation_mode === 'single_opt_in'
+        ? { status: 'request_received', message: 'Your signup request has been received. You can unsubscribe from any newsletter.' } : genericReceipt;
       return this.signupInTransaction(
         sql,
         workspace,

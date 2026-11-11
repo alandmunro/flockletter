@@ -414,18 +414,19 @@ export class CommandService {
         for (const file of input.files) {
           try {
             const image = await inspectImage(file.base64);
+            const name = image.converted ? file.name.replace(/\.svg$/i, '') + '.png' : file.name;
             const existing = (await sql.query<AssetRow>('SELECT *,octet_length(bytes) AS size FROM assets WHERE brand_id=$1 AND item_key=$2', [input.brandId, file.itemKey])).rows[0];
             if (existing) {
-              requireCondition(existing.sha256 === image.sha256 && existing.name === file.name, 409, 'item_conflict', 'This file key already identifies different bytes or a different name.');
-              results.push({ itemKey: file.itemKey, ok: true, reused: true, asset: assetView(existing) });
+              requireCondition(existing.sha256 === image.sha256 && existing.name === name, 409, 'item_conflict', 'This file key already identifies different bytes or a different name.');
+              results.push({ itemKey: file.itemKey, ok: true, reused: true, asset: assetView(existing), notice: image.notice });
               continue;
             }
             requireCondition(storage + image.bytes.length <= limits.workspaceBytes, 422, 'storage_limit', 'This workspace has reached its 100 MiB preparation media limit.');
             requireCondition(imageCount < limits.assets, 422, 'asset_limit', 'This foundation supports up to 500 images per workspace.');
-            const rows = await sql.query<AssetRow>('INSERT INTO assets(workspace_id,id,brand_id,item_key,name,mime,bytes,sha256,width,height) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *,octet_length(bytes) AS size', [w, randomUUID(), input.brandId, file.itemKey, file.name, image.mime, image.bytes, image.sha256, image.width, image.height]);
+            const rows = await sql.query<AssetRow>('INSERT INTO assets(workspace_id,id,brand_id,item_key,name,mime,bytes,sha256,width,height) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *,octet_length(bytes) AS size', [w, randomUUID(), input.brandId, file.itemKey, name, image.mime, image.bytes, image.sha256, image.width, image.height]);
             storage += image.bytes.length;
             imageCount++;
-            results.push({ itemKey: file.itemKey, ok: true, reused: false, asset: assetView(rows.rows[0]!) });
+            results.push({ itemKey: file.itemKey, ok: true, reused: false, asset: assetView(rows.rows[0]!), notice: image.notice });
           } catch (error) {
             if (!(error instanceof AppError)) throw error;
             results.push({ itemKey: file.itemKey, ok: false, error: { code: error.code, message: error.message } });

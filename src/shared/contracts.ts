@@ -20,7 +20,7 @@ import { customerOperationsCommands } from './customer-operations.js';
 import { customerInfrastructureCommands } from './customer-infrastructure.js';
 
 export type { IntakeStatus } from './subscriber.js';
-export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write'] as const;
+export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write','audience:confirm'] as const;
 export type Capability = typeof capabilities[number];
 export const limits = { fileBytes: 5 * 1024 * 1024, batchBytes: 20 * 1024 * 1024, batchFiles: 10, imagePixels: 25_000_000, campaignImages: 6, workspaceBytes: 100 * 1024 * 1024, assets: 500, drafts: 100, connections: 10, preparationOperations: 2000 } as const;
 export const plans = [
@@ -114,7 +114,7 @@ export const commands = {
   'campaign.preflight': descriptor('Report all preparation and delivery gaps together. Preview success does not establish send eligibility.', 'read', false, { id }),
   'campaign.preview': descriptor('Render escaped HTML and plain text for the exact saved draft version. Does not send.', 'read', false, { id, expectedVersion: z.number().int().positive() }),
   'asset.list': descriptor('List private images for the authorized brand.', 'read', false, { brandId: id }),
-  'asset.uploadBatch': descriptor('Upload original JPEG, PNG or WebP images with per-file outcomes. Max 10 files, 5 MiB each, 20 MiB total. Names are metadata; files are never fetched from URLs.', 'assets:write', true, { operationKey: key, brandId: id, files: z.array(z.object({ itemKey: key, name: z.string().trim().min(1).max(160), base64: z.string().max(Math.ceil(limits.batchBytes / 3) * 4) }).strict()).min(1).max(limits.batchFiles).refine(files => new Set(files.map(f => f.itemKey)).size === files.length, 'Each file needs a unique item key.') }),
+  'asset.uploadBatch': descriptor('Upload JPEG, PNG, GIF, WebP or SVG with per-file outcomes. GIF/WebP animation is preserved; static SVG is safely converted to PNG. Max 10 files, 5 MiB each, 20 MiB total. Names are metadata; files are never fetched from URLs.', 'assets:write', true, { operationKey: key, brandId: id, files: z.array(z.object({ itemKey: key, name: z.string().trim().min(1).max(160), base64: z.string().max(Math.ceil(limits.batchBytes / 3) * 4) }).strict()).min(1).max(limits.batchFiles).refine(files => new Set(files.map(f => f.itemKey)).size === files.length, 'Each file needs a unique item key.') }),
   'connection.list': descriptor('List scoped API/MCP connections without secrets. Owner session required.', 'owner', false, {}),
   'intake.status': descriptor('Inspect subscriber intake readiness and aggregate counts for one brand.', 'owner', false, { brandId: id }),
   'segment.list': descriptor('List named groups and counts for the current owner and brand.', 'owner', false, { brandId: audienceId }),

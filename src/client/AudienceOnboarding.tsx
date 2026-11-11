@@ -3,6 +3,7 @@ import { base64, operationKey, type Api } from './api.js';
 import { AudienceImportResults, type AudienceImportRow } from './AudienceImportResults.js';
 import { readImportCsv, type ImportPreviewResult } from '../shared/import-preview.js';
 import type { AudienceSettingsView } from '../shared/customer-audience.js';
+import { PendingContactApproval } from './PendingContactApproval.js';
 
 type ImportResult = { rows: AudienceImportRow[] };
 type Capture = {
@@ -35,6 +36,8 @@ export function AudienceOnboarding({
   const [version, setVersion] = useState('v1'),
     [consent, setConsent] = useState(''),
     [domain, setDomain] = useState('');
+  const [confirmationMode, setConfirmationMode] = useState<'double_opt_in' | 'single_opt_in'>('double_opt_in');
+  const [confirmImport, setConfirmImport] = useState(false);
   const [csv, setCsv] = useState(''),
     [headers, setHeaders] = useState<string[]>([]),
     [column, setColumn] = useState(0);
@@ -61,6 +64,7 @@ export function AudienceOnboarding({
         setVersion(next.policyVersion);
         setConsent(next.consentText);
         setDomain(next.sourceDomain);
+        setConfirmationMode(next.confirmationMode ?? 'double_opt_in');
       })
       .catch((cause) => {
         if (active) setError(explain(cause));
@@ -112,6 +116,7 @@ export function AudienceOnboarding({
     setHeaders([]);
     setResult(undefined);
     setPermission(false);
+    setConfirmImport(false);
     setPreview(undefined);
     setReading(Boolean(file));
     if (!file) return;
@@ -211,8 +216,8 @@ export function AudienceOnboarding({
     <section className="card audience-onboarding" aria-labelledby="audience-onboarding-heading">
       <h2 id="audience-onboarding-heading">Grow your audience</h2>
       <p>
-        Configure a signup page for {view.brandName}, import contacts with permission, and require email
-        confirmation. Existing unsubscribe and suppression choices are preserved.
+        Configure a signup page for {view.brandName} and import contacts with permission. Choose whether
+        subscribers must confirm by email. Existing unsubscribe and suppression choices are preserved.
       </p>
       {view.mode === 'exercise' && (
         <p className="notice" role="status">
@@ -231,6 +236,7 @@ export function AudienceOnboarding({
           {notice}
         </p>
       )}
+      <PendingContactApproval key={brandId} api={api} brandId={brandId} policyVersion={view.policyVersion} enabled={view.enabled && view.mode !== 'off'} onChanged={() => { setRevision(n => n + 1); onChanged?.(); }}/>
       <details open={!view.enabled}>
         <summary>1. Signup page and consent</summary>
         <form
@@ -240,7 +246,7 @@ export function AudienceOnboarding({
               () =>
                 void change(
                   'audienceOnboarding.configure',
-                  { enabled, purpose, policyVersion: version, consentText: consent, sourceDomain: domain },
+                  { enabled, purpose, policyVersion: version, consentText: consent, sourceDomain: domain, confirmationMode },
                   'Signup settings saved.',
                 ),
             )
@@ -273,8 +279,13 @@ export function AudienceOnboarding({
             </label>
             <p className="help">
               Name the brand and what subscribers will receive. Change the version whenever the wording or
-              purpose changes.
+              purpose or confirmation choice changes.
             </p>
+            <label>
+              <input type="checkbox" checked={confirmationMode === 'double_opt_in'} onChange={e => setConfirmationMode(e.target.checked ? 'double_opt_in' : 'single_opt_in')}/>{' '}
+              Require email confirmation for new signups
+            </label>
+            <p className="help">When off, people who affirm the signup consent are subscribed immediately. No confirmation email is sent and their mailbox is not verified. This does not change existing pending contacts.</p>
             <label>
               Source website domain
               <input
@@ -294,7 +305,7 @@ export function AudienceOnboarding({
             </button>
           </fieldset>
         </form>
-        <p className="help">Double opt-in is required. Email open and click tracking is off.</p>
+        <p className="help">Saved signup choice: {view.confirmationMode === 'single_opt_in' ? 'subscribe immediately, without email verification' : 'require email confirmation'}. Email open and click tracking is off.</p>
         {view.publicUrl && view.enabled && (
           <a className="btn secondary" href={view.publicUrl} target="_blank" rel="noreferrer">
             Open signup page
@@ -304,7 +315,7 @@ export function AudienceOnboarding({
       <details>
         <summary>2. Import contacts</summary>
         <p>
-          Importing creates pending contacts; it does not claim that they have confirmed. Up to 1,000 rows and
+          Import as pending, or record existing permission and subscribe immediately. Up to 1,000 rows and
           256 KiB per file. Recipient allowance is shared across brands.
         </p>
         <form
@@ -314,8 +325,8 @@ export function AudienceOnboarding({
               () =>
                 void change(
                   'audienceOnboarding.import',
-                  { csvBase64: csv, emailColumn: column, source, permissionAffirmed: true },
-                  'Import finished. Review the results and request confirmations for pending contacts.',
+                  { csvBase64: csv, emailColumn: column, source, permissionAffirmed: true, confirmWithoutEmail: confirmImport, ...(confirmImport ? {consentPolicyVersion: view.policyVersion} : {}) },
+                  confirmImport ? 'Import finished. Permission recorded; no confirmation emails sent.' : 'Import finished. Review the results and request confirmations for pending contacts.',
                 ),
             )
           }
@@ -382,8 +393,12 @@ export function AudienceOnboarding({
               />{' '}
               I have permission to contact these people on behalf of this brand.
             </label>
-            <button className="btn" disabled={!csv || !permission || !preview} type="submit">
-              Import as pending
+            <label><input type="checkbox" checked={confirmImport} disabled={!view.enabled} onChange={e => setConfirmImport(e.target.checked)}/>{' '}
+              Subscribe imported contacts immediately without a confirmation email
+            </label>
+            <p className="help">Uses the saved consent policy ({view.policyVersion}) and your recorded permission source. Existing unsubscribes and suppression stay in effect.</p>
+            <button className="btn" disabled={!csv || !permission || !preview || (confirmImport && !view.enabled)} type="submit">
+              {confirmImport ? 'Import and subscribe without email' : 'Import as pending'}
             </button>
           </fieldset>
         </form>

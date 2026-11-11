@@ -14,7 +14,7 @@ type Captured={to:string;subject:string;html:string;text:string;images:{sha256:s
 type Props={api:Api;brandId:string;draft:Campaign|null;restoreId?:string|null;onSelectTest?:(campaignId:string,id:string)=>void;onRestoreConsumed?:()=>void;onChanged?:()=>Promise<void>};
 const explain=(error:unknown)=>error instanceof Error?error.message:'The test could not finish. Refresh its original status before trying again.';
 function capturedHtml(message:Captured){
-  const images=new Map(message.images.filter(image=>['image/png','image/jpeg','image/webp'].includes(image.mime)&&/^[a-f0-9]{64}$/.test(image.sha256))
+  const images=new Map(message.images.filter(image=>['image/png','image/jpeg','image/webp','image/gif'].includes(image.mime)&&/^[a-f0-9]{64}$/.test(image.sha256))
     .map(image=>[image.sha256,'data:'+image.mime+';base64,'+image.base64]));
   const html=message.html.replace(/cid:([a-f0-9]{64})/g,(_match,id:string)=>images.get(id)??'');
   const policy="<meta http-equiv=\"Content-Security-Policy\" content=\"default-src &#39;none&#39;; img-src data:; style-src &#39;unsafe-inline&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;\">";
