@@ -69,7 +69,12 @@ it('maps and pauses workspaces independently, rejects ambiguous feedback routes 
   }
 });
 
-it('checks verified AWS assignments across pages and keeps a reputation hold independent of sandbox access', async () => {
+it.each([
+  ['EMAIL_IDENTITY', 'CONFIGURATION_SET', true],
+  ['identity', 'configuration-set', true],
+  ['configuration-set', 'identity', false],
+  ['identity', 'unknown', false],
+])('checks exact AWS assignment types %s and %s across pages', async (identityType, configType, assigned) => {
   const r = parseSesRoute(route('test'));
   const tenantArn = arn + 'tenant/test/test-id';
   const client = new SESv2Client({ region });
@@ -109,11 +114,11 @@ it('checks verified AWS assignments across pages and keeps a reputation hold ind
         return 'NextToken' in command.input && command.input.NextToken
           ? {
               TenantResources: [
-                { ResourceArn: arn + 'configuration-set/test', ResourceType: 'CONFIGURATION_SET' },
+                { ResourceArn: arn + 'configuration-set/test', ResourceType: configType },
               ],
             }
           : {
-              TenantResources: [{ ResourceArn: r.identityArn, ResourceType: 'EMAIL_IDENTITY' }],
+              TenantResources: [{ ResourceArn: r.identityArn, ResourceType: identityType }],
               NextToken: 'page-two',
             };
       default:
@@ -128,7 +133,7 @@ it('checks verified AWS assignments across pages and keeps a reputation hold ind
       productionAccess: false,
       configuration: true,
       feedback: true,
-      resources: true,
+      resources: assigned,
       dkim: true,
       sender: true,
     });

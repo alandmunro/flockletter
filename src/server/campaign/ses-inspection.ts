@@ -37,10 +37,10 @@ async function observed<T>(read: Promise<T>): Promise<T | null> {
 
 async function assigned(client: Pick<SESv2Client, 'send'>, route: SesRoute, signal: AbortSignal) {
   const remaining = new Map([
-    [route.identityArn, 'EMAIL_IDENTITY'],
+    [route.identityArn, ['EMAIL_IDENTITY', 'identity']],
     [
       `arn:aws:ses:${route.region}:${route.accountId}:configuration-set/${route.configurationSet}`,
-      'CONFIGURATION_SET',
+      ['CONFIGURATION_SET', 'configuration-set'],
     ],
   ]);
   let token: string | undefined;
@@ -51,7 +51,7 @@ async function assigned(client: Pick<SESv2Client, 'send'>, route: SesRoute, sign
       { abortSignal: signal },
     );
     for (const item of result.TenantResources ?? [])
-      if (item.ResourceArn && remaining.get(item.ResourceArn) === item.ResourceType)
+      if (item.ResourceArn && item.ResourceType && remaining.get(item.ResourceArn)?.includes(item.ResourceType))
         remaining.delete(item.ResourceArn);
     if (!remaining.size) return true;
     token = result.NextToken;
