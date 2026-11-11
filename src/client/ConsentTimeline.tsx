@@ -29,12 +29,14 @@ export function ConsentTimeline({ events }: { events: ConsentEvent[] }) {
         return (
           <li key={event.id}>
             <p>
-              <strong>{eventTitles[event.event]}</strong>{' '}
+              <strong>{event.event === 'confirmed' && /-(?:single-opt-in|owner-attestation)$/.test(event.source) ? 'Subscribed without email verification' : eventTitles[event.event]}</strong>{' '}
               <time dateTime={event.recordedAt}>{date.toLocaleString()}</time>
             </p>
             <dl>
               <dt>Source</dt>
               <dd>{Object.hasOwn(sourceLabels, event.source) ? sourceLabels[event.source] : event.source}</dd>
+              {event.evidenceSource && <><dt>Permission source</dt><dd>{event.evidenceSource}</dd></>}
+              {event.recordedBy && <><dt>Recorded by</dt><dd>{event.recordedBy}</dd></>}
               <dt>Policy version</dt>
               <dd>{event.policyVersion}</dd>
               <dt>Purpose</dt>

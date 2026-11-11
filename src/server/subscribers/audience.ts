@@ -25,6 +25,8 @@ type EventRow = {
   source: string;
   source_domain: string;
   recorded_at: Date;
+  evidence_source: string;
+  recorded_by: string;
 };
 const contactColumns = 'id,email_normalized,state,created_at,confirmed_at';
 function contactView(row: ContactRow): AudienceContact {
@@ -107,7 +109,7 @@ export async function contactDetail(sql: Sql, id: string, cursor?: string): Prom
     );
   }
   const { rows } = await sql.query<EventRow>(
-    `SELECT id,event,purpose,policy_version,source,source_domain,recorded_at
+    `SELECT id,event,purpose,policy_version,source,source_domain,recorded_at,evidence_source,recorded_by
     FROM subscriber_consent_events WHERE subscriber_id=$1 AND ($2::uuid IS NULL OR (recorded_at,id) <
       (SELECT recorded_at,id FROM subscriber_consent_events WHERE subscriber_id=$1 AND id=$2))
     ORDER BY recorded_at DESC,id DESC LIMIT $3`,
@@ -123,6 +125,8 @@ export async function contactDetail(sql: Sql, id: string, cursor?: string): Prom
       source: row.source,
       sourceDomain: row.source_domain,
       recordedAt: row.recorded_at.toISOString(),
+      ...(row.evidence_source ? { evidenceSource: row.evidence_source } : {}),
+      ...(row.recorded_by ? { recordedBy: row.recorded_by } : {}),
     }));
   // An owner's practice-import declaration is provenance, not subscriber consent.
   // Read the original workspace/brand receipt without retaining the uploaded file.

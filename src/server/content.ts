@@ -5,6 +5,7 @@ import { limits, type Campaign, type Gap } from '../shared/contracts.js';
 import { AppError } from './errors.js';
 import {renderStudio,studioContentGaps} from './studio-render.js';
 import { renderAuthoringLayout } from './authoring-layout.js';
+import { staticSvg } from './svg-import.js';
 
 export const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 export const escapeHtml = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
@@ -69,10 +70,39 @@ export async function inspectImage(base64: string) {
   if (!bytes.length || bytes.length > limits.fileBytes) throw new AppError(422, 'image_size', 'Each image must be no larger than 5 MiB.');
   if (bytes.toString('base64') !== base64) throw new AppError(422, 'invalid_image', 'Supply canonical base64 image bytes.');
   try {
-    const image = sharp(bytes, { limitInputPixels: limits.imagePixels, failOn: 'warning' });
+    const raster = bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])) ||
+      bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
+      /^GIF8[79]a/.test(bytes.subarray(0, 6).toString('ascii')) ||
+      (bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP');
+    if (!raster) {
+      const image = sharp(staticSvg(bytes), { limitInputPixels: limits.imagePixels, failOn: 'warning' });
+      const metadata = await image.metadata();
+      if (!metadata.width || !metadata.height) throw Error('Missing SVG dimensions.');
+      const png = await image.png().toBuffer();
+      if (png.length > limits.fileBytes) throw Error('Converted SVG exceeds the image limit.');
+      return { bytes: png, sha256: digest(png), mime: 'image/png', width: metadata.width, height: metadata.height,
+        converted: true, notice: 'SVG converted to PNG for safe, compatible email display.' };
+    }
+    const image = sharp(bytes, { animated: true, limitInputPixels: limits.imagePixels, failOn: 'warning' });
     const metadata = await image.metadata();
-    if (!['jpeg', 'png', 'webp'].includes(metadata.format) || (metadata.pages ?? 1) !== 1 || !metadata.width || !metadata.height) throw new Error('Unsupported image');
-    await image.resize(1, 1).raw().toBuffer();
-    return { bytes, sha256: digest(bytes), mime: `image/${metadata.format}`, width: metadata.width, height: metadata.height };
-  } catch { throw new AppError(422, 'invalid_image', 'Use a valid, nonanimated JPEG, PNG or WebP image up to 25 megapixels.'); }
+    const frames = metadata.pages ?? 1, height = metadata.pageHeight ?? metadata.height;
+    if (!['jpeg', 'png', 'webp', 'gif'].includes(metadata.format) || !metadata.width || !height ||
+      frames > 100 || metadata.width * height * frames > limits.imagePixels) throw Error('Unsupported image or animation limit.');
+    // APNG is not decoded as animation by this renderer: reject instead of silently flattening it.
+    if (metadata.format === 'png' && hasPngAnimation(bytes)) throw Error('Use GIF or WebP for animation.');
+    // Decode every bounded frame, including late corruption, then retain the original file byte-for-byte.
+    await image.raw().toBuffer();
+    return { bytes, sha256: digest(bytes), mime: `image/${metadata.format}`, width: metadata.width, height,
+      converted: false, notice: frames > 1 ? 'Animation preserved. Some email apps display only the first frame.' : undefined };
+  } catch { throw new AppError(422, 'invalid_image', 'Use a valid JPEG, PNG, GIF, WebP or static SVG. Animations: GIF/WebP, up to 100 frames and 25 million total decoded pixels. SVG must contain only self-contained static artwork.'); }
+}
+
+function hasPngAnimation(bytes: Buffer) {
+  for (let offset = 8; offset + 12 <= bytes.length;) {
+    const length = bytes.readUInt32BE(offset);
+    if (length > bytes.length - offset - 12) throw Error('Invalid PNG chunk.');
+    if (bytes.subarray(offset + 4, offset + 8).toString('ascii') === 'acTL') return true;
+    offset += length + 12;
+  }
+  return false;
 }

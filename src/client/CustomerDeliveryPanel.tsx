@@ -15,7 +15,7 @@ type Status={mode:DeliveryMode;scope?:DeliveryScope;eligible:boolean;eligibility
 type Captured={to:string;subject:string;html:string;text:string;images:{sha256:string;mime:string;base64:string}[]};
 const explain=(error:unknown)=>error instanceof Error?error.message:'This action could not finish. Retry with the same inputs.';
 function captureHtml(message:Captured) {
-  const images=new Map(message.images.filter(image=>['image/jpeg','image/png','image/webp'].includes(image.mime)&&/^[a-f0-9]{64}$/.test(image.sha256))
+  const images=new Map(message.images.filter(image=>['image/jpeg','image/png','image/webp','image/gif'].includes(image.mime)&&/^[a-f0-9]{64}$/.test(image.sha256))
     .map(image=>[image.sha256,'data:'+image.mime+';base64,'+image.base64]));
   const html=message.html.replace(/cid:([a-f0-9]{64})/g,(_match,sha:string)=>images.get(sha)??'');
   const policy='<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; img-src data:; style-src &#39;unsafe-inline&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">';

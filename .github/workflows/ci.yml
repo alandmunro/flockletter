@@ -42,6 +42,7 @@ jobs:
       - run: node --import tsx scripts/prove-cookie-consent.ts
       - run: npm run audience:verify
       - run: node --import tsx scripts/prove-customer-workflows.ts
+      - run: node --import tsx scripts/prove-media-confirmation.ts
       - run: node --import tsx scripts/prove-delivery-reports.ts
       - run: node --import tsx scripts/prove-workspace-setup.ts
       - run: node --import tsx scripts/prove-customer-test-send.ts

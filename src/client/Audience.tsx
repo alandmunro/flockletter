@@ -407,7 +407,7 @@ function ContactRecord({
               <dd>{new Date(data.contact.createdAt).toLocaleString()}</dd>
               {data.contact.confirmedAt && (
                 <>
-                  <dt>Confirmed on</dt>
+                  <dt>Subscribed on</dt>
                   <dd>{new Date(data.contact.confirmedAt).toLocaleString()}</dd>
                 </>
               )}
