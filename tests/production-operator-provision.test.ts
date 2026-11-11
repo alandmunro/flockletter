@@ -96,3 +96,27 @@ it('prints only fixed SQL and refuses arbitrary phase or configuration inputs',(
  }
  expect(()=>productionOperatorGrantSql('arbitrary' as 'database')).toThrow();
 });
+
+it('creates a fresh fixed web operator without changing the legacy credential',async()=>{
+ const legacyBefore=(await root.query('SELECT rolcanlogin,rolpassword FROM pg_authid WHERE rolname=$1',[role])).rows;
+ const webRole='flockletter_production_web_operator',freshPassword=password();
+ expect(()=>productionOperatorGrantSql('role','unreviewed' as never)).toThrow();
+ await owner.query(productionOperatorGrantSql('role','webOperator'));
+ await owner.query(productionOperatorGrantSql('database','webOperator'));
+ await migrator.query(productionOperatorGrantSql('objects','webOperator'));
+ const prepared=(await owner.query("SELECT rolcanlogin,rolconnlimit,shobj_description(oid,'pg_authid') marker FROM pg_roles WHERE rolname=$1",[webRole])).rows[0];
+ expect(prepared).toEqual({rolcanlogin:false,rolconnlimit:2,marker});
+ await owner.query(`ALTER ROLE ${webRole} LOGIN PASSWORD ${pg.escapeLiteral(freshPassword)}`);
+ const url=new URL(operatorUrl);url.username=webRole;url.password=freshPassword;
+ const db=new Database(runtimeUrl,1),store=new OperatorStore(db,'live',url.href),client=new pg.Client({connectionString:url.href});
+ try{
+  await store.verify();
+  await store.transaction('org_web_operator_fixture',r=>r.put('ack','fresh-role',{verified:true}));
+  expect(await store.read('ack','org_web_operator_fixture','fresh-role')).toEqual([{verified:true}]);
+  await client.connect();
+  await expect(client.query('SELECT * FROM public.workspaces LIMIT 0')).rejects.toMatchObject({code:'42501'});
+  await expect(client.query('DELETE FROM flockletter_retention_control.platform_records WHERE false')).rejects.toMatchObject({code:'42501'});
+ }finally{await client.end();await store.close();await db.close();}
+ expect((await root.query('SELECT rolcanlogin,rolpassword FROM pg_authid WHERE rolname=$1',[role])).rows).toEqual(legacyBefore);
+ await refused(owner,productionOperatorGrantSql('database','webOperator'),'inactive_restricted_operator_marker_required');
+});

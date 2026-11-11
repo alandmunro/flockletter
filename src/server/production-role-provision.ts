@@ -1,6 +1,6 @@
 export const productionDatabase='flockletter_production';
 const migrator='flockletter_production_migrator',marker='Flockletter production foundation';
-export const productionRestrictedRoles={operator:'flockletter_production_operator',planner:'flockletter_production_retention_planner',executor:'flockletter_production_retention_executor'} as const;
+export const productionRestrictedRoles={operator:'flockletter_production_operator',webOperator:'flockletter_production_web_operator',planner:'flockletter_production_retention_planner',executor:'flockletter_production_retention_executor'} as const;
 export type ProductionRestrictedRole=keyof typeof productionRestrictedRoles;
 
 function selectedRole(kind:ProductionRestrictedRole):string {
