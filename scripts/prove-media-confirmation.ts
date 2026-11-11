@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import sharp from "sharp";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { startDatabase } from "./database-fixture.js";
@@ -17,7 +19,7 @@ import type { Workspace, AssetSummary } from "../src/shared/contracts.js";
 
 const root =
   process.env.FLOCKLETTER_MEDIA_SCREENSHOTS ??
-  "/private/tmp/flockletter-media-confirmation-proof";
+  path.join(tmpdir(), "flockletter-media-confirmation-proof");
 const actor: Actor = {
   kind: "session",
   workspaceId: "org_local_sample",
