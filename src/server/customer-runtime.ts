@@ -34,7 +34,7 @@ import { senderProfile,senderEligible,refreshCustomerSender } from './customer-d
 import { limits } from '../shared/contracts.js';
 import { CustomerInfrastructure } from './customer-infrastructure/index.js';
 import { createAwsInfrastructurePort } from './customer-infrastructure/aws.js';
-import type { SesRoute } from './campaign/ses-runtime.js';
+import { parseSesRoute, type SesRoute } from './campaign/ses-runtime.js';
 
 const prefixes=['customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
 export class CustomerWorkflows {
@@ -99,17 +99,22 @@ export class CustomerWorkflows {
       ...(settings.provisioningMonthlyLimit>0?{budgetPermit:async(sql,request)=>Boolean((await sql.query<{allowed:boolean}>(
         'SELECT flockletter_customer_jobs.claim_provisioning_budget($1,$2,$3,$4) AS allowed',
         [request.workspaceId,request.brandId,request.operationKey,settings.provisioningMonthlyLimit])).rows[0]?.allowed)}:{})});
-    if(this.ses||settings.infrastructure==='aws')this.feedback=new SesFeedbackRouter([]);
+    const inboundBinding=env.FLOCKLETTER_CUSTOMER_SES_FEEDBACK_BINDING;
+    const inboundRoute=inboundBinding?parseSesRoute(JSON.parse(inboundBinding)):undefined;
+    if(inboundRoute&&settings.delivery!=='off'&&!this.ses?.entries.some(entry=>entry.route.fingerprint===inboundRoute.fingerprint))
+      throw Error('The prepared feedback route must match the configured sending route before activation.');
+    if(this.ses||inboundRoute||settings.infrastructure==='aws')this.feedback=new SesFeedbackRouter([]);
+    if(inboundRoute)this.registerFeedback(inboundRoute,true);
     for(const entry of this.ses?.entries??[])this.registerFeedback(entry.route);
   }
-  private registerFeedback(route:SesRoute) {
+  private registerFeedback(route:SesRoute,explicitFeedbackBinding=false) {
     route=Object.freeze({...route});
     this.feedback?.register(new SesNotifications(route,undefined,undefined,{
       customer:true,canConfirm:async()=>{
         const exists=await this.db.tenant(route.workspaceId,async sql=>
-          !!(await sql.query('SELECT FROM workspaces')).rowCount&&!(await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount);
+          !!(await sql.query('SELECT FROM brands WHERE workspace_id=$1 AND id=$2',[route.workspaceId,route.brandId])).rowCount&&!(await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount);
         if(!exists)return false;
-        if(this.ses?.entries.some(entry=>entry.configuration&&entry.route.fingerprint===route.fingerprint))return true;
+        if(explicitFeedbackBinding||this.ses?.entries.some(entry=>entry.configuration&&entry.route.fingerprint===route.fingerprint))return true;
         return this.infrastructure.canConfirmRoute(route);
       },apply:async(_db,event,eventId)=>{
         await locked(this.db,route.workspaceId,async sql=>{

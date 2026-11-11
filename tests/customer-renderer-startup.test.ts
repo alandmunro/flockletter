@@ -94,3 +94,20 @@ it.each(['ENOENT', 'EACCES'])('refuses configured renderer readiness when the bi
   expect(access).toHaveBeenCalledExactlyOnceWith(resolve('dist/private/listmonk'), constants.X_OK);
   expect(SESv2Client.prototype.send).not.toHaveBeenCalled();
 });
+
+it('receives only explicitly bound feedback with all external transports off', () => {
+  const route = {
+    workspaceId: 'org_inbound', brandId: randomUUID(), region: 'us-east-2',
+    accountId: '123456789012', tenant: 'inbound_tenant', configurationSet: 'inbound_set',
+    from: 'news@brand.example.com', identityArn: 'arn:aws:ses:us-east-2:123456789012:identity/brand.example.com',
+    topicArn: 'arn:aws:sns:us-east-2:123456789012:inbound_topic',
+  };
+  expect(runtime().customer.feedback).toBeUndefined();
+  const { customer } = runtime({ FLOCKLETTER_CUSTOMER_SES_FEEDBACK_BINDING: JSON.stringify(route) });
+  expect(customer.feedback).toBeDefined();
+  expect(customer.ses).toBeUndefined();
+  expect(customer.engine).toBeUndefined();
+  expect(customer.settings).toMatchObject({ delivery: 'off', billing: 'off' });
+  expect(() => runtime({ FLOCKLETTER_CUSTOMER_SES_FEEDBACK_BINDING: JSON.stringify({...route, region: 'us-east-1'}) })).toThrow();
+  expect(SESv2Client.prototype.send).not.toHaveBeenCalled();
+});
