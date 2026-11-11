@@ -40,3 +40,9 @@ The planner reads protected files configured by `FLOCKLETTER_RETENTION_PLANNER_C
 Acceptance uses disposable PostgreSQL, separate restricted roles, multiple workspaces, concurrency/revocation/unknown-outcome tests, signed synthetic evidence and desktop/mobile browser journeys. Record final results and the staging revision in VERIFICATION.md. A synthetic AWS client or captured email is not live provider verification.
 
 Local Qwen supplied first drafts for test fixtures, MFA/schema tests, support presentation components, retention types and operator documentation. Chat corrected invalid fixture imports, an overbroad schema test, code fences and misleading capture/authority wording. Chat owns architecture, security and billing decisions, implementation integration, review and verification. No token or cost percentage is inferred.
+
+### Staging operational alert email
+
+Staging records routine alerts in the control room. A missing heartbeat, a queue on a sleeping service, an uncertain provider outcome or a single worker failure generates no email. A worker failure still present on a new status observation at least 15 minutes after the first one qualifies once per incident. A healthy observation resets that interval.
+
+The staging dispatch filter also recognizes security incidents, migration failures and persistent deployment failures if a trusted producer records those events. The application worker monitor does not detect cloud deployments or migrations. Unrecognized codes stay in capture. Previously submitted notices use provider lookup to reconcile their outcome. Capture mode always keeps messages local. Operational email requires a separately configured live operator transport.

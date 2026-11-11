@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { platformCommands,type PlatformCommand,type PlatformCase,type PlatformOverview,type PlatformHealth,type PlatformAlert } from '../../shared/platform.js';
+import type { Config } from '../config.js';
 import type { Database } from '../db.js';
 import { digest } from '../content.js';
 import { requireCondition } from '../errors.js';
@@ -11,7 +12,9 @@ import type { OperatorIdentity,OperatorSession } from './auth.js';
 import type { SupportProvider } from '../customer-support/provider.js';
 import type { CustomerOperationsStatus,CustomerWorkerHeartbeat } from '../../shared/customer-operations.js';
 
-type Options={mode:'capture'|'live';identity:OperatorIdentity;support:CustomerSupport;databaseName:string;workerHeartbeat?:()=>Promise<CustomerWorkerHeartbeat>;plan?:(workspace:string,jobId:string)=>Promise<RetentionPlan>;signing?:{keyId:string;privateKey:string};gaps?:string[];alerts?:{provider:SupportProvider;from:string;to:string};now?:()=>Date};
+const stagingCriticalAlerts = new Set(['security_incident','migration_failed','deployment_failure_persistent','worker_failure_persistent']);
+
+type Options={environment:Config['environment'];mode:'capture'|'live';identity:OperatorIdentity;support:CustomerSupport;databaseName:string;workerHeartbeat?:()=>Promise<CustomerWorkerHeartbeat>;plan?:(workspace:string,jobId:string)=>Promise<RetentionPlan>;signing?:{keyId:string;privateKey:string};gaps?:string[];alerts?:{provider:SupportProvider;from:string;to:string};now?:()=>Date};
 export class PlatformService {
  constructor(readonly db:Database,readonly store:PlatformStore,readonly options:Options){}
  private now(){return this.options.now?.()??new Date();}
@@ -36,8 +39,13 @@ export class PlatformService {
  async observe(workspace:string,status:CustomerOperationsStatus){
   const health:PlatformHealth={workspaceId:workspace,observedAt:this.now().toISOString(),lastPass:status.worker.lastPass,failure:status.worker.lastFailure,pending:Object.entries(status.queue).filter(([key])=>key!=='unknown').reduce((n,[,v])=>n+(v??0),0),unknown:status.queue.unknown};
   await this.store.transaction(workspace,async records=>{
-   await records.put('health','current',health);
-   for(const [code,active] of [['provider_outcome_unknown',health.unknown>0],['worker_failed',!!health.failure],['queue_without_continuous_worker',health.pending>0&&!status.worker.dedicated]] as const){
+   const previous=this.options.environment==='staging' && health.failure
+    ? await records.get<PlatformHealth & {failureSince?:string}>('health','current') : null;
+   const failureSince=health.failure ? previous?.failureSince??health.observedAt : null;
+   const persistentFailure=this.options.environment==='staging' && failureSince!==null &&
+    Date.parse(health.observedAt)-Date.parse(failureSince)>=15*60000;
+   await records.put('health','current',{...health,failureSince});
+   for(const [code,active] of [['worker_failure_persistent',persistentFailure],['provider_outcome_unknown',health.unknown>0],['worker_failed',!!health.failure],['queue_without_continuous_worker',health.pending>0&&!status.worker.dedicated]] as const){
     const old=await records.get<PlatformAlert>('alert',code);
     if(!active&&!old)continue;
     const next:PlatformAlert={id:old?.id??randomUUID(),workspaceId:workspace,code,active,acknowledgedAt:old?.active===active?old.acknowledgedAt:null,createdAt:old?.createdAt??this.now().toISOString(),updatedAt:this.now().toISOString()};
@@ -52,10 +60,22 @@ export class PlatformService {
   const items=await this.store.pendingNotifications<Notice>(workspace);
   for(const item of items){
    if(!['queued','submitting','unknown'].includes(item.state))continue;
-   if(!this.options.alerts){await this.store.transaction(workspace,r=>r.put('notification',item.id,{...item,state:'captured'}));continue;}
    const transport=this.options.alerts;
-   const claim=await this.store.transaction(workspace,async r=>{const current=await r.get<Notice>('notification',item.id);if(!current||!['queued','submitting','unknown'].includes(current.state))return null;const submit=current.state==='queued';if(submit)await r.put('notification',item.id,{...current,state:'submitting'});return {notice:current,submit};});
-   if(!claim)continue;
+   const claim=await this.store.transaction(workspace,async r=>{
+    const current=await r.get<Notice>('notification',item.id);
+    if(!current||!['queued','submitting','unknown'].includes(current.state))return null;
+    const submit=current.state==='queued';
+    if(submit){
+     const suppressed=this.options.environment==='staging'&&!stagingCriticalAlerts.has(current.code);
+     if(!transport||suppressed||this.options.mode==='capture'){
+      await r.put('notification',item.id,{...current,state:'captured'});
+      return null;
+     }
+     await r.put('notification',item.id,{...current,state:'submitting'});
+    }
+    return {notice:current,submit};
+   });
+   if(!claim||!transport||this.options.mode==='capture')continue;
    // An already-submitting request is reconciled read-only; its transport is never retried blindly.
    const outcome=claim.submit?await transport.provider.submit({operationKey:item.id,workspaceId:workspace,to:transport.to,from:transport.from,subject:'Flockletter platform review required',text:'A platform condition requires review: '+item.code+'. Open the authenticated control room. No customer content is included.'}):await transport.provider.lookup(item.id,claim.notice.providerId);
    await this.store.transaction(workspace,async r=>{const current=await r.get<Notice>('notification',item.id);if(current&&['submitting','unknown'].includes(current.state))await r.put('notification',item.id,{...current,state:outcome.state,lastChecked:this.now().toISOString(),providerId:outcome.state==='accepted'?outcome.id:current.providerId});});
