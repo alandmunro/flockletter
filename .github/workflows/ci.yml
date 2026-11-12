@@ -46,6 +46,7 @@ jobs:
       - run: node --import tsx scripts/prove-delivery-reports.ts
       - run: node --import tsx scripts/prove-workspace-setup.ts
       - run: node --import tsx scripts/prove-customer-test-send.ts
+      - run: node --import tsx scripts/prove-delivery-provider-choice.ts
       - run: node --import tsx scripts/prove-platform.ts
       - run: node --import tsx scripts/prove-team-ui.ts
       - run: node --import tsx scripts/prove-studio.ts
