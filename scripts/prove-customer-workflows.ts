@@ -217,9 +217,8 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   await waitForCommand(page,'segment.create',()=>groups.getByRole('button',{name:'Create group',exact:true}).click());
   await groups.getByLabel('Email addresses',{exact:true}).fill(reader);
   await waitForCommand(page,'segment.members',()=>groups.getByRole('button',{name:'Save membership changes',exact:true}).click());
-  const group=(await db.brand(workspace,brand,sql=>sql.query('SELECT id FROM audience_segments WHERE brand_id=$1 AND name=$2',[brand,'Newsletter readers']))).rows[0]!;
   const groupCore=new CommandService(db,undefined,async()=>true);
-  const retired=await groupCore.execute('segment.create',{operationKey:randomUUID(),brandId:brand,name:'Retired group'},actor) as {id:string};
+  await groupCore.execute('segment.create',{operationKey:randomUUID(),brandId:brand,name:'Retired group'},actor);
   await photo(page, '02-audience-import-and-consent');
   await noAlerts(page);
 
@@ -238,7 +237,20 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   await page.getByRole('button', { name: 'Edit Trail Notes browser proof', exact: true }).waitFor();
   await photo(page, '03-saved-campaign');
   await noAlerts(page);
+}
 
+// A fresh application session keeps this long automated journey inside the normal
+// request allowance while the same real database proves saved state survives it.
+async function phaseDelivery(page: Page, db: Database, brand: string) {
+  const savedGroups = (await db.brand(workspace, brand, sql => sql.query<{id:string;name:string}>(
+    'SELECT id,name FROM audience_segments WHERE brand_id=$1 AND name=ANY($2::text[])',
+    [brand, ['Newsletter readers', 'Retired group']],
+  ))).rows;
+  const group = savedGroups.find(row => row.name === 'Newsletter readers');
+  const retired = savedGroups.find(row => row.name === 'Retired group');
+  assert.ok(group, 'The saved newsletter group survives the session change.');
+  assert.ok(retired, 'The saved retired group survives the session change.');
+  const groupCore = new CommandService(db, undefined, async () => true);
   await navigate(page, 'Delivery');
   const audiencePicker=page.getByRole('combobox',{name:'Audience',exact:true});
   await audiencePicker.selectOption(retired.id);
@@ -473,7 +485,7 @@ try {
   await db.verifyBoundary();
   browser = await chromium.launch({ channel: process.env.FLOCKLETTER_BROWSER_CHANNEL ?? 'chrome' });
   // Fresh app instances retain normal rate limits while the shared database preserves durable workspace progress.
-  for (const [index, journey] of [phaseOne, phaseInfrastructure, phaseTwo].entries()) {
+  for (const [index, journey] of [phaseOne, phaseDelivery, phaseInfrastructure, phaseTwo].entries()) {
     const server = createServer();
     let customer: CustomerWorkflows | undefined;
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: 'en-US' });
