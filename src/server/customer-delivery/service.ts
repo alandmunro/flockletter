@@ -1,3 +1,5 @@
+import {selectedDelivery,deliveryProviders,selectDeliveryProvider} from './selection.js';
+import {externalDelivery} from '../../shared/customer-delivery.js';
 import {admitTest,testRecipient} from './test-send.js';
 import type {TestDeliveryReview,TestDeliveryDetails} from '../../shared/customer-test-send.js';
 import {customerCampaignPreflight} from './preflight.js';
@@ -42,20 +44,21 @@ export class CustomerDelivery {
     let processId:string|undefined;
     const result=await locked(this.db,actor.workspaceId,async sql=>{
       await brandScope(sql,actor,input.brandId);
-      if(command.mutation)requireCondition(await this.options.isOwner(actor.userId,actor.workspaceId),403,'owner_required','Current workspace ownership is required.');
+      if(command.mutation||name==='delivery.providers')requireCondition(await this.options.isOwner(actor.userId,actor.workspaceId),403,'owner_required','Current workspace ownership is required.');
       if(actor.kind==='connection')requireCondition((await sql.query(`SELECT FROM connections
         WHERE id=$1 AND issuer_id=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp()
-        AND 'campaign:send'=ANY(scopes) AND 'read'=ANY(scopes) AND $3::uuid=ANY(brand_ids) FOR SHARE`,
-        [actor.actorId.slice('connection:'.length),actor.userId,input.brandId])).rowCount,
+        AND $4::text=ANY(scopes) AND 'read'=ANY(scopes) AND $3::uuid=ANY(brand_ids) FOR SHARE`,
+        [actor.actorId.slice('connection:'.length),actor.userId,input.brandId,['delivery.providers','delivery.selectProvider'].includes(name)?'delivery:configure':'campaign:send'])).rowCount,
         403,'connection_revoked','This connection no longer has current delivery access.');
       if(name==='delivery.list') {
         const filter=customerDeliveryCommands['delivery.list'].schema.parse(raw);
         const rows=(await sql.query<DeliveryRow>('SELECT *,test_day::text AS test_day FROM customer_deliveries WHERE brand_id=$1 AND ($2::text IS NULL OR purpose=$2) ORDER BY created_at DESC,id DESC LIMIT 100',[input.brandId,filter.purpose??null])).rows;
         return deliveryViews(sql,rows);
       }
+      if(name==='delivery.providers')return deliveryProviders(sql,this.options,actor.workspaceId,input.brandId);
       if(name==='delivery.sender') {
-        const provider=this.options.provider?.(actor.workspaceId,input.brandId);
-        return {profile:await senderProfile(sql,input.brandId),eligible:this.options.mode==='ses'&&await senderEligible(sql,input.brandId,provider),mode:this.options.mode};
+        const selected=await selectedDelivery(sql,this.options,actor.workspaceId,input.brandId);
+        return {profile:await senderProfile(sql,input.brandId),eligible:externalDelivery(selected.mode)&&await senderEligible(sql,input.brandId,selected.provider),mode:selected.mode};
       }
       if(!command.mutation)return this.read(name,raw,actor,sql);
       const requestHash=digest(JSON.stringify({name,input:parsed}));
@@ -65,7 +68,8 @@ export class CustomerDelivery {
         return existing.result;
       }
       let value:unknown;
-      if(name==='delivery.saveSender') {
+      if(name==='delivery.selectProvider')value=await selectDeliveryProvider(sql,this.options,actor.workspaceId,customerDeliveryCommands['delivery.selectProvider'].schema.parse(raw));
+      else if(name==='delivery.saveSender') {
         const profile=customerDeliveryCommands['delivery.saveSender'].schema.parse(raw),prior=await senderProfile(sql,profile.brandId);
         const next={fromName:profile.fromName,fromEmail:profile.fromEmail,replyTo:profile.replyTo,organization:profile.organization,postalAddress:profile.postalAddress,revision:(prior?.revision??0)+1};
         await sql.query('INSERT INTO customer_sender_profiles(workspace_id,brand_id,profile) VALUES($1,$2,$3) ON CONFLICT(workspace_id,brand_id) DO UPDATE SET profile=excluded.profile,updated_at=now()',
@@ -118,19 +122,21 @@ export class CustomerDelivery {
   async status(actor:Actor,brandId?:string) {
     const eligibility=await this.options.billing.eligibility(actor.workspaceId);
     let senderVerified:boolean|null=null;
+    let mode=this.options.mode;
     if(brandId)await this.db.tenant(actor.workspaceId,async sql=>{
       await brandScope(sql,actor,brandId);
-      if(this.options.mode==='ses') {
-        try {senderVerified=await senderEligible(sql,brandId,this.options.provider?.(actor.workspaceId,brandId));}
+      const selected=await selectedDelivery(sql,this.options,actor.workspaceId,brandId);mode=selected.mode;
+      if(externalDelivery(mode)) {
+        try {senderVerified=await senderEligible(sql,brandId,selected.provider);}
         catch {senderVerified=false;}
       }
     });
     const gaps=this.options.mode==='off'?['Configure the delivery mode.']:this.options.mode==='capture'?[]:
       !brandId?['Choose a brand to inspect its current sender and provider readiness.']:
       senderVerified?[]:['Complete or refresh the selected brand’s sender verification and provider setup.'];
-    return {mode:this.options.mode,scope:this.options.scope??'all',
-      externalSendingEnabled:this.options.mode==='ses'&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
-      testSendingEnabled:this.options.mode==='ses'&&deliveryPurposeAllowed(this.options.scope,'test'),
+    return {mode,scope:this.options.scope??'all',
+      externalSendingEnabled:externalDelivery(mode)&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
+      testSendingEnabled:externalDelivery(mode)&&deliveryPurposeAllowed(this.options.scope,'test'),
       broadcastsEnabled:this.options.mode!=='off'&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
       eligible:eligibility.eligible,eligibility,brandId:brandId??null,senderVerified,gaps};
   }
@@ -197,19 +203,19 @@ export class CustomerDelivery {
       (this.options.mode==='capture'||await this.options.liveConsent?.(sql,person.id)))selected.push(person);
     if(purpose==='test')requireCondition(selected.length===1,422,'test_recipient_ineligible','Select one existing confirmed and consent-eligible contact in this brand.');
     requireCondition(selected.length>0&&selected.length<=10000,422,'audience_empty','Choose between one and 10,000 confirmed eligible contacts.');
-    const provider=this.options.provider?.(actor.workspaceId,input.brandId);
+    const selectedProvider=await selectedDelivery(sql,this.options,actor.workspaceId,input.brandId),provider=selectedProvider.provider;
     const profile=await senderProfile(sql,input.brandId);
-    if(this.options.mode==='ses')requireCondition(await senderEligible(sql,input.brandId,provider),503,'provider_unavailable','Complete the legal sender profile, current domain verification and provider verification for this brand.');
+    if(externalDelivery(selectedProvider.mode))requireCondition(await senderEligible(sql,input.brandId,provider),503,'provider_unavailable','Complete the legal sender profile, current domain verification and provider verification for this brand.');
     const assets=(await sql.query<{id:string;name:string;sha256:string}>('SELECT id,name,sha256 FROM assets WHERE brand_id=$1 AND id=ANY($2::uuid[])',[input.brandId,draft.content.assetIds])).rows;
     requireCondition(assets.length===draft.content.assetIds.length,422,'image_unavailable','A selected original photo is unavailable.');
     const ordered=draft.content.assetIds.map(id=>assets.find(a=>a.id===id)!);
     const snapshot=purpose==='test'?{...campaign,content:{...campaign.content,subject:'[TEST] '+campaign.content.subject}}:campaign;
     const preview=renderPreview(snapshot,ordered),rendered=legalFooter(preview.html,preview.text,profile),id=randomUUID();
     await sql.query(`INSERT INTO customer_deliveries(workspace_id,brand_id,id,campaign_id,version,actor_id,creator_id,mode,state,
-      content,rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded,sender_profile,purpose)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-      [actor.workspaceId,input.brandId,id,draft.id,draft.version,actor.actorId,actor.userId,this.options.mode,JSON.stringify(snapshot.content),
-        rendered.html,rendered.text,JSON.stringify(ordered),senderFingerprint(provider,profile),due,selected.length,(population[0]?.total??0)-selected.length,profile?JSON.stringify(profile):null,purpose]);
+      content,rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded,sender_profile,purpose,provider_revision)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+      [actor.workspaceId,input.brandId,id,draft.id,draft.version,actor.actorId,actor.userId,selectedProvider.mode,JSON.stringify(snapshot.content),
+        rendered.html,rendered.text,JSON.stringify(ordered),senderFingerprint(provider,profile),due,selected.length,(population[0]?.total??0)-selected.length,profile?JSON.stringify(profile):null,purpose,selectedProvider.revision]);
     const people=selected.map(person=>{const operation=randomUUID();return {operation,subscriber:person.id,
       email:digest(person.email_normalized),reference:listmonkReference(actor.workspaceId,input.brandId,operation)};});
     await sql.query(`INSERT INTO customer_delivery_recipients(workspace_id,brand_id,delivery_id,id,subscriber_id,email_digest,engine_reference,state)
@@ -241,9 +247,9 @@ export class CustomerDelivery {
         LIMIT 1`,[row.brand_id,row.campaign_id,row.id,test.subscriberId]);
       requireCondition(!pending.rowCount,409,'test_already_pending','Another test for this campaign and contact is pending or uncertain. Open and resolve that original test before approving a replacement.');
     }
-    const provider=this.options.provider?.(actor.workspaceId,row.brand_id);
-    requireCondition(row.mode===this.options.mode&&row.provider_binding===senderFingerprint(provider,await senderProfile(sql,row.brand_id)),409,'sender_changed','The sender configuration changed. Prepare a fresh review.');
-    if(row.mode==='ses')requireCondition(await senderEligible(sql,row.brand_id,provider),503,'sender_ineligible','The sender checks must be current before approval.');
+    const selected=await selectedDelivery(sql,this.options,actor.workspaceId,row.brand_id),provider=selected.provider;
+    requireCondition(row.mode===selected.mode&&(row.provider_revision??0)===selected.revision&&row.provider_binding===senderFingerprint(provider,await senderProfile(sql,row.brand_id)),409,'sender_changed','The sender configuration changed. Prepare a fresh review.');
+    if(externalDelivery(row.mode))requireCondition(await senderEligible(sql,row.brand_id,provider),503,'sender_ineligible','The sender checks must be current before approval.');
     const reservation='customer-delivery-'+row.id;
     if(test)await admitTest(sql,row);
     await this.options.billing.reserve(sql,actor.workspaceId,{operationKey:reservation,campaignId:row.campaign_id,brandId:row.brand_id,recipients:row.selected,

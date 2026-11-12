@@ -1,3 +1,4 @@
+import {externalDelivery} from '../shared/customer-delivery.js';
 import { loadMarketingLinks } from './subscribers/marketing-links.js';
 import {startLegacyMessenger} from './private-engine-startup.js';
 import {loadSesRuntime} from './campaign/ses-runtime.js';
@@ -71,7 +72,7 @@ if (configurationGaps(config).length === 0) {
   }
 }
 const server = createApp(config, service, auth, platform).listen(config.port, config.host, () => {
-  console.info(`Flockletter ${config.environment} listening on port ${config.port}. Customer delivery ${service?.customer?.settings.delivery==='ses'?'requires verified per-brand provider eligibility':'disabled'}.`);
+  console.info(`Flockletter ${config.environment} listening on port ${config.port}. Customer delivery ${externalDelivery(service?.customer?.settings.delivery??'off')?'requires verified per-brand provider eligibility':'disabled'}.`);
 });
 for (const signal of ['SIGTERM', 'SIGINT'])
   process.once(signal, () => {

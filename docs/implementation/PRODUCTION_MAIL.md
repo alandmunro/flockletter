@@ -1,6 +1,6 @@
 # Production mail configuration and verification
 
-This checklist supports FL-DEL-001–007, FL-AUD-002/004, FL-SUP-001/002 and FL-OPS-001/003/004/006. It records configuration requirements, not evidence that a provider or domain is active. Newsletter delivery currently uses the SES adapter; Resend handles customer confirmations, support and platform alerts. Selecting a provider/plan, issuing its credentials and enabling external mail remain explicit operational actions.
+This checklist supports FL-DEL-001–007, FL-AUD-002/004, FL-SUP-001/002 and FL-OPS-001/003/004/006. It records configuration requirements, not evidence that a provider or domain is active. Newsletter delivery supports selectable SES and Resend adapters under D-055; Resend confirmation, support and platform-alert credentials remain separate. See [selectable delivery](SELECTABLE_DELIVERY.md) for brand selection, configuration and evidence gates. Selecting a provider/plan, issuing its credentials and enabling external mail remain explicit operational actions.
 
 ## November 9 sender preparation evidence
 

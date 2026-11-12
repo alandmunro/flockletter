@@ -1,3 +1,4 @@
+import {externalDelivery} from '../shared/customer-delivery.js';
 import express, { type ErrorRequestHandler } from 'express';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -56,17 +57,17 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     if (!service || !auth) gaps.push('service_not_ready');
     if (service) { try { await service.db.verifyBoundary(); } catch { gaps.push('database_unavailable'); } }
     res.status(gaps.length ? 503 : 200).json({ ready: gaps.length === 0, gaps,
-      sendingEnabled: service?.customer?.settings.delivery==='ses'&&service.customer.settings.deliveryScope==='all',
-      testSendingEnabled:service?.customer?.settings.delivery==='ses' });
+      sendingEnabled: externalDelivery(service?.customer?.settings.delivery??'off')&&service?.customer?.settings.deliveryScope==='all',
+      testSendingEnabled:externalDelivery(service?.customer?.settings.delivery??'off') });
   });
   platformRoutes(app,config,platform);
   app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), operatorMfaPolicy:config.operatorMfaPolicy??'required', platformMode:platform?.options.mode??'off', plans,
-    sendingEnabled: service?.customer?.settings.delivery==='ses'&&service.customer.settings.deliveryScope==='all',
-    testSendingEnabled:service?.customer?.settings.delivery==='ses',
+    sendingEnabled: externalDelivery(service?.customer?.settings.delivery??'off')&&service?.customer?.settings.deliveryScope==='all',
+    testSendingEnabled:externalDelivery(service?.customer?.settings.delivery??'off'),
     customerWorkflows:service?.customer?{billing:service.customer.settings.billing,delivery:service.customer.settings.delivery,deliveryScope:service.customer.settings.deliveryScope,audience:service.customer.settings.audience,team:service.customer.settings.team,support:service.customer.settings.support,retention:service.customer.settings.retention}:null }));
   app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false,
     skip: req => (['HEAD','POST'].includes(req.method) && /^\/brands\/[^/]+\/subscriber-signups\/?$/i.test(req.path)) ||
-      (req.method==='POST' && /^\/(confirmation-feedback|customer-audience\/confirmation-events|billing\/stripe-events|customer-billing\/stripe-events|support\/(inbound|resend-inbound)|customer-delivery\/ses-events)\/?$/i.test(req.path)),
+      (req.method==='POST' && /^\/(confirmation-feedback|customer-audience\/confirmation-events|billing\/stripe-events|customer-billing\/stripe-events|support\/(inbound|resend-inbound)|customer-delivery\/(ses-events|resend-events))\/?$/i.test(req.path)),
     message: { error: { code: 'rate_limited', message: 'Too many requests. Retry in a minute.' } } }));
   app.use('/api/v1', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -108,6 +109,13 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   app.post('/api/v1/support/resend-inbound',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'16kb'}),async(req,res)=>{
     if(!service?.customer||!Buffer.isBuffer(req.body))throw new AppError(503,'support_intake_unavailable','Native support intake is not configured.');
     await service.customer.support.receiveResend(req.body,Object.fromEntries(['svix-id','svix-timestamp','svix-signature'].map(name=>[name,req.get(name)??''])));
+    res.sendStatus(204);
+  });
+  app.post('/api/v1/customer-delivery/resend-events',rateLimit({windowMs:60000,limit:240,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'16kb'}),async(req,res)=>{
+    const feedback=service?.customer?.resendFeedback;
+    if(!feedback)throw new AppError(503,'delivery_feedback_unavailable','Resend customer delivery feedback is not configured.');
+    if(!Buffer.isBuffer(req.body))throw new AppError(400,'invalid_feedback','Use the raw signed event payload.');
+    await feedback.receive(req.body,Object.fromEntries(['svix-id','svix-timestamp','svix-signature'].map(name=>[name,req.get(name)??''])));
     res.sendStatus(204);
   });
   app.post('/api/v1/customer-delivery/ses-events',rateLimit({windowMs:60000,limit:240,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:['text/plain','application/json'],limit:'256kb'}),async(req,res)=>{

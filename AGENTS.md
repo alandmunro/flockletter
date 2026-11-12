@@ -2,6 +2,8 @@
 
 ## Current authorization
 
+D-055 authorizes selectable AWS SES and Resend newsletter delivery, with per-brand dashboard/API/MCP choice, separately granted `delivery:configure` access, local-model drafts and primary validation. Read [the delivery runbook](docs/implementation/SELECTABLE_DELIVERY.md). Never auto-failover uncertain sends or change old reviewed routing. Preserve test-only/broadcast gates and keep live billing and general sending off.
+
 D-054 authorizes animated GIF/WebP and safe static SVG import, plus optional single opt-in and explicitly permission-based contact confirmation. Double opt-in remains the default. Preserve original raster bytes; rasterize validated inert SVG only. Never reactivate suppression, claim mailbox verification for attestation, or promote exercise evidence to live consent. Delegated confirmation needs a new explicit `audience:confirm` grant; existing grants remain unchanged. Keep live sending/billing off and verify staging first.
 
 

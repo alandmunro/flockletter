@@ -4,7 +4,7 @@ Applicable requirements: FL-CAM-002/003/005/006/010, FL-DEL-002/004/005/008, FL-
 
 ## What the scope restricts
 
-`FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE=tests` narrows the existing delivery workflow to D-047's separately reviewed, immediate, one-confirmed-contact tests. The transport remains `off`, `capture` or `ses`. The default scope `all` preserves the prior behavior and still requires ordinary campaign approval and the live-activation flag for SES. Invalid scopes fail startup.
+`FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE=tests` narrows the existing delivery workflow to D-047's separately reviewed, immediate, one-confirmed-contact tests. The transport is `off`, `capture`, `ses` or `resend` under D-055; provider choice never changes the permitted scope. The default scope `all` preserves the prior behavior and still requires ordinary campaign approval and the live-activation flag for SES. Invalid scopes fail startup.
 
 In test-only scope the canonical service refuses broadcast reviews and approvals, including one-recipient broadcasts. A paused broadcast cannot resume. The worker blocks previously queued/prepared broadcasts before a new submission and releases unaccepted reservations. Previously submitted uncertain outcomes still reconcile against the original operation; scope changes never authorize resending them. SES additionally rejects a missing or broadcast envelope purpose, even if its subject starts with `[TEST]`. Purpose comes from the immutable server review.
 

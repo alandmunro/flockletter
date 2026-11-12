@@ -102,3 +102,7 @@ The owner requires approval for each individual expense above USD 25. Render quo
 - AI support provider, response limits, human escalation and its operating budget.
 
 These gaps are visible in the SRD and design artifacts. They must be resolved before dependent implementation; the accepted numeric plan prices are not reopened by displaying these remaining gates.
+
+## Alternative delivery service (D-055)
+
+AWS SES and Resend are both supported choices. Earlier per-message estimates are SES planning assumptions and must not be presented as Resend costs. Resend separates email-volume API plans from contact-based Broadcast plans; this implementation sends individually through `/emails` while Flockletter owns consent, audiences and unsubscribes. Verify the current account’s monthly/day limits, domain count, overage setting, fees and suitability for downstream customer sending before activation. Do not multiply a shared subscription fee per customer or promise margin from an unverified plan. The accepted customer prices and allowances remain unchanged. [Current Resend pricing](https://resend.com/pricing).

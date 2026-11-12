@@ -28,4 +28,17 @@ export async function verifyTestSendBoundary(client) {
    (c.relname='customer_delivery_recipients' AND t.tgname='flockletter_customer_test_dispatch_guard' AND p.oid=to_regprocedure('public.flockletter_customer_test_dispatch_guard()')))
   AND t.tgenabled='A' AND t.tgtype=23 AND t.tgqual IS NULL AND t.tgnargs=0 AND t.tgattr=''::int2vector`)).rows;
  if(guards.length!==2||guards.some(g=>!g.prosecdef||!g.fixed_path||!g.different_owner||!g.runtime_cannot_execute||!g.private_execute||createHash('sha256').update(g.prosrc.replace(/\r\n/g,'\n')).digest('hex')!==expectedGuardDigests[g.proname]))throw Error('Test-send dispatch requires immutable migration-owned ALWAYS guards.');
+ const selection=(await client.query(`SELECT a.attnotnull,format_type(a.atttypid,a.atttypmod) type,pg_get_expr(d.adbin,d.adrelid) default_value
+  FROM pg_attribute a JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+  WHERE a.attrelid=to_regclass('public.customer_deliveries') AND a.attname='provider_revision' AND NOT a.attisdropped`)).rows[0];
+ if(!selection?.attnotnull||selection.type!=='integer'||selection.default_value!=='0')throw Error('Provider selection requires migration033.');
+ const providerGuard=(await client.query(`SELECT p.prosrc,p.prosecdef,p.proconfig=ARRAY['search_path=pg_catalog']::text[] fixed_path,
+  p.proowner<>current_user::regrole::oid different_owner,
+  NOT has_function_privilege(current_user,p.oid,'EXECUTE') runtime_cannot_execute,
+  NOT EXISTS(SELECT FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') private_execute
+  FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE t.tgrelid=to_regclass('public.customer_deliveries')
+  AND t.tgname='flockletter_delivery_provider_snapshot_guard' AND p.oid=to_regprocedure('public.flockletter_delivery_provider_snapshot_guard()')
+  AND t.tgenabled='A' AND t.tgtype=19 AND t.tgqual IS NULL AND t.tgnargs=0 AND t.tgattr=''::int2vector`)).rows[0];
+ if(!providerGuard?.prosecdef||!providerGuard.fixed_path||!providerGuard.different_owner||!providerGuard.runtime_cannot_execute||!providerGuard.private_execute||createHash('sha256').update(providerGuard.prosrc.replace(/\r\n/g,'\n')).digest('hex')!=='de6d1f75eb6f3a3470c605c99987533a2bbf99fd6608e3e499a5f542a5192083')throw Error('Provider reviews require the immutable migration033 guard.');
+
 }

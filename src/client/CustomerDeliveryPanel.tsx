@@ -1,3 +1,5 @@
+import {DeliveryProviderPanel} from './DeliveryProviderPanel.js';
+import {externalDelivery} from '../shared/customer-delivery.js';
 import { useCallback,useEffect,useRef,useState } from 'react';
 import type { Api } from './api.js';
 import { operationKey } from './api.js';
@@ -21,13 +23,13 @@ function captureHtml(message:Captured) {
   const policy='<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; img-src data:; style-src &#39;unsafe-inline&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">';
   return html.includes('<head>')?html.replace('<head>','<head>'+policy):policy+html;
 }
-export function CustomerDeliveryPanel({api,brands}:{api:Api;brands:Brand[]}) {
-  const [id,setId]=useState(brands[0]?.id??'');
+export function CustomerDeliveryPanel({api,brands,canChooseProvider=false}:{api:Api;brands:Brand[];canChooseProvider?:boolean}) {
+  const [id,setId]=useState(brands[0]?.id??''),[providerRevision,setProviderRevision]=useState(0);
   const brand=brands.find(item=>item.id===id);
   return <><h1 className="page-heading">Delivery</h1><p className="page-intro">Review your saved message and audience, then approve that exact version.</p>
     <div className="field"><label htmlFor="delivery-brand">Sending brand</label><select id="delivery-brand" value={id} onChange={event=>setId(event.target.value)}>
       {brands.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
-    {brand&&<><DeliveryBrand key={brand.id} api={api} brand={brand}/><SenderProfilePanel key={'sender-'+brand.id} api={api} brandId={brand.id}/></>}
+    {brand&&<>{canChooseProvider&&<DeliveryProviderPanel key={'provider-'+brand.id} api={api} brandId={brand.id} onChanged={()=>setProviderRevision(v=>v+1)}/>}<DeliveryBrand key={brand.id+'-'+providerRevision} api={api} brand={brand}/><SenderProfilePanel key={'sender-'+brand.id+'-'+providerRevision} api={api} brandId={brand.id}/></>}
   </>;
 }
 function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
@@ -104,7 +106,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
     <div className="actions"><h2>Review and approve</h2><button className="btn secondary" disabled={!!busy} onClick={()=>void refresh()}>{busy==='refresh'?'Refreshing…':'Refresh delivery'}</button></div>
     {error&&<p role="alert" className="notice error">{error}</p>}{notice&&<p role="status" className="notice success">{notice}</p>}
     {!loaded?<p>Loading delivery settings…</p>:<>
-      <p className="badge">{status?.mode==='capture'?'Captured exercise · no external email':status?.mode==='ses'?'Customer provider configured':'Delivery is off'}</p>
+      <p className="badge">{status?.mode==='capture'?'Captured exercise · no external email':externalDelivery(status?.mode??'off')?'Customer provider configured':'Delivery is off'}</p>
       {status&&<DeliveryScopeNotice mode={status.mode} scope={status.scope??'all'}/>}
       {status?.mode==='capture'&&<p className="help">These messages stay in your staging workspace. Captured outcomes exercise the workflow and cannot prove inbox delivery.</p>}
       {!!status?.gaps.length&&<ul>{status.gaps.map(gap=><li key={gap}>{gap}</li>)}</ul>}

@@ -1,3 +1,5 @@
+import {selectedDelivery} from './selection.js';
+import {externalDelivery} from '../../shared/customer-delivery.js';
 import {testBudget} from './test-send.js';
 import type { Campaign,Gap } from '../../shared/contracts.js';
 import type { CustomerCampaignPreflight } from '../../shared/customer-preflight.js';
@@ -32,8 +34,9 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
  if(options.mode==='off')add('delivery_off','Configure delivery','A platform operator must configure the delivery mode.','delivery');
  if(!deliveryPurposeAllowed(options.scope,purpose))add('broadcasts_disabled','Use a one-recipient test','Only separately reviewed tests to one confirmed contact are enabled. Broadcasts and schedules are disabled.','delivery');
  if(!options.render)add('renderer_required','Configure the renderer','The private message renderer is not available.','delivery');
- const profile=await senderProfile(sql,campaign.brandId),provider=options.provider?.(actor.workspaceId,campaign.brandId);
- if(options.mode==='ses') {
+ const selected=await selectedDelivery(sql,options,actor.workspaceId,campaign.brandId);
+ const profile=await senderProfile(sql,campaign.brandId),provider=selected.provider;
+ if(externalDelivery(selected.mode)) {
   if(!profile)add('sender_profile_required','Complete the sender profile','Save the legal sender identity and postal footer.','sender');
   if(!provider)add('provider_unavailable','Verify the provider route','The current brand provider route could not be verified.','delivery');
   let verified=false;try{verified=await senderEligible(sql,campaign.brandId,provider);}catch{/* Unknown readiness remains blocked. */}
@@ -61,7 +64,7 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
    audience={visibility:'over_limit',confirmed:population[0]?.confirmed??0};
    add('audience_limit','Narrow the audience','Choose at most 10,000 confirmed contacts. Exact eligible/excluded counts are unavailable until the audience is narrowed.','audience');
   } else {
-   const eligible=options.mode!=='ses'?population.map(p=>p.id):options.liveConsentBatch?await options.liveConsentBatch(sql,population.map(p=>p.id)):
+   const eligible=!externalDelivery(selected.mode)?population.map(p=>p.id):options.liveConsentBatch?await options.liveConsentBatch(sql,population.map(p=>p.id)):
      (await Promise.all(population.map(async person=>await options.liveConsent?.(sql,person.id)?person.id:null))).filter((id):id is string=>id!==null);
    audience={visibility:'available',confirmed:population[0]?.confirmed??0,selected:eligible.length,excluded:total-eligible.length};
    if(!eligible.length)add('confirmed_audience_required','Confirm subscribers','No confirmed, consent-eligible recipient is available for this review.','audience');
@@ -86,5 +89,5 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
     add('allowance_exceeded','Review remaining allowance','This review cannot fit the shared remaining campaign or recipient allowance.','billing');
  }
  return {purpose,...(budget?{testBudget:budget}:{}),campaignId:campaign.id,version:campaign.version,brandId:campaign.brandId,segmentId:input.segmentId??null,senderRevision:profile?.revision??null,
-  observedAt:new Date().toISOString(),mode:options.mode,deliveryScope:options.scope??'all',canSend:false,reviewRequired:true,contentReady:!gaps.some(g=>g.area==='content'),gaps,audience,...(allowance?{allowance}:{})};
+  observedAt:new Date().toISOString(),mode:selected.mode,deliveryScope:options.scope??'all',canSend:false,reviewRequired:true,contentReady:!gaps.some(g=>g.area==='content'),gaps,audience,...(allowance?{allowance}:{})};
 }
