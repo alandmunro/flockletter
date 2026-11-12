@@ -44,6 +44,7 @@ describe('public hosted pricing and staging setup', () => {
     ])
       expect(page).toMatch(phrase);
     expect(page).toContain('href="/sign-up"');
+    for(const plan of ['starter','growth','pro'])expect(page).toContain('href="/sign-up?plan='+plan+'"');
     expect(page).toContain('href="/"');
     expect(page).not.toContain('<form');
     expect(page).not.toMatch(/>(?:choose this plan|buy now|start (?:your |a )?(?:14-day )?trial)[^<]*<\/a>/i);

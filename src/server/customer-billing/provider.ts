@@ -554,11 +554,11 @@ export function stripeCustomerProvider(
         flow = {
           type: 'subscription_update_confirm',
           subscription_update_confirm: { subscription: current.id, items: [{ id: item.id, price: prices[plan], quantity: 1 }] },
-          after_completion: { type: 'redirect', redirect: { return_url: origin + '/' } },
+          after_completion: { type: 'redirect', redirect: { return_url: origin + '/subscription' } },
         };
       }
       const result = await stripe.billingPortal.sessions.create(
-        { customer, return_url: origin + '/', configuration: selectedConfiguration, ...(flow ? { flow_data: flow } : {}) },
+        { customer, return_url: origin + '/subscription', configuration: selectedConfiguration, ...(flow ? { flow_data: flow } : {}) },
         { idempotencyKey: 'flockletter-customer-portal-' + key },
       );
       if (new URL(result.url).origin !== 'https://billing.stripe.com') throw invalid();
