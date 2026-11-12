@@ -33,8 +33,10 @@ async function setup(){
  const rows=()=>db.brand(f.workspaceId,f.brandId,async sql=>({person:(await sql.query('SELECT state,feedback,message_id FROM customer_delivery_recipients WHERE id=$1',[operation])).rows[0],subscriber:(await sql.query('SELECT state FROM subscribers WHERE id=$1',[f.subscriberId])).rows[0]}));
  return {...f,feedback,send,event,rows,review,receipt,setReceipt:(value:typeof receipt)=>{receipt=value;}};
 }
-it('settles unknown acceptance and applies deduplicated delivery, complaint and monotonic suppression',async()=>{
- const f=await setup(),delivered=signed(f.event());await f.feedback.receive(delivered.body,delivered.headers);await f.feedback.receive(delivered.body,delivered.headers);
+it('settles unknown acceptance from a real-shaped nullable recipient receipt and applies deduplicated delivery, complaint and monotonic suppression',async()=>{
+ const f=await setup(),delivered=signed(f.event());
+ f.send.mockImplementation(async()=>new Response(JSON.stringify({...f.receipt,cc:null,bcc:null})));
+ await f.feedback.receive(delivered.body,delivered.headers);await f.feedback.receive(delivered.body,delivered.headers);
  expect((await f.rows()).person).toMatchObject({state:'accepted',feedback:'delivered'});
  const complaint=signed(f.event('email.complained'));await f.feedback.receive(complaint.body,complaint.headers);
  const late=signed(f.event());await f.feedback.receive(late.body,late.headers);
