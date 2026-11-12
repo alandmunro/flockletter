@@ -8,7 +8,9 @@ import {customerDeliveryScope,deliveryPurposeAllowed,requireMailingActivation} f
 import {parseResendRoute,type ResendRoute} from './resend-route.js';
 
 export const resendEvents=['email.sent','email.delivered','email.bounced','email.complained','email.failed','email.delivery_delayed'] as const;
-export const resendReceipt=z.object({id:z.uuid(),from:z.string().max(420),to:z.array(z.email()).length(1),cc:z.array(z.string()).max(0).default([]),bcc:z.array(z.string()).max(0).default([]),tags:z.array(z.object({name:z.string().max(256),value:z.string().max(256)})).max(100)});
+// Resend returns null for absent recipient lists on real receipts. Nonempty lists still fail closed.
+const noAdditionalRecipients=z.array(z.string()).max(0).nullish().transform(value=>value??[]);
+export const resendReceipt=z.object({id:z.uuid(),from:z.string().max(420),to:z.array(z.email()).length(1),cc:noAdditionalRecipients,bcc:noAdditionalRecipients,tags:z.array(z.object({name:z.string().max(256),value:z.string().max(256)})).max(100)});
 export const receiptTag=(tags:{name:string;value:string}[],name:string)=>{const found=tags.filter(t=>t.name===name);return found.length===1?found[0]!.value:'';};
 export function routeReceipt(receipt:z.infer<typeof resendReceipt>,route:ResendRoute) {
  const from=receipt.from.match(/<([^<>]+)>$/)?.[1]??receipt.from;
