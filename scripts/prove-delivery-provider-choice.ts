@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {once} from 'node:events';
 import {createServer} from 'node:http';
@@ -18,7 +20,7 @@ import {createApp} from '../src/server/app.js';
 const fixture=await startDatabase(),db=new Database(fixture.url),server=createServer();
 const browser=await chromium.launch({channel:process.env.FLOCKLETTER_BROWSER_CHANNEL??'chrome'});
 let customer:CustomerWorkflows|undefined;
-const proof=process.env.FLOCKLETTER_PROVIDER_PROOF??'/private/tmp/flockletter-provider-choice-proof';
+const proof=process.env.FLOCKLETTER_PROVIDER_PROOF??join(tmpdir(),'flockletter-provider-choice-proof');
 try{
  server.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address();assert(address&&typeof address!=='string');const origin='http://127.0.0.1:'+address.port;
  const env={APP_ENV:'test',APP_ORIGIN:origin,DATABASE_URL:fixture.url,LOCAL_TEST_IDENTITY:'true',FLOCKLETTER_CUSTOMER_DELIVERY:'capture',FLOCKLETTER_CUSTOMER_DELIVERY_SCOPE:'tests'};
