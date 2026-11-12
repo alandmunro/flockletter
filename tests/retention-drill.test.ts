@@ -141,6 +141,7 @@ async function seed(db: pg.Client, workspace: string) {
         SELECT w,b,id,'capture-fixture',1,true,false,'{}' FROM customer_infrastructure_intents WHERE workspace_id=w AND brand_id=b;
       INSERT INTO customer_infrastructure_events(workspace_id,id,intent_id,actor_id,event)
         SELECT w,gen_random_uuid(),id,'fixture','captured' FROM customer_infrastructure_intents WHERE workspace_id=w AND brand_id=b;
+      INSERT INTO customer_delivery_providers(workspace_id,brand_id,provider,revision) VALUES(w,b,'ses',1);
       INSERT INTO customer_sender_profiles(workspace_id,brand_id,profile) VALUES(w,b,'{"name":"Fixture sender","email":"news@example.test"}');
       INSERT INTO customer_deliveries(workspace_id,brand_id,id,campaign_id,version,actor_id,creator_id,mode,state,content,
         rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded)

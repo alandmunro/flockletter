@@ -1,3 +1,4 @@
+import {externalDelivery} from '../shared/customer-delivery.js';
 import type {Workspace} from '../shared/contracts.js';
 import type {SetupPage,WorkspacePreflight,WorkspaceSetupGap} from '../shared/workspace-preflight.js';
 import {DeliveryScopeNotice} from './DeliveryScopeNotice.js';
@@ -39,7 +40,7 @@ export function OnboardingProgress({workspace,hasDraft,readiness:observed,loadin
       {(readiness.brands??[]).map(brand=><section key={brand.id} aria-labelledby={'setup-brand-'+brand.id}>
         <h3 id={'setup-brand-'+brand.id}>{brand.name}</h3><dl>
           <dt>Sender identity</dt><dd>{brand.senderProfileConfigured?'Configured':'Needed'}</dd>
-          <dt>Sender verification</dt><dd>{readiness.mode==='ses'&&brand.senderVerified?'Current at this check':readiness.mode==='capture'?'Exercise only':'Needs verification'}</dd>
+          <dt>Sender verification</dt><dd>{externalDelivery(readiness.mode)&&brand.senderVerified?'Current at this check':readiness.mode==='capture'?'Exercise only':'Needs verification'}</dd>
           <dt>Confirmed audience</dt><dd>{brand.confirmed===null?'Not available with this access':brand.confirmed+' confirmed contacts'}</dd>
         </dl><p className="help">Confirmed contacts still pass consent and suppression checks in the exact campaign review and at execution.</p>
       </section>)}

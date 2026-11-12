@@ -59,7 +59,7 @@ export class CustomerSesProvider implements CustomerProvider {
 }
 
 export function customerSesRuntime(origin:string,env:NodeJS.ProcessEnv) {
-  if(env.FLOCKLETTER_CUSTOMER_DELIVERY!=='ses')return;
+  if(env.FLOCKLETTER_CUSTOMER_DELIVERY!=='ses'&&!(env.FLOCKLETTER_CUSTOMER_DELIVERY==='resend'&&env.FLOCKLETTER_CUSTOMER_SES_BINDINGS))return;
   const scope=customerDeliveryScope(env);
   requireMailingActivation(env.APP_ENV??'',env,scope);
   const raw=env.FLOCKLETTER_CUSTOMER_SES_BINDINGS,

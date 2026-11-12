@@ -20,6 +20,8 @@ export function customerPreparation(env:NodeJS.ProcessEnv):CustomerPreparationCh
       'FLOCKLETTER_CUSTOMER_CONFIRMATION_ROUTING_KEY','FLOCKLETTER_CUSTOMER_CONFIRMATION_SIGNING_KEY'],
     'Support transport credentials':['FLOCKLETTER_SUPPORT_RESEND_KEY','FLOCKLETTER_SUPPORT_RESEND_RETRIEVE_KEY','FLOCKLETTER_SUPPORT_SENDER'],
   };
+  if(env.FLOCKLETTER_CUSTOMER_DELIVERY==='resend'||env.FLOCKLETTER_CUSTOMER_RESEND_BINDINGS)groups['Resend newsletter transport']=['FLOCKLETTER_CUSTOMER_RESEND_KEY','FLOCKLETTER_CUSTOMER_RESEND_RETRIEVE_KEY','FLOCKLETTER_CUSTOMER_RESEND_WEBHOOK_SECRET','FLOCKLETTER_CUSTOMER_RESEND_BINDINGS'];
+  if(env.FLOCKLETTER_CUSTOMER_DELIVERY==='resend'&&!env.FLOCKLETTER_CUSTOMER_SES_BINDINGS)delete groups['Newsletter transport credentials'];
   const checks:CustomerPreparationCheck[]=Object.entries(groups).map(([area,keys])=>{
     const missing=keys.filter(key=>!env[key]?.trim()).length;
     if(missing)return {area,state:'settings_missing',detail:`${missing} required setting${missing===1?' is':'s are'} missing. This workflow remains subject to its activation and verification checks.`};

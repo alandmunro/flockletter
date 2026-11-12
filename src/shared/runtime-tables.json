@@ -70,5 +70,6 @@
   {"name":"customer_support_native_receipts","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"customer_support_operator_audit","scope":"workspace","permissions":["SELECT","INSERT"]},
   {"name":"platform_exercise_records","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
-  {"name":"customer_audience_feedback","scope":"brand","permissions":["SELECT","INSERT"]}
+  {"name":"customer_audience_feedback","scope":"brand","permissions":["SELECT","INSERT"]},
+  {"name":"customer_delivery_providers","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]}
 ]

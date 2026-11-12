@@ -130,3 +130,7 @@ Delivery-list reports batch their aggregate state/feedback counts and first 50 o
 ## Animated media and optional email confirmation
 
 GIF/WebP animation and static SVG-to-PNG import use the existing batch upload tools. Read every per-item result and conversion notice. `audienceOnboarding_confirmContacts` subscribes only the explicitly supplied IDs, with permission declaration, source and current policy version. It requires a separately granted `audience:confirm` capability. An import with `confirmWithoutEmail:true` also requires that capability plus its existing `audience:write` grant and `consentPolicyVersion`. Existing write grants cannot promote contacts. Signup mode configuration and detailed contact browsing remain owner-only. See [the workflow and evidence](MEDIA_AND_CONFIRMATION.md).
+
+## Selectable newsletter delivery
+
+D-055 adds `delivery.providers` and `delivery.selectProvider` through the same canonical HTTP/MCP layer used by the Delivery dashboard. Owner sessions can choose a configured service per brand. Delegated clients need the new explicit `delivery:configure` grant plus `read`, scoped to the exact brand and current issuing owner; existing send/draft grants gain no configuration authority. Provider configuration does not grant campaign send permission. Supply `provider: ses|resend`, `expectedRevision` and a stable operation key; never supply keys, provider URLs or another workspace. [Configuration, invalidation and reconciliation](SELECTABLE_DELIVERY.md).

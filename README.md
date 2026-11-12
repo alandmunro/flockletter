@@ -10,7 +10,7 @@ The project is an independent, public AGPLv3 small business newsletter applicati
 
 Team management features such as invites, removals, and ownership changes are captured in the workflow but do not constitute real Clerk membership updates; while Clerk hosted identity is real, team changes operate in capture mode. The support inbox is protected and reviewed with captured replies, and the cancellation workflow enforces a 90-day retention period with captured zero-deletion outcomes. A separately privileged erasure executor is tested with disposable data and stays disabled for hosted customer data.
 
-Operations rely on durable queues and worker records that track captured sender infrastructure, ensuring state consistency across the staging environment. The private Listmonk renderer pool operates per workspace with original assets preserved in the database, and no tracking is enabled by default. Real provider adapters for AWS SES/SNS, Stripe, and Clerk are built and gated behind feature flags, with no live claims made regarding production traffic or financial transactions at this stage.
+Operations rely on durable queues and worker records that track captured sender infrastructure, ensuring state consistency across the staging environment. The private Listmonk renderer pool operates per workspace with original assets preserved in the database, and no tracking is enabled by default. Real provider adapters for AWS SES/SNS, Resend, Stripe, and Clerk are built and gated behind feature flags, with no live claims made regarding production traffic or financial transactions at this stage.
 
 Local model drafts are reviewed before integration. Real provider acceptance, commercial activation and production deployment remain separate release gates.
 
@@ -64,3 +64,5 @@ See [AGENTS.md](AGENTS.md) for contribution and agent instructions, including th
 ## License
 
 Original Flockletter material is licensed under the GNU Affero General Public License version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE). Third-party components retain their own licenses and attribution. Newsletter Studio distributes a [dependency inventory](public/studio-dependencies.json) and [third-party notices](public/studio-notices.txt). See [editor and asset provenance](docs/implementation/STUDIO_LICENSES.md). The owner-supplied [software logo](docs/design/prototype/assets/README.md) is separate brand artwork; its inclusion does not grant a general artwork reuse license or trademark rights.
+
+Newsletter delivery supports an explicit per-brand [AWS SES or Resend choice](docs/implementation/SELECTABLE_DELIVERY.md) in Delivery and through separately scoped API/MCP commands. Selection never activates sending or automatically retries an unknown message through another service.

@@ -1,3 +1,7 @@
+import {externalDelivery,type SendingProvider} from '../shared/customer-delivery.js';
+import {selectedDelivery} from './customer-delivery/selection.js';
+import {customerResendRuntime} from './customer-delivery/resend.js';
+import {CustomerResendFeedback} from './customer-delivery/resend-feedback.js';
 import type {WorkspacePreflight,WorkspaceSetupGap} from '../shared/workspace-preflight.js';
 import {customerPreparation} from './customer-preparation.js';
 import { trialRegistryFromEnvironment } from './customer-abuse/registry.js';
@@ -49,6 +53,8 @@ export class CustomerWorkflows {
   readonly engine?:CustomerEnginePool;
   readonly ses?:ReturnType<typeof customerSesRuntime>;
   readonly feedback?:SesFeedbackRouter;
+  readonly resend?:ReturnType<typeof customerResendRuntime>;
+  readonly resendFeedback?:CustomerResendFeedback;
   observe?: (value:{workspaceId:string;status:CustomerOperationsStatus})=>Promise<void>;
   private running=false;
   private closing=false;
@@ -84,10 +90,13 @@ export class CustomerWorkflows {
       currentOwner:w=>this.currentOwner(w)});
     this.engine=settings.renderer&&settings.delivery!=='off'?new CustomerEnginePool(settings.engineCount):undefined;
     this.ses=customerSesRuntime(config.origin,env);
+    this.resend=customerResendRuntime(config.origin,env);
+    const provider=(w:string,b:string,mode:SendingProvider=settings.delivery==='resend'?'resend':'ses')=>mode==='ses'?this.ses?.provider(w,b):this.resend?.provider(w,b);
     this.delivery=new CustomerDelivery(db,{mode:settings.delivery,scope:settings.deliveryScope,environment:config.environment,origin:config.origin,
       billing:this.billing,eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),isOwner:identity.isOwner,
       render:this.engine?message=>this.engine!.render(message):undefined,optOut:createCustomerOptOut,liveConsent:productionConsentEligible,liveConsentBatch:productionConsentEligibleBatch,
-      provider:this.ses?.provider});
+      provider});
+    if(this.resend)this.resendFeedback=new CustomerResendFeedback(db,this.resend,this.delivery.worker);
     this.infrastructure=new CustomerInfrastructure(db,{mode:settings.infrastructure,environment:config.environment,isOwner:identity.isOwner,
       eligibility:w=>this.billing.eligibility(w),eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),
       provider:settings.infrastructure==='aws'?createAwsInfrastructurePort(env,async request=>db.brand(request.workspaceId,request.brandId,async sql=>{
@@ -101,7 +110,7 @@ export class CustomerWorkflows {
         [request.workspaceId,request.brandId,request.operationKey,settings.provisioningMonthlyLimit])).rows[0]?.allowed)}:{})});
     const inboundBinding=env.FLOCKLETTER_CUSTOMER_SES_FEEDBACK_BINDING;
     const inboundRoute=inboundBinding?parseSesRoute(JSON.parse(inboundBinding)):undefined;
-    if(inboundRoute&&settings.delivery!=='off'&&!this.ses?.entries.some(entry=>entry.route.fingerprint===inboundRoute.fingerprint))
+    if(inboundRoute&&settings.delivery==='ses'&&!this.ses?.entries.some(entry=>entry.route.fingerprint===inboundRoute.fingerprint))
       throw Error('The prepared feedback route must match the configured sending route before activation.');
     if(this.ses||inboundRoute||settings.infrastructure==='aws')this.feedback=new SesFeedbackRouter([]);
     if(inboundRoute)this.registerFeedback(inboundRoute,true);
@@ -195,11 +204,11 @@ export class CustomerWorkflows {
         const confirmed=audienceAllowed?(await sql.query<{count:number}>("SELECT count(*)::int count FROM subscribers WHERE state='confirmed'")).rows[0]!.count:null;
         const profile=await senderProfile(sql,brand.id);
         let liveSender=false,unavailable=false;
-        if(this.settings.delivery==='ses')try{liveSender=await senderEligible(sql,brand.id,this.ses?.provider(actor.workspaceId,brand.id));}catch{unavailable=true;}
+        if(externalDelivery(this.settings.delivery))try{const selected=await selectedDelivery(sql,this.delivery.options,actor.workspaceId,brand.id);liveSender=await senderEligible(sql,brand.id,selected.provider);}catch{unavailable=true;}
         if(confirmed===0)gaps.push({code:'confirmed_audience_required',title:'Confirm subscribers',detail:'Add contacts with permission and complete email confirmation.',brandId:brand.id,action:'audience'});
         if(confirmed===null)gaps.push({code:'audience_review_required',title:'Audience review',detail:'An owner or an explicitly granted audience-summary connection must inspect audience totals.',brandId:brand.id,action:'audience'});
         if(!profile)gaps.push({code:'sender_profile_required',title:'Complete sender identity',detail:'Save this brand’s recognizable sender and required postal footer.',brandId:brand.id,action:'delivery'});
-        if(this.settings.delivery==='ses'&&!liveSender)gaps.push({code:unavailable?'sender_verification_unavailable':'sender_verification_required',title:unavailable?'Refresh sender verification':'Verify this sender',detail:unavailable?'The latest sender/provider check could not complete. Retry before reviewing delivery.':'Complete the legal sender profile, current DNS proof and provider setup.',brandId:brand.id,action:'delivery'});
+        if(externalDelivery(this.settings.delivery)&&!liveSender)gaps.push({code:unavailable?'sender_verification_unavailable':'sender_verification_required',title:unavailable?'Refresh sender verification':'Verify this sender',detail:unavailable?'The latest sender/provider check could not complete. Retry before reviewing delivery.':'Complete the legal sender profile, current DNS proof and provider setup.',brandId:brand.id,action:'delivery'});
         brands.push({id:brand.id,name:brand.name,confirmed,senderProfileConfigured:!!profile,senderVerified:liveSender});
       }
       return {initialized,canPrepare:initialized,canSend:false,reviewRequired:true,observedAt,
@@ -256,7 +265,7 @@ export class CustomerWorkflows {
     let failure:string|null=null;
     const run=async(action:()=>Promise<unknown>)=>{if(this.closing)return;try{await action();}catch{failure='workspace_job_requires_review';}};
     const brands=await this.db.tenant(workspace,async sql=>(await sql.query<{id:string}>('SELECT id FROM brands ORDER BY id LIMIT 5')).rows);
-    for(const brand of brands)if(this.settings.infrastructure==='aws'||(this.settings.delivery==='ses'&&this.ses?.provider(workspace,brand.id)))
+    for(const brand of brands)if(this.settings.infrastructure==='aws'||externalDelivery(this.settings.delivery))
       await run(()=>refreshCustomerSender(this.db,workspace,brand.id));
     await run(()=>this.hydrateInfrastructure(workspace));
     await run(()=>this.infrastructure.tickWorkspace(workspace));
@@ -332,7 +341,7 @@ export class CustomerWorkflows {
       worker:{running:heartbeat.state==='fresh',dedicated:modes.dedicated,localProcessRunning:this.running,heartbeat,
         lastPass:recorded?.last_pass_at?.toISOString()??null,lastFailure:recorded?.last_failure_code??null},
       modes:{billing:modes.billing,delivery:modes.delivery,deliveryScope:modes.deliveryScope,audience:modes.audience,team:modes.team,support:modes.support,retention:modes.retention,infrastructure:modes.infrastructure},
-      preparation:customerPreparation(this.env),gaps,queue,safeguards:{externalDelivery:modes.delivery==='ses'&&modes.deliveryScope==='all',testDelivery:modes.delivery==='ses',realCharges:modes.billing==='stripe_live',hostedErasure:false,openTracking:false,clickTracking:false}};
+      preparation:customerPreparation(this.env),gaps,queue,safeguards:{externalDelivery:externalDelivery(modes.delivery)&&modes.deliveryScope==='all',testDelivery:externalDelivery(modes.delivery),realCharges:modes.billing==='stripe_live',hostedErasure:false,openTracking:false,clickTracking:false}};
   }
   async close(){this.closing=true;const providerClose=Promise.resolve(this.infrastructure.options.provider?.close?.());this.ses?.close();await Promise.all([providerClose,this.engine?.close()]);await Promise.allSettled(this.active.values());}
 }

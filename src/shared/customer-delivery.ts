@@ -11,6 +11,10 @@ export const deliveryFeedbackKinds = ['delivered','hard_bounce','complaint','tem
 export const customerDeliveryCommands = {
   ...customerPreflightCommands,
   ...customerTestSendCommands,
+  'delivery.providers':command('Read this brand’s selected sending service and configured alternatives. Readiness never authorizes a send.','delivery:configure',false,{brandId:id}),
+  'delivery.selectProvider':command('Select a configured sending service for this brand. Invalidates unsubmitted reviews; never reroutes uncertain sends.','delivery:configure',true,{
+    operationKey,brandId:id,provider:z.enum(['ses','resend']),expectedRevision:z.number().int().nonnegative(),
+  }),
   'delivery.sender':command('Read this brand’s legal sender profile and activation checks.','campaign:send',false,{brandId:id}),
   'delivery.saveSender':command('Save this brand’s sender identity and postal footer. Existing reviewed deliveries require a fresh review.','owner',true,{
     operationKey,brandId:id,fromName:z.string().trim().min(1).max(100).regex(/^[^\p{Cc}\p{Cf}]+$/u),
@@ -39,7 +43,10 @@ export const customerDeliveryCommands = {
   }),
 };
 
-export type DeliveryMode = 'off'|'capture'|'ses';
+export type SendingProvider = 'ses'|'resend';
+export type DeliveryMode = 'off'|'capture'|SendingProvider;
+export function externalDelivery(mode:DeliveryMode|string):mode is SendingProvider{return mode==='ses'||mode==='resend';}
+export type DeliveryProviders = {selected:SendingProvider|null;revision:number;mode:DeliveryMode;choices:{provider:SendingProvider;configured:boolean;ready:boolean}[]};
 export type DeliveryScope = 'all'|'tests';
 export type DeliveryRecipientOutcome = {
   id:string;state:typeof deliveryRecipientStates[number];feedback:typeof deliveryFeedbackKinds[number]|null;reason:string|null;attempts:number;

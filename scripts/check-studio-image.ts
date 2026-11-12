@@ -29,7 +29,7 @@ export async function verifyStudioImageUpload(
   const paragraph = page.getByRole('textbox', { name: 'Paragraph text', exact: true });
   await paragraph.fill(story);
   await page.getByText('Add original images', { exact: true }).click();
-  await page.getByLabel('Add JPEG, PNG or WebP images', { exact: true }).setInputFiles([
+  await page.getByLabel('Add JPEG, PNG, GIF, WebP or SVG images', { exact: true }).setInputFiles([
     { name, mimeType: 'image/png', buffer: original },
     { name: invalid, mimeType: 'image/png', buffer: Buffer.from('not an image') },
   ]);

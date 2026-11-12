@@ -1,3 +1,4 @@
+import {externalDelivery} from '../shared/customer-delivery.js';
 import type { DeliveryMode, DeliveryScope } from '../shared/customer-delivery.js';
 
 
@@ -10,7 +11,7 @@ export function DeliveryScopeNotice({ mode, scope }: { mode: DeliveryMode; scope
       </p>
     );
   }
-  if (mode === 'ses') {
+  if (externalDelivery(mode)) {
     return (
       <p role="status" className="notice">
         Only separately approved tests to one confirmed contact can leave the app. Broadcasts and schedules are disabled. Existing sender, consent, and service checks apply, along with the shared five-tests-per-UTC-day limit.

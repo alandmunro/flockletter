@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import {externalDelivery} from '../shared/customer-delivery.js';
 import type { Config } from './config.js';
 import {operatorMfaPolicy} from './platform/auth-policy.js';
 import {customerDeliveryScope,requireMailingActivation} from './customer-delivery/policy.js';
@@ -8,7 +9,7 @@ export function customerSettings(config:Config,env:NodeJS.ProcessEnv=process.env
   const mode=<const T extends readonly [string,...string[]]>(key:string,values:T)=>z.enum(values).parse(env[key]??'off');
   const settings={
     billing:mode('FLOCKLETTER_CUSTOMER_BILLING',['off','exercise','stripe_test','stripe_live']),
-    delivery:mode('FLOCKLETTER_CUSTOMER_DELIVERY',['off','capture','ses']),
+    delivery:mode('FLOCKLETTER_CUSTOMER_DELIVERY',['off','capture','ses','resend']),
     deliveryScope:customerDeliveryScope(env),
     audience:mode('FLOCKLETTER_CUSTOMER_AUDIENCE',['off','exercise','live']),
     team:mode('FLOCKLETTER_CUSTOMER_TEAM',['off','exercise','clerk']),
@@ -22,7 +23,7 @@ export function customerSettings(config:Config,env:NodeJS.ProcessEnv=process.env
   };
   if(config.environment==='production' && Object.values(settings).some(value=>value==='capture'||value==='exercise'))
     throw Error('Captured exercises cannot be enabled in production.');
-  if(settings.delivery==='ses')requireMailingActivation(config.environment,env,settings.deliveryScope);
+  if(externalDelivery(settings.delivery))requireMailingActivation(config.environment,env,settings.deliveryScope);
   if(settings.audience==='live' && env.FLOCKLETTER_CONFIRMATION_ACTIVATION_APPROVED!=='true')
     throw Error('Confirmation delivery requires explicit activation approval.');
   if(settings.team==='clerk' && (!config.clerkSecretKey||!config.clerkPublishableKey))

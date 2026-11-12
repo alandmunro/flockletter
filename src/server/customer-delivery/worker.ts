@@ -1,3 +1,5 @@
+import {selectedDelivery} from './selection.js';
+import {externalDelivery} from '../../shared/customer-delivery.js';
 import {sameTestDay,testRecipient} from './test-send.js';
 import { randomUUID } from 'node:crypto';
 import type { Database,Sql } from '../db.js';
@@ -66,17 +68,18 @@ export class CustomerDeliveryWorker {
     if((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount)return 'workspace_erased';
     if(row.state!=='queued')return row.reason??'cancelled_by_owner';
     if(!deliveryPurposeAllowed(this.options.scope,row.purpose))return 'broadcasts_disabled';
-    if(row.mode!==this.options.mode)return 'delivery_configuration_changed';
+    const selected=await selectedDelivery(sql,this.options,row.workspace_id,row.brand_id);
+    if(row.mode!==selected.mode||(row.provider_revision??0)!==selected.revision)return 'delivery_configuration_changed';
     if(row.purpose==='test') {
       if(!await sameTestDay(sql,row))return 'test_day_expired';
       if(!(await testRecipient(sql,row,undefined,this.options)).matches)return 'test_snapshot_invalid';
     }
     if(!this.options.render)return 'renderer_unavailable';
-    const provider=this.options.provider?.(row.workspace_id,row.brand_id);
+    const provider=selected.provider;
     if(profileFingerprint(row.sender_profile)!==profileFingerprint(await senderProfile(sql,row.brand_id)))return 'delivery_configuration_changed';
-    if(row.mode==='ses'&&!provider)return 'provider_unavailable';
+    if(externalDelivery(row.mode)&&!provider)return 'provider_unavailable';
     if(row.provider_binding.split(':')[0]!==(provider?.fingerprint??'customer-capture-v1'))return 'delivery_configuration_changed';
-    if(row.mode==='ses'&&!await senderEligible(sql,row.brand_id,provider))return 'sender_ineligible';
+    if(externalDelivery(row.mode)&&!await senderEligible(sql,row.brand_id,provider))return 'sender_ineligible';
     if(!await this.options.isOwner(row.creator_id,row.workspace_id))return 'authority_revoked';
     if(row.actor_id.startsWith('connection:')) {
       const allowed=await sql.query(`SELECT id FROM connections WHERE id=$1 AND issuer_id=$2 AND revoked_at IS NULL
@@ -98,7 +101,7 @@ export class CustomerDeliveryWorker {
     const contact=(await sql.query<{email_normalized:string;state:string}>(
       'SELECT email_normalized,state FROM subscribers WHERE id=$1 AND brand_id=$2 FOR UPDATE',[p.subscriber_id,row.brand_id])).rows[0];
     if(!contact||contact.state!=='confirmed'||digest(contact.email_normalized)!==p.email_digest)return null;
-    if(row.mode==='ses'&&!await this.options.liveConsent?.(sql,p.subscriber_id))return null;
+    if(externalDelivery(row.mode)&&!await this.options.liveConsent?.(sql,p.subscriber_id))return null;
     return contact.email_normalized;
   }
   private async stop(sql:Sql,row:DeliveryRow,reason:string) {
@@ -167,11 +170,11 @@ export class CustomerDeliveryWorker {
       if(!['submitting','uncertain'].includes(p.state))return;
       const capture=(await sql.query<{message_digest:string}>('SELECT message_digest FROM customer_delivery_captures WHERE recipient_id=$1',[p.id])).rows[0];
       let outcome:DeliveryOutcome='unknown',messageId:string|undefined;
-      const provider=this.options.provider?.(workspace,row.brand_id);
+      const provider=externalDelivery(row.mode)?this.options.provider?.(workspace,row.brand_id,row.mode):undefined;
       if(work.kind==='reconcile') {
         if(row.mode==='capture')outcome=capture?'accepted':'not_submitted';
         else if(provider&&provider.fingerprint===row.provider_binding.split(':')[0]) {
-          try {const result=await provider.lookup(p.id);outcome=result.outcome;messageId=result.messageId;}catch{/* Keep the original uncertainty. */}
+          try {const result=await provider.lookup(p.id,p.message_id);outcome=result.outcome;messageId=result.messageId;}catch{/* Keep the original uncertainty. */}
         }
       } else {
         const blocked=await this.block(sql,row);
