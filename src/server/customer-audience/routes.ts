@@ -1,3 +1,6 @@
+import { createElement as h } from 'react';
+import { SignupFields } from '../../shared/SignupPostcard.js';
+import { sendPostcard } from './postcard.js';
 import express, { type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import type { CustomerAudience } from './service.js';
@@ -87,18 +90,9 @@ export function customerAudienceRoutes(service: CustomerAudience) {
   router.get('/:form/confirm', async (req, res) => {
     const form = await service.publicForm(String(req.params.form));
     const token = typeof req.query.t === 'string' && req.query.t.length === 80 ? req.query.t : '';
-    res
-      .type('html')
-      .send(
-        page(
-          'Confirm your subscription',
-          '<p>Confirm that you want email from ' +
-            escape(form.brandName ?? 'this brand') +
-            '.</p><form method="post"><input type="hidden" name="token" value="' +
-            escape(token) +
-            '"><button type="submit">Confirm subscription</button></form>',
-        ),
-      );
+    sendPostcard(res, String(req.params.form), form, 'Confirm your subscription', 'You can unsubscribe from any newsletter.',
+      h('form', {method:'post'}, h('p', {}, 'Confirm that you want email from '+form.brandName+'.'),
+        h('input', {type:'hidden', name:'token', value:token}), h('button', {type:'submit'}, 'Confirm subscription')));
   });
   router.get('/:form/unsubscribe', async (req, res) => {
     const token = typeof req.query.t === 'string' && req.query.t.length === 80 ? req.query.t : '';
@@ -125,53 +119,32 @@ export function customerAudienceRoutes(service: CustomerAudience) {
       );
   });
   router.post('/:form/confirm', async (req, res) => {
+    const form = await service.publicForm(String(req.params.form));
     await service.confirm(String(req.params.form), typeof req.body?.token === 'string' ? req.body.token : '');
-    res
-      .type('html')
-      .send(
-        page(
-          'Subscription confirmed',
-          '<p>Your newsletter subscription is confirmed. You can unsubscribe from any newsletter.</p>',
-        ),
-      );
+    sendPostcard(res, String(req.params.form), form, 'Subscription confirmed', 'You can unsubscribe from any newsletter.',
+      h('p', {}, 'Your newsletter subscription is confirmed.'));
+  });
+  router.get('/:form/logo', async (req, res) => {
+    const logo = await service.publicLogo(String(req.params.form));
+    res.type(logo.mime).send(logo.bytes);
   });
   router.get('/:form', async (req, res) => {
     const form = await service.publicForm(String(req.params.form));
-    const label = form.brandName ?? 'this brand';
-    res
-      .type('html')
-      .send(
-        page(
-          'News from ' + label,
-          (form.mode === 'exercise'
-            ? '<p>Staging exercise. Messages are captured for the workspace owner.</p>'
-            : '') +
-            '<form method="post"><label>Email address <input required type="email" autocomplete="email" name="email" maxlength="254"></label>' +
-            '<input type="hidden" name="policyVersion" value="' +
-            escape(form.policyVersion) +
-            '">' +
-            '<label><input required type="checkbox" name="consentAffirmed" value="yes"> ' +
-            escape(form.consentText) +
-            '</label>' +
-            '<button type="submit">Subscribe</button></form><p>' +
-            (form.confirmationMode === 'single_opt_in' ? 'No email confirmation is required. You can unsubscribe from any newsletter.' : 'Email confirmation is required.') + ' Tracking is off.</p>',
-        ),
-      );
+    sendPostcard(res, String(req.params.form), form, form.design.heading || 'News from '+form.brandName,
+      (form.confirmationMode === 'single_opt_in' ? 'No email confirmation is required. You can unsubscribe from any newsletter.' : 'Email confirmation is required.')+' Tracking is off.',
+      [form.mode === 'exercise' && h('p',{key:'mode'},'Staging exercise. Messages are captured for the workspace owner.'),
+       form.design.introduction && h('p',{key:'intro'},form.design.introduction),
+       h(SignupFields,{key:'signup',consent:form.consentText,version:form.policyVersion})]);
   });
   router.post('/:form', async (req, res) => {
+    const form = await service.publicForm(String(req.params.form));
     const receipt = await service.publicSignup(String(req.params.form), {
       email: req.body?.email,
       consentAffirmed: req.body?.consentAffirmed === 'yes',
       policyVersion: req.body?.policyVersion,
     });
-    res
-      .type('html')
-      .send(
-        page(
-          receipt.status === 'request_received' ? 'Request received' : 'Check your email',
-          '<p>' + escape(receipt.message) + '</p>',
-        ),
-      );
+    sendPostcard(res, String(req.params.form), form, receipt.status === 'request_received' ? 'Request received' : 'Check your email',
+      'You can unsubscribe from any newsletter.', h('p', {}, receipt.message));
   });
   return router;
 }

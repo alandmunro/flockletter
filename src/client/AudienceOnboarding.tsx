@@ -1,3 +1,4 @@
+import { SignupDesignStudio } from './SignupDesignStudio.js';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { base64, operationKey, type Api } from './api.js';
 import { AudienceImportResults, type AudienceImportRow } from './AudienceImportResults.js';
@@ -236,6 +237,7 @@ export function AudienceOnboarding({
           {notice}
         </p>
       )}
+      <SignupDesignStudio key={brandId} api={api} view={view}/>
       <PendingContactApproval key={brandId} api={api} brandId={brandId} policyVersion={view.policyVersion} enabled={view.enabled && view.mode !== 'off'} onChanged={() => { setRevision(n => n + 1); onChanged?.(); }}/>
       <details open={!view.enabled}>
         <summary>1. Signup page and consent</summary>

@@ -1,0 +1,21 @@
+.postcard-page { margin:0; background:#fff7f8 }
+.signup-postcard { padding:clamp(12px,4vw,32px) 12px; background:#fff7f8; color:#342b30; font:16px/1.55 Arial,Helvetica,sans-serif; overflow-wrap:anywhere }
+.signup-postcard * { box-sizing:border-box }
+.signup-postcard .postcard-sheet { margin:0 auto; max-width:600px; background:white; border:1px solid #eadbdf; border-radius:8px; overflow:hidden }
+.signup-postcard .postcard-head, .signup-postcard .postcard-body, .signup-postcard .postcard-foot { padding:22px clamp(18px,5vw,34px) }
+.signup-postcard .postcard-head { display:flex; align-items:center; justify-content:space-between; gap:12px; background:#f5e8ea; border-bottom:1px solid #e5d1d7 }
+.signup-postcard .postcard-name { color:#4a0a1e; font:bold 25px/1.15 Georgia,serif }
+.signup-postcard .postcard-kicker { margin-top:7px; text-transform:uppercase; font:bold 11px/1.4 Arial,sans-serif; letter-spacing:2px; color:#69515d }
+.signup-postcard .postcard-mark { width:min(25%,120px); max-height:76px; object-fit:contain }
+.signup-postcard .postcard-body { padding-block:32px }
+.signup-postcard h1 { margin:0 0 18px; color:#4a0a1e; font:normal clamp(30px,6vw,38px)/1.1 Georgia,serif }
+.signup-postcard[data-font="sans"] :is(.postcard-name,h1) { font-family:Arial,Helvetica,sans-serif }
+.signup-postcard form { display:grid; gap:18px }
+.signup-postcard label { display:grid; gap:6px }
+.signup-postcard input[type="email"] { padding:10px; border:1px solid #927985; border-radius:5px; font:inherit; width:100% }
+.signup-postcard label.postcard-consent { display:flex; align-items:baseline; gap:10px }
+.signup-postcard input[type="checkbox"] { flex:none; width:1rem; height:1rem; margin:0 }
+.signup-postcard button { justify-self:start; cursor:pointer; padding:14px 22px; border:0; border-radius:5px; font:bold 16px/20px Arial,sans-serif; background:var(--postcard-accent,#83364f); color:var(--postcard-ink,#fff) }
+.signup-postcard :focus-visible { outline:3px solid #226868; outline-offset:3px }
+.signup-postcard .postcard-foot { border-top:1px solid #eadbdf; color:#69515d; font-size:14px }
+.design-studio .studio-columns { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:24px; margin-block:18px }
