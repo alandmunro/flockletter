@@ -12,14 +12,33 @@ type BillingApi = {
 };
 const date = (value: string | null) => (value ? new Date(value).toLocaleString() : '—');
 
-export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
+export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=false, onPlanChange }: {
+  api: BillingApi;
+  initialPlan?: CustomerPlan;
+  returnedFromStripe?: boolean;
+  onPlanChange?: (plan:CustomerPlan)=>void;
+}) {
   const [status, setStatus] = useState<CustomerBillingStatus>();
-  const [plan, setPlan] = useState<CustomerPlan>('starter');
+  const [chosenPlan, setPlan] = useState<CustomerPlan>(initialPlan??'starter');
+  const initializedPlan = useRef(false);
+  const boundSetup = status?.source==='preparation' && status.trialSetup &&
+    !['expired','denied'].includes(status.trialSetup.state) ? status.trialSetup : undefined;
+  const plan = boundSetup?.plan ?? (!initializedPlan.current&&!initialPlan&&status?.plan ? status.plan : chosenPlan);
+  useEffect(()=>{
+    if(!status)return;
+    if(boundSetup){
+      initializedPlan.current=true;
+      setPlan(boundSetup.plan);
+    }else if(!initializedPlan.current){
+      initializedPlan.current=true;
+      if(!initialPlan&&status.plan)setPlan(status.plan);
+    }
+  },[boundSetup,initialPlan,status]);
   const [cardConfirmed, setCardConfirmed] = useState(false);
   const [days, setDays] = useState('6');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(returnedFromStripe ? 'Welcome back from Stripe. Review your saved billing status and complete any remaining card or trial steps below.' : '');
   const [checkoutExpired, setCheckoutExpired] = useState(false);
   const [trialAccepted, setTrialAccepted] = useState(false);
   const [paidAccepted, setPaidAccepted] = useState(false);
@@ -226,8 +245,12 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
                 Plan
                 <select
                   value={plan}
-                  disabled={busy}
-                  onChange={(event) => setPlan(event.target.value as CustomerPlan)}
+                  disabled={busy || Boolean(boundSetup)}
+                  onChange={(event) => {
+                    const next=event.target.value as CustomerPlan;
+                    setPlan(next);
+                    onPlanChange?.(next);
+                  }}
                 >
                   {plans.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -236,6 +259,7 @@ export function SubscriptionLifecycle({ api }: { api: BillingApi }) {
                   ))}
                 </select>
               </label>
+              {boundSetup && <p className="help">Card setup is in progress for {plans.find(p=>p.id===boundSetup.plan)?.name}. Resume or review this saved setup before choosing another plan.</p>}
               {exercise ? (
                 <>
                   {status.source === 'preparation' ? (

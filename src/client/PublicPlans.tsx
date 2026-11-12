@@ -3,6 +3,7 @@ import {sitePresentation} from '../shared/site-presentation.js';
 import './public-plans.css';
 import { plans } from '../shared/contracts.js';
 import { hostedTrial } from '../shared/trial.js';
+import { subscriptionSignupUrl } from './subscription-navigation.js';
 
 export { OnboardingProgress } from './OnboardingProgress.js';
 
@@ -28,7 +29,8 @@ function formatPrice(priceMinor: number, currency: string): string {
 export function PlanCards({
   catalog = plans,
   headingLevel = 2,
-}: { catalog?: typeof plans; headingLevel?: 2 | 3 } = {}) {
+  signupLinks = false,
+}: { catalog?: typeof plans; headingLevel?: 2 | 3; signupLinks?: boolean } = {}) {
   const group = useId();
   const Heading = headingLevel === 3 ? 'h3' : 'h2';
   return (
@@ -79,6 +81,7 @@ export function PlanCards({
                 <dd>{formatUsers(plan.users)}</dd>
               </div>
             </dl>
+            {signupLinks && <a className="btn secondary" href={subscriptionSignupUrl(plan.id)}>Choose {plan.name}</a>}
           </article>
         );
       })}
@@ -126,7 +129,7 @@ export function PublicPlans({environment}:{environment?:unknown}) {
           </div>
         </div>
       </header>
-      <PlanCards />
+      <PlanCards signupLinks />
       <section className="card public-trial" aria-labelledby="trial-heading">
         <h2 id="trial-heading">{formatCount(hostedTrial.days)}-day hosted trial</h2>
         <p>

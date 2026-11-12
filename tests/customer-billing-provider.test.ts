@@ -461,7 +461,7 @@ it('binds hosted portal sessions to the verified dedicated configuration and rej
   expect(posts()).toHaveLength(1);
   expect(posts()[0]!.body.get('configuration')).toBe('bpc_fixture');
   expect(posts()[0]!.body.get('customer')).toBe('cus_fixture');
-  expect(posts()[0]!.body.get('return_url')).toBe('https://flockletter.example.test/');
+  expect(posts()[0]!.body.get('return_url')).toBe('https://flockletter.example.test/subscription');
   expect(site.calls.find(call => call.url.pathname.endsWith('/bpc_fixture'))!.url.searchParams.get('expand[0]'))
     .toBe('features.subscription_update.products');
   portal = billingPortal();
@@ -487,12 +487,13 @@ it.each(['starter', 'growth', 'pro'] as const)('opens only the selected %s desti
   const posts=()=>site.calls.filter(call=>call.url.pathname==='/v1/billing_portal/sessions');
   expect(posts()[0]!.body.get('configuration')).toBe('bpc_'+plan);
   expect(posts()[0]!.body.get('flow_data[type]')).toBe('subscription_update_confirm');
+  expect(posts()[0]!.body.get('flow_data[after_completion][redirect][return_url]')).toBe('https://flockletter.example.test/subscription');
   expect(posts()[0]!.body.get('flow_data[subscription_update_confirm][subscription]')).toBe('sub_fixture');
   expect(posts()[0]!.body.get('flow_data[subscription_update_confirm][items][0][id]')).toBe('si_fixture');
   expect(posts()[0]!.body.get('flow_data[subscription_update_confirm][items][0][price]')).toBe('price_'+plan);
   expect(posts()[0]!.body.get('flow_data[subscription_update_confirm][items][0][quantity]')).toBe('1');
   expect(posts()[0]!.body.get('customer')).toBe('cus_fixture');
-  expect(posts()[0]!.body.get('return_url')).toBe('https://flockletter.example.test/');
+  expect(posts()[0]!.body.get('return_url')).toBe('https://flockletter.example.test/subscription');
   portal = {...portal,metadata:{fl_application:'flockletter',fl_plan:plan==='starter'?'growth':'starter'}};
   await expect(site.provider.portal('cus_fixture','changed_policy_operation',plan,'sub_fixture')).rejects.toThrow('could not be verified');
   expect(posts()).toHaveLength(1);
