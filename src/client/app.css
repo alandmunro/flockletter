@@ -17,3 +17,9 @@
 .delivery-outcomes { margin-top: 1rem; }
 .delivery-outcome-list { padding-left: 1.25rem; overflow-wrap: anywhere; }
 .delivery-outcome-list > li { padding: .5rem 0; border-bottom: 1px solid var(--border, #e9dce2); }
+
+/* Keep session controls reachable when workspace names or error messages wrap. */
+.header-account{flex-wrap:wrap}
+.logout-control{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.logout-control .btn{white-space:nowrap}
+.logout-error{max-width:260px;margin:0;color:#741c18;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
