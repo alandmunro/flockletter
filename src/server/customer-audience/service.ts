@@ -1,3 +1,4 @@
+import { confirmationContent } from './verification-email.js';
 import type { CustomerConfirmationFeedback } from './feedback.js';
 import {lockWorkspace} from '../workspace-lock.js';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -20,6 +21,16 @@ async function brandIdentity(sql: Sql, brand: string) {
   return { brandName: row.name, design: row.signup_design ?? defaultDesign, designRevision: row.signup_design_revision };
 }
 
+async function emailIdentity(sql:Sql,brand:string) {
+      const { brandName, design } = await brandIdentity(sql,brand);
+      const logo = design.logoId ? (await sql.query<{mime:string;width:number;height:number;bytes:Buffer}>(
+        'SELECT mime,width,height,bytes FROM assets WHERE id=$1 AND brand_id=$2',[design.logoId,brand])).rows[0] : undefined;
+  return {
+          brandName: (design.displayName || brandName).replace(/[\r\n]+/g,' '),
+          identity: {accent:design.accent,font:design.font,logo},
+  };
+}
+
 type Mode = 'exercise' | 'live' | 'off';
 type Policy = { purpose: string; policyVersion: string; consentText: string; sourceDomain: string };
 type Settings = {
@@ -29,6 +40,7 @@ type Settings = {
   consent_text: string;
   source_domain: string;
   form_token: string;
+  signup_slug: string;
   exercise_key: Buffer;
   confirmation_mode: 'double_opt_in' | 'single_opt_in';
 };
@@ -46,6 +58,7 @@ type Confirmation = {
 };
 export type ConfirmationEnvelope = {
   operationKey: string;
+  identity?: { accent:string; font:SignupDesign['font']; logo?:{mime:string;width:number;height:number;bytes:Buffer} };
   routeToken?: string;
   to: string;
   brandName: string;
@@ -107,7 +120,7 @@ function policy(row: Settings): Policy {
 async function settings(sql: Sql) {
   return (
     await sql.query<Settings>(
-      'SELECT enabled,purpose,policy_version,consent_text,source_domain,form_token,exercise_key,confirmation_mode FROM customer_audience_settings',
+      'SELECT enabled,purpose,policy_version,consent_text,source_domain,form_token,public.flockletter_signup_slug(form_token) signup_slug,exercise_key,confirmation_mode FROM customer_audience_settings',
     )
   ).rows[0];
 }
@@ -424,6 +437,7 @@ export class CustomerAudience {
       consentText: row?.consent_text ?? '',
       sourceDomain: row?.source_domain ?? '',
       confirmationMode: row?.confirmation_mode ?? 'double_opt_in',
+      signupUrl: row ? this.options.origin + '/signup/' + row.signup_slug : null,
       publicUrl: row ? this.options.origin + '/newsletter/' + row.form_token : null,
       trackingEnabled: false,
       imports: imports.map(({ created_at, ...item }) => ({ ...item, createdAt: created_at.toISOString() })),
@@ -468,6 +482,7 @@ export class CustomerAudience {
       configured: true,
       confirmationMode: confirmationMode,
       brandId: input.brandId,
+      signupUrl: this.options.origin + '/signup/' + (await settings(sql))!.signup_slug,
       publicUrl: this.options.origin + '/newsletter/' + form,
       mode: this.options.mode,
     };
@@ -667,28 +682,13 @@ export class CustomerAudience {
       'capture_unavailable',
       'This captured confirmation is unavailable.',
     );
-    return {
-      id,
-      to: message.email_normalized,
-      state: message.state,
-      mode: 'exercise',
-      confirmationUrl:
-        this.options.origin +
-        '/newsletter/' +
-        row.form_token +
-        '/confirm?t=' +
-        this.token(row, 'exercise', id),
-      unsubscribeUrl:
-        this.options.origin +
-        '/newsletter/' +
-        row.form_token +
-        '/unsubscribe?t=' +
-        this.token(row, 'exercise', id, 'unsubscribe'),
-      text:
-        'Confirm your subscription to ' +
-        message.policy_snapshot.purpose +
-        '. This is a captured exercise message.',
-    };
+    const prefix=this.options.origin+'/newsletter/'+row.form_token;
+    const confirmUrl=prefix+'/confirm?t='+this.token(row,'exercise',id);
+    const unsubscribeUrl=prefix+'/unsubscribe?t='+this.token(row,'exercise',id,'unsubscribe');
+    const {mail,attachment}=await confirmationContent({...await emailIdentity(sql,brand),confirmUrl,unsubscribeUrl},true);
+    return {id,to:message.email_normalized,state:message.state,mode:'exercise',confirmationUrl:confirmUrl,unsubscribeUrl,
+      subject:mail.subject,text:mail.text,
+      html:mail.html.replace('src="cid:'+attachment.content_id+'"','src="data:'+attachment.content_type+';base64,'+attachment.content+'"')};
   }
   private async confirmInTransaction(
     sql: Sql,
@@ -741,6 +741,12 @@ export class CustomerAudience {
       [id],
     );
     return { confirmed: true, mode: message.mode };
+  }
+  async resolveSignupSlug(slug: string) {
+    if (!/^[A-Za-z0-9]{1,100}(?:-[a-f0-9]{12})?$/i.test(slug) || this.options.mode === 'off') throw invalidLink();
+    const token = (await this.db.pool.query<{token:string|null}>('SELECT public.flockletter_signup_token($1) token',[slug])).rows[0]?.token;
+    if (!token) throw invalidLink();
+    return token;
   }
   async publicForm(form: string) {
     const { workspace, brand } = parseForm(form);
@@ -862,9 +868,6 @@ export class CustomerAudience {
         "UPDATE customer_audience_confirmations SET state=$2,attempts=attempts+$3,next_check_at=now()+interval '1 minute' WHERE id=$1",
         [job.id, submit ? 'submitting' : 'uncertain', Number(submit)],
       );
-      const brandName =
-        (await sql.query<{ name: string }>('SELECT name FROM brands WHERE id=$1', [brand])).rows[0]?.name ??
-        'Newsletter';
       const token = this.token(row, 'live', job.id);
       requireCondition(
         hash(token) === job.token_hash,
@@ -880,7 +883,7 @@ export class CustomerAudience {
           operationKey: job.id,
           routeToken,
           to: job.email_normalized,
-          brandName,
+          ...(submit ? await emailIdentity(sql,brand) : {brandName:'Newsletter'}),
           confirmUrl: this.options.origin + '/newsletter/' + row.form_token + '/confirm?t=' + token,
           unsubscribeUrl:
             this.options.origin +

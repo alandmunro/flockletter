@@ -169,3 +169,9 @@ Since delivery provider and acceptable-use policy remain unresolved in Flocklett
 ## Explicit out-of-scope
 
 Campaign sending and audience export; purchased lists; auto-opt-in from orders; campaign analytics; checkout integrations; FFA contact replication; paid self-service account activation; any production changes. These require separate authorization and acceptance.
+
+### Hosted brand signup and confirmation
+
+Audience onboarding returns `signupUrl` for sharing and retains `publicUrl` for integrations using the original form handle. Migration 035 reserves a case-insensitive address from the sending brand’s registered name, including existing forms. The first reservation gets the unsuffixed name; collisions receive a permanent suffix. Renaming, updating consent or disabling and re-enabling the form does not reassign the address. Deleting its settings during erasure removes the mapping. Staging and production reserve addresses independently.
+
+The confirmation uses the supplied verification postcard with the Design studio display name, heading typeface, accent and inline brand logo (or supplied postage). Signup-page headline and introduction remain signup copy. Owners can inspect the same layout in captured exercises. Only the signed confirmation action establishes consent; opening either email or page does not. Apply migration 035 before deploying the web and worker changes.

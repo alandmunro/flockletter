@@ -69,7 +69,7 @@ it('handles public signup, confirmation, and durable opt-out', async () => {
     owner,
   );
 
-  app.use('/newsletter', customerAudienceRoutes(customer));
+  app.use(['/signup','/newsletter'], customerAudienceRoutes(customer));
   app.use(
     (
       error: Error & { status?: number; code?: string },
@@ -82,11 +82,16 @@ it('handles public signup, confirmation, and durable opt-out', async () => {
   );
 
   const settings = (await customer.execute('audienceOnboarding.status', { brandId: brand }, owner)) as {
-    publicUrl?: string;
+    publicUrl?: string; signupUrl:string;
   };
 
   const form = settings.publicUrl!.split('/newsletter/')[1]!;
-  const formUrl = `${base}/newsletter/${form}`;
+  const formUrl = settings.signupUrl;
+  expect(formUrl).toBe(base+'/signup/Borealis');
+  expect((await fetch(base+'/newsletter/'+form)).status).toBe(200);
+  expect((await fetch(base+'/signup/borealis')).status).toBe(200);
+  expect((await fetch(base+'/signup/NotReserved')).status).toBe(410);
+  await db.tenant(workspace,sql=>sql.query("UPDATE brands SET name='New shop name' WHERE id=$1",[brand]));
 
   const designInput = { brandId:brand, operationKey:randomUUID(), expectedRevision:0,
     design:{ ...defaultDesign, displayName:'Borealis Studio', heading:'Letters from the shop', introduction:'News & <updates>', accent:'#ffcc00' } };
@@ -127,7 +132,10 @@ it('handles public signup, confirmation, and durable opt-out', async () => {
     'audienceOnboarding.confirmation',
     { brandId: brand, id: messageId },
     owner,
-  )) as { confirmationUrl: string; unsubscribeUrl: string };
+  )) as { confirmationUrl: string; unsubscribeUrl: string; html:string; subject:string };
+  expect(captured.subject).toBe("Confirm your Borealis Studio subscription");
+  expect(captured.html).toContain("data:image/png;base64,");
+  expect(captured.html).toContain("#ffcc00");
 
   // Subscriber should be pending
   const subscriberId = await db.brand(
@@ -269,4 +277,33 @@ it('handles public signup, confirmation, and durable opt-out', async () => {
         .rows[0]!.state,
   );
   expect(stateAfterOptOut).toBe('unsubscribed');
+});
+
+it('backfills existing forms and never routes a duplicate brand name to the first workspace', async () => {
+  const admin = new Database(fixture.adminUrl);
+  const core = new CommandService(db);
+  const customer = new CustomerAudience(db,{mode:'exercise',origin:getBaseUrl(),checkOwner:async()=>true});
+  async function reserve() {
+    const actor:Actor={workspaceId:'org_'+randomUUID().replaceAll('-',''),userId:'user_owner',actorId:'user:owner',owner:true,kind:'session',scopes:['read'],brandIds:null};
+    await core.execute('workspace.initialize',{operationKey:randomUUID(),name:'Store',brandName:'Mountain Shop'},actor);
+    const brand=((await core.execute('workspace.get',{},actor)) as {brands:{id:string}[]}).brands[0]!.id;
+    const input={operationKey:randomUUID(),brandId:brand,enabled:true,purpose:'shop_news',policyVersion:'v1',consentText:'Send me news about this shop. I can unsubscribe anytime.',sourceDomain:'mountain.example.test'};
+    const {signupUrl,publicUrl}=await customer.execute('audienceOnboarding.configure',input,actor) as {signupUrl:string;publicUrl:string};
+    return {slug:new URL(signupUrl).pathname.split('/').pop()!,token:new URL(publicUrl).pathname.split('/').pop()!,actor,input};
+  }
+  try {
+    const a=await reserve(),b=await reserve();
+    expect(a.slug).toBe('MountainShop');
+    expect(b.slug).toMatch(/^MountainShop-[a-f0-9]{12}$/);
+    expect(await customer.resolveSignupSlug(b.slug)).toBe(b.token);
+    await customer.execute('audienceOnboarding.configure',{...a.input,operationKey:randomUUID(),enabled:false},a.actor);
+    await expect(customer.publicForm(await customer.resolveSignupSlug(a.slug))).rejects.toMatchObject({status:410});
+    await admin.pool.query('DELETE FROM flockletter_customer_jobs.signup_routes WHERE form_token=$1',[a.token]);
+    const migration=await (await import('node:fs/promises')).readFile('migrations/035_signup_routes.sql','utf8');
+    await admin.pool.query(migration);
+    expect(await customer.resolveSignupSlug(a.slug)).toBe(a.token);
+    await admin.pool.query('DELETE FROM public.customer_audience_settings WHERE workspace_id=$1',[a.actor.workspaceId]);
+    await expect(customer.resolveSignupSlug(a.slug)).rejects.toMatchObject({status:410});
+    expect(await customer.resolveSignupSlug(b.slug)).toBe(b.token);
+  } finally { await admin.close(); }
 });

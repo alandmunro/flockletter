@@ -107,6 +107,11 @@ it('requires distinct credentials and includes the registered route in outbound 
  const a=await setup();let payload:unknown;
  const provider=new CustomerConfirmationProvider('send-only',sender,'https://mail.example.test',async(_url,options)=>{payload=JSON.parse(String(options?.body));return Response.json({id:a.providerId});});
  expect(await provider.submit(a.message())).toMatchObject({state:'accepted',providerId:a.providerId});expect(payload).toMatchObject({tags:[{name:'fl_confirmation',value:a.message().operationKey},{name:'fl_confirmation_route',value:a.message().routeToken}]});
+ expect(payload).toMatchObject({html:expect.stringContaining('cid:verification-postage'),attachments:[{content_id:'verification-postage',content_type:'image/png'}]});
+ const logo={mime:'image/png',width:220,height:100,bytes:Buffer.from('brand logo fixture')};
+ await provider.submit({...a.message(),brandName:'Alpine & Co',identity:{logo,accent:'#123456',font:'sans'}});
+ expect(payload).toMatchObject({subject:'Confirm your Alpine & Co subscription',html:expect.stringContaining('Alpine &amp; Co'),text:expect.stringContaining(a.message().confirmUrl),attachments:[{content_id:'verification-brand',content:logo.bytes.toString('base64')}]});
+ for(const value of ['cid:verification-brand','#123456',a.message().unsubscribeUrl]) expect(payload).toMatchObject({html:expect.stringContaining(value)});
  expect(await provider.submit({...a.message(),routeToken:undefined})).toEqual({state:'rejected'});
 });
 it('does not bind one provider message to a second confirmation even across workspaces',async()=>{

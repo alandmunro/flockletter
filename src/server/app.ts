@@ -86,7 +86,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   });
   subscriberRoutes(app, config, service?.intake, auth);
   marketingUnsubscribeRoutes(app,config,service?.db);
-  if(service?.customer)app.use('/newsletter',customerAudienceRoutes(service.customer.audience));
+  if(service?.customer)app.use(['/signup','/newsletter'],customerAudienceRoutes(service.customer.audience));
   app.post('/api/v1/customer-audience/confirmation-events',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'16kb'}),async(req,res)=>{
     const feedback=service?.customer?.audience.options.feedback;
     if(!feedback)throw new AppError(503,'confirmation_feedback_unavailable','Customer confirmation feedback is not configured.');

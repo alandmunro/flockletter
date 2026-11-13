@@ -1,3 +1,4 @@
+import { CampaignPreview } from './CampaignPreview.js';
 import { SignupDesignStudio } from './SignupDesignStudio.js';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { base64, operationKey, type Api } from './api.js';
@@ -12,6 +13,8 @@ type Capture = {
   to: string;
   state: string;
   text: string;
+  subject?:string;
+  html?:string;
   confirmationUrl: string;
   unsubscribeUrl: string;
 };
@@ -309,7 +312,7 @@ export function AudienceOnboarding({
         </form>
         <p className="help">Saved signup choice: {view.confirmationMode === 'single_opt_in' ? 'subscribe immediately, without email verification' : 'require email confirmation'}. Email open and click tracking is off.</p>
         {view.publicUrl && view.enabled && (
-          <a className="btn secondary" href={view.publicUrl} target="_blank" rel="noreferrer">
+          <a className="btn secondary" href={view.signupUrl ?? view.publicUrl} target="_blank" rel="noreferrer">
             Open signup page
           </a>
         )}
@@ -502,7 +505,7 @@ export function AudienceOnboarding({
           {capture && (
             <section aria-label="Captured confirmation" className="notice">
               <h3>To {capture.to}</h3>
-              <p>{capture.text}</p>
+              {capture.html ? <CampaignPreview html={capture.html} title={capture.subject ?? "Captured confirmation"} /> : <p>{capture.text}</p>}
               <p>Status: {capture.state}</p>
               <div className="actions">
                 <a className="btn secondary" href={capture.confirmationUrl} target="_blank" rel="noreferrer">
