@@ -149,3 +149,7 @@ The owner explicitly requested AWS SES and Resend in the specifications, the abi
 ## D-056 · Complete subscription signup journey (accepted November 12, 2026)
 
 The owner requested completion of subscription signup code. Connect pricing's chosen tier through Clerk authentication and organization setup, app workspace creation, and the existing Subscription workflow. Preserve selection and saved setup recovery across refresh and provider returns. URL hints only navigate; server-owned catalogue facts, current owner authority, explicit exact-price/date trial acceptance, durable intents and verified provider events remain binding. Existing complimentary access, captured staging, trial-abuse controls, legal/tax prerequisites and separate billing/sending activation gates are unchanged. This authorizes implementation and focused verification, not live subscription activation. [Signup runbook](implementation/SUBSCRIPTION_SIGNUP.md)
+
+## D-057 · Subscriber signup design studio (accepted November 12, 2026)
+
+Owners can style each brand’s subscriber signup page in the app. The supplied verification postcard establishes the default visual design for FL-BRD-001. Styling is separate from subscriber consent and account registration.

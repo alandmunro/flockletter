@@ -8,6 +8,7 @@ import { CommandService, type Actor } from '../src/server/service.js';
 import { CustomerAudience, createCustomerOptOut } from '../src/server/customer-audience/service.js';
 import { customerAudienceRoutes } from '../src/server/customer-audience/routes.js';
 import type { Express } from 'express';
+import { defaultDesign } from '../src/shared/signup-design.js';
 import { postNativeForm } from './helpers/native-form.js';
 let fixture: Awaited<ReturnType<typeof startDatabase>>, db: Database, server: Server, app: Express;
 beforeAll(async () => {
@@ -87,11 +88,19 @@ it('handles public signup, confirmation, and durable opt-out', async () => {
   const form = settings.publicUrl!.split('/newsletter/')[1]!;
   const formUrl = `${base}/newsletter/${form}`;
 
+  const designInput = { brandId:brand, operationKey:randomUUID(), expectedRevision:0,
+    design:{ ...defaultDesign, displayName:'Borealis Studio', heading:'Letters from the shop', introduction:'News & <updates>', accent:'#ffcc00' } };
+  await customer.execute('audienceOnboarding.saveDesign',designInput,owner);
+  await expect(customer.execute('audienceOnboarding.saveDesign',{...designInput,operationKey:randomUUID()},owner)).rejects.toMatchObject({code:'design_changed'});
+  await expect(customer.execute('audienceOnboarding.saveDesign',{...designInput,expectedRevision:1,operationKey:randomUUID(),design:{...designInput.design,logoId:randomUUID()}},owner)).rejects.toMatchObject({code:'logo_unavailable'});
   // 1. GET signup form has brand name and checkbox
   const getRes = await fetch(formUrl);
   expect(getRes.status).toBe(200);
   const getHtml = await getRes.text();
-  expect(getHtml).toContain('Borealis');
+  expect(getHtml).toContain('Borealis Studio');
+  expect(getHtml).toContain('Letters from the shop');
+  expect(getHtml).toContain('News &amp; &lt;updates&gt;');
+  expect(getHtml).toContain('--postcard-accent:#ffcc00');
   expect(getHtml).toContain('type="checkbox"');
 
   // 2. POST current consent with URLSearchParams succeeds

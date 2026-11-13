@@ -10,6 +10,16 @@ import { importRows } from '../subscribers/import-preview.js';
 import { plans } from '../../shared/contracts.js';
 import { workspaceAccess } from '../campaign/access.js';
 
+import { defaultDesign, type SignupDesign } from '../../shared/signup-design.js';
+
+async function brandIdentity(sql: Sql, brand: string) {
+  const row = (await sql.query<{name:string; signup_design:SignupDesign|null; signup_design_revision:number}>(
+    'SELECT name, signup_design, signup_design_revision FROM brands WHERE id=$1', [brand],
+  )).rows[0];
+  if (!row) throw invalidLink();
+  return { brandName: row.name, design: row.signup_design ?? defaultDesign, designRevision: row.signup_design_revision };
+}
+
 type Mode = 'exercise' | 'live' | 'off';
 type Policy = { purpose: string; policyVersion: string; consentText: string; sourceDomain: string };
 type Settings = {
@@ -266,9 +276,9 @@ export class CustomerAudience {
       if (definition.mutation || delegable)
         await lockWorkspace(sql,actor.workspaceId);
       await this.authority(sql, actor, input.brandId, requiredScope);
-      const brandName = await assertBrand(sql, actor, input.brandId);
+      await assertBrand(sql, actor, input.brandId);
       if (!definition.mutation) {
-        if (name === 'audienceOnboarding.status') return this.status(sql, input.brandId, brandName);
+        if (name === 'audienceOnboarding.status') return this.status(sql, input.brandId);
         if (name === 'audienceOnboarding.importResult') {
           const saved = (
             await sql.query<{ result: unknown }>(
@@ -282,7 +292,7 @@ export class CustomerAudience {
         return this.captured(sql, actor.workspaceId, input.brandId, String(input.id));
       }
       requireCondition(
-        this.options.mode !== 'off',
+        name === 'audienceOnboarding.saveDesign' || this.options.mode !== 'off',
         503,
         'audience_disabled',
         'Customer audience setup is disabled.',
@@ -305,6 +315,16 @@ export class CustomerAudience {
       }
       let result: unknown;
       if (name === 'audienceOnboarding.configure') result = await this.configure(sql, actor, input);
+      else if (name === 'audienceOnboarding.saveDesign') {
+        const { design, expectedRevision } = customerAudienceCommands['audienceOnboarding.saveDesign'].schema.parse(raw);
+        if (design.logoId) {
+          const logo = await sql.query('SELECT id FROM assets WHERE brand_id=$1 AND id=$2', [input.brandId, design.logoId]);
+          requireCondition(logo.rowCount === 1, 422, 'logo_unavailable', 'Choose a logo from this brand’s image library.');
+        }
+        const saved = await sql.query('UPDATE brands SET signup_design=$2, signup_design_revision=signup_design_revision+1 WHERE id=$1 AND signup_design_revision=$3', [input.brandId, design, expectedRevision]);
+        requireCondition(saved.rowCount === 1, 409, 'design_changed', 'The brand design changed. Reload it before saving.');
+        result = { revision: expectedRevision + 1 };
+      }
       else if (name === 'audienceOnboarding.import') result = await this.importContacts(sql, actor, raw);
       else if (name === 'audienceOnboarding.confirmContacts') result = await this.confirmContacts(sql, actor, raw);
       else if (name === 'audienceOnboarding.exerciseConfirm') {
@@ -380,7 +400,7 @@ export class CustomerAudience {
       return result;
     });
   }
-  private async status(sql: Sql, brandId: string, brandName: string): Promise<AudienceSettingsView> {
+  private async status(sql: Sql, brandId: string): Promise<AudienceSettingsView> {
     const row = await settings(sql);
     const messages = (
       await sql.query<{ id: string; email: string; state: string; mode: string; created_at: Date; transport_kind:'accepted'|'delivered'|'hard_bounce'|'complaint'|'failed'|'delayed'|null; transport_at:Date|null }>(`
@@ -396,7 +416,7 @@ export class CustomerAudience {
     ).rows;
     return {
       brandId,
-      brandName,
+      ...(await brandIdentity(sql, brandId)),
       mode: this.options.mode,
       enabled: row?.enabled ?? false,
       purpose: row?.purpose ?? 'brand_marketing',
@@ -727,9 +747,19 @@ export class CustomerAudience {
     return this.db.brand(workspace, brand, async (sql) => {
       const row = await settings(sql);
       if (!row?.enabled || row.form_token !== form || this.options.mode === 'off') throw invalidLink();
-      const name = (await sql.query<{ name: string }>('SELECT name FROM brands WHERE id=$1', [brand])).rows[0]
-        ?.name;
-      return { brandName: name, ...policy(row), mode: this.options.mode, confirmationMode: row.confirmation_mode };
+      return { ...(await brandIdentity(sql, brand)), ...policy(row), mode: this.options.mode, confirmationMode: row.confirmation_mode };
+    });
+  }
+  async publicLogo(form: string) {
+    const { workspace, brand } = parseForm(form);
+    return this.db.brand(workspace, brand, async sql => {
+      const row = await settings(sql);
+      if (!row?.enabled || row.form_token !== form || this.options.mode === 'off') throw invalidLink();
+      const logo = (await sql.query<{mime:string; bytes:Buffer}>(`
+        SELECT a.mime,a.bytes FROM brands b JOIN assets a ON a.brand_id=b.id
+        AND a.id::text=b.signup_design->>'logoId' WHERE b.id=$1`, [brand])).rows[0];
+      if (!logo) throw invalidLink();
+      return logo;
     });
   }
   async publicSignup(form: string, raw: unknown) {

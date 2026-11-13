@@ -1,3 +1,4 @@
+import { signupDesign, type SignupDesign } from './signup-design.js';
 import { z } from 'zod';
 import { commandDefinition } from './command-definition.js';
 import { importPreviewInput } from './import-preview.js';
@@ -21,6 +22,7 @@ export const audiencePolicyInput = {
   confirmationMode: z.enum(['double_opt_in', 'single_opt_in']).optional(),
 };
 export const customerAudienceCommands = {
+  'audienceOnboarding.saveDesign': commandDefinition('Publish the selected brand’s subscriber page design.', 'owner', true, { brandId, operationKey, expectedRevision: z.number().int().nonnegative(), design: signupDesign }),
   'audienceOnboarding.status': commandDefinition(
     'Read brand signup settings, captured confirmations and verified transport receipts.',
     'owner',
@@ -93,6 +95,8 @@ export const customerAudienceCommands = {
 export type AudienceSettingsView = {
   brandId: string;
   brandName: string;
+  design?: SignupDesign;
+  designRevision?: number;
   mode: 'exercise' | 'live' | 'off';
   enabled: boolean;
   purpose: string;

@@ -4,6 +4,7 @@ import express from 'express';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { customerAudienceRoutes } from '../src/server/customer-audience/routes.js';
 import type { CustomerAudience } from '../src/server/customer-audience/service.js';
+import { defaultDesign } from '../src/shared/signup-design.js';
 const origin = 'https://flockletter.example.com';
 const signup = vi.fn(async () => ({ status: 'pending_confirmation', message: 'Check your email for a confirmation if this address is eligible.' }));
 let server: Server, port: number;
@@ -11,7 +12,7 @@ beforeAll(async () => {
   const app = express();
   app.use(
     '/newsletter',
-    customerAudienceRoutes({ options: { origin }, publicSignup: signup } as unknown as CustomerAudience),
+    customerAudienceRoutes({ options: { origin }, publicSignup: signup, publicForm: async () => ({brandName:"Fixture",design:defaultDesign}) } as unknown as CustomerAudience),
   );
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     const problem = error as { status?: number; code?: string };
