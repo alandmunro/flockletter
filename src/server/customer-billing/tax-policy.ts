@@ -1,5 +1,24 @@
 import {createHash} from 'node:crypto';
 import type Stripe from 'stripe';
+import type {BillingTaxMode} from '../../shared/billing-tax.js';
+
+export function billingTaxMode(value:string|undefined,required=false):BillingTaxMode|undefined {
+ if(value==='off'||value==='stripe-automatic')return value;
+ if(value!==undefined||required)throw Error('An explicit supported Flockletter tax collection mode is required.');
+ return undefined;
+}
+
+/** Verify provider facts, including manual taxes; disabling automatic tax alone is insufficient. */
+export function verifyNoTaxSubscription(subscription:Stripe.Subscription) {
+ const empty=(rates:unknown)=>rates===null||Array.isArray(rates)&&rates.length===0;
+ const invoice=typeof subscription.latest_invoice==='object'?subscription.latest_invoice:null;
+ if(typeof subscription.latest_invoice==='string'||subscription.automatic_tax?.enabled!==false||
+  !(subscription.managed_payments===null||subscription.managed_payments?.enabled===false)||!empty(subscription.default_tax_rates)||
+  subscription.items.data.some(item=>!empty(item.tax_rates))||
+  invoice&&(invoice.automatic_tax?.enabled!==false||!empty(invoice.default_tax_rates)||
+   !(invoice.total_taxes===null||Array.isArray(invoice.total_taxes)&&invoice.total_taxes.every(tax=>tax.amount===0))))
+  throw Error('The subscription tax collection facts could not be verified.');
+}
 
 /** Country is authoritative provider data; a URL or client checkbox cannot replace it. */
 export function usBillingLocation(address:Stripe.Address|null|undefined){

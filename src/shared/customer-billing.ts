@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import {billingTaxModes} from './billing-tax.js';
 import { commandDefinition } from './command-definition.js';
 
 export const customerPlan = z.enum(['starter', 'growth', 'pro']);
@@ -54,6 +55,7 @@ export const customerBillingCommands = {
       accepted: z.literal(true),
       priceMinor: z.number().int().positive(),
       policyVersion: z.string().max(100).optional(),
+      taxMode:z.enum(billingTaxModes).optional(),
     },
   ),
   'customerBilling.portal': commandDefinition(
@@ -66,13 +68,13 @@ export const customerBillingCommands = {
     'Start normal paid checkout only after the exact previous session is verified expired; the trial is not renewed.',
     'owner',
     true,
-    { operationKey: z.uuid(), plan: customerPlan, accepted:z.literal(true).optional(), policyVersion:z.string().max(100).optional() },
+    { operationKey: z.uuid(), plan: customerPlan, accepted:z.literal(true).optional(), policyVersion:z.string().max(100).optional(),taxMode:z.enum(billingTaxModes).optional() },
   ),
   'customerBilling.rejoin': commandDefinition(
     'Rejoin an ended subscription through normal paid checkout after a version-checked provider verification. No new free trial.',
     'owner',
     true,
-    { operationKey: z.uuid(), plan: customerPlan, expectedRevision: z.number().int().positive(), accepted:z.literal(true).optional(), policyVersion:z.string().max(100).optional() },
+    { operationKey: z.uuid(), plan: customerPlan, expectedRevision: z.number().int().positive(), accepted:z.literal(true).optional(), policyVersion:z.string().max(100).optional(),taxMode:z.enum(billingTaxModes).optional() },
   ),
   'customerBilling.startTrial': commandDefinition(
     'Start one captured 14-day trial in the enabled staging exercise. No card is charged.',
@@ -131,6 +133,7 @@ export type CustomerAllowance = {
   users: number | null;
 };
 export type CustomerBillingStatus = {
+  taxMode?: import('./billing-tax.js').BillingTaxMode;
   newSubscriptions?:Record<CustomerPlan,boolean>;
   mode: 'off' | 'exercise' | 'stripe';
   source: 'preparation' | 'exercise' | 'stripe' | 'complimentary';
@@ -167,6 +170,7 @@ export type CustomerBillingStatus = {
   legacyCheckout?: boolean;
 };
 export type TrialReview = {
+  taxMode?: import('./billing-tax.js').BillingTaxMode;
   limits?: CustomerAllowance;
   policyVersion?:string;
   locationDigest?:string;

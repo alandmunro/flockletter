@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import { plans } from '../../shared/contracts.js';
 import type { CustomerPlan } from '../../shared/customer-billing.js';
+import type {BillingTaxMode} from '../../shared/billing-tax.js';
 
 export const billingProviderEvents = [
   'checkout.session.completed', 'checkout.session.async_payment_succeeded', 'checkout.session.expired',
@@ -12,6 +13,7 @@ export const billingProviderEvents = [
 ] as const;
 
 export type BillingInspectionTarget = {
+  taxMode?:BillingTaxMode;
   taxEnabled?:boolean;
   account: string;
   live: boolean;
@@ -44,7 +46,7 @@ export async function readBillingPrice(stripe: Stripe, target: BillingInspection
       price.metadata.fl_application !== 'flockletter' || price.metadata.fl_plan !== plan.id ||
       typeof product !== 'object' || product.deleted || !product.active || product.livemode !== target.live ||
       product.metadata.fl_application !== 'flockletter'||
-      target.taxEnabled&&(price.tax_behavior!=='exclusive'||ref(product.tax_code??null)!=='txcd_10103001'))
+      (target.taxEnabled||target.taxMode==='off')&&(price.tax_behavior!=='exclusive'||ref(product.tax_code??null)!=='txcd_10103001'))
     throw new Error('The Flockletter billing catalogue could not be verified.');
   return price;
 }

@@ -89,6 +89,7 @@ export function simulatedTrialProvider() {
   };
   function snapshot(i: ProviderTrialActivation): ProviderSubscription {
     return {
+      ...(i.taxMode?{taxMode:i.taxMode}:{}),
       id: 'sub_' + i.id,
       customer: i.customer,
       state: 'trialing',

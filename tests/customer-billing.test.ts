@@ -16,8 +16,10 @@ import {
 import type { CustomerBillingStatus } from '../src/shared/customer-billing.js';
 import type {
   CustomerBillingProvider,
+  ProviderIntent,
   ProviderSubscription,
 } from '../src/server/customer-billing/provider.js';
+import type {BillingTaxMode} from '../src/shared/billing-tax.js';
 import { recordAccess } from '../scripts/complimentary-access.js';
 import { companyDirectory, createCompany, createBrand } from '../src/server/companies.js';
 import { seatLimit } from '../src/server/team.js';
@@ -958,4 +960,28 @@ it('reconciles retained mapped billing facts with new billing disabled without g
   ] as const)
     await expect(receiver.execute(command,input,s.actor)).rejects.toMatchObject({code:'billing_provider_unavailable'});
   expect((await db.read(s.workspaceId,sql=>sql.query('SELECT FROM customer_billing_intents'))).rowCount).toBe(0);
+});
+
+it('binds paid Checkout tax acceptance and holds the saved open agreement across a configuration change',async()=>{
+ const s=await shop();let mode:BillingTaxMode='off',state:'open'|'expired'='open';const posts:ProviderIntent[]=[];
+ const gateway:CustomerBillingProvider={
+  account:'acct_tax_intent',live:false,get taxMode(){return mode;},close(){},
+  async checkout(intent){posts.push(intent);return{id:'cs_tax_'+posts.length,state:'open',url:'https://checkout.stripe.com/tax'};},
+  async lookupCheckout(){return{id:'cs_tax_1',state,url:state==='open'?'https://checkout.stripe.com/tax':null};},
+  async portal(){throw Error('Unexpected portal');},verify(){throw Error('Unexpected event');},
+  async resolve(){return{subscription:null,checkoutId:null,intentId:null,workspace:null};},
+ };
+ const billing=new CustomerBilling(db,{...options,exerciseEnabled:false,gateway});
+ const operationKey=randomUUID(),input={operationKey,plan:'starter',accepted:true,priceMinor:1500,taxMode:'off'};
+ await expect(billing.execute('customerBilling.paidCheckout',{...input,taxMode:'stripe-automatic'},s.actor)).rejects.toMatchObject({code:'tax_policy_changed'});
+ expect((await db.read(s.workspaceId,sql=>sql.query('SELECT FROM customer_billing_intents'))).rowCount).toBe(0);
+ expect(await billing.execute('customerBilling.paidCheckout',input,s.actor)).toMatchObject({state:'checkout_ready'});
+ expect(posts).toHaveLength(1);expect(posts[0]!.taxMode).toBe('off');
+ mode='stripe-automatic';
+ expect(await billing.execute('customerBilling.paidCheckout',{...input,taxMode:mode},s.actor)).toEqual({state:'tax_policy_changed',url:null});
+ expect(posts).toHaveLength(1);
+ expect((await db.read(s.workspaceId,sql=>sql.query("SELECT result->>'taxMode' mode FROM customer_billing_intents"))).rows).toEqual([{mode:'off'}]);
+ state='expired';
+ await billing.execute('customerBilling.restartCheckout',{operationKey:randomUUID(),plan:'starter',taxMode:mode},s.actor);
+ expect(posts).toHaveLength(2);expect(posts[1]!.taxMode).toBe('stripe-automatic');
 });

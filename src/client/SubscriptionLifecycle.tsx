@@ -48,7 +48,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
   const [paidAccepted, setPaidAccepted] = useState(false);
   const review = status?.trialSetup?.review;
   useEffect(() => setTrialAccepted(false), [review?.hash]);
-  useEffect(() => setPaidAccepted(false), [plan]);
+  useEffect(() => setPaidAccepted(false), [plan,status?.taxMode]);
   const keys = useRef(new Map<string, string>());
   const sequence = useRef(0);
   const refresh = useCallback(async () => {
@@ -67,7 +67,8 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
 
   async function run(name: CustomerBillingCommandName, input: Record<string, unknown> = {}) {
     if (busy) return;
-    const signature = JSON.stringify([name, input]);
+    const request=status?.taxMode&&['customerBilling.paidCheckout','customerBilling.restartCheckout','customerBilling.rejoin'].includes(name)?{...input,taxMode:status.taxMode}:input;
+    const signature = JSON.stringify([name, request]);
     const operationKey =
       typeof input.operationKey === 'string'
         ? input.operationKey
@@ -78,7 +79,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
     setNotice('');
     try {
       const result = await api.call<{ url?: string; state?: string }>(name, {
-        ...input,
+        ...request,
         operationKey,
       });
       if (result.url) {
@@ -127,6 +128,8 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
         setNotice(
           'The provider outcome is still being checked. Retry this action to reconcile the same request.',
         );
+      } else if(result.state==='tax_policy_changed') {
+        setNotice('Tax collection terms changed while this checkout was pending. No replacement checkout was created. Contact support to resolve the original checkout before accepting a new agreement.');
       } else {
         keys.current.delete(signature);
         setNotice('Saved. Your current subscription and allowance are shown below.');
@@ -377,7 +380,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
               ) : (
                 status.mode === 'stripe' && (
                   <>
-                    {status.source==='preparation'&&checkoutExpired&&<label><input type="checkbox" checked={paidAccepted} disabled={busy} onChange={e=>setPaidAccepted(e.target.checked)}/>I represent a US business and accept the linked policies and selected monthly price plus applicable tax, with no new free trial.</label>}
+                    {status.source==='preparation'&&checkoutExpired&&<label><input type="checkbox" checked={paidAccepted} disabled={busy} onChange={e=>setPaidAccepted(e.target.checked)}/>I represent a US business and accept the linked policies and selected monthly price{status.taxMode==='off'?', with no tax collected': ' plus applicable tax'}, with no new free trial.</label>}
                     <button
                       className="btn"
                       type="button"
@@ -449,7 +452,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                             <p>
                               {plans.find((p) => p.id === review.plan)?.name}: 14 days from acceptance,
                               then ${(review.priceMinor / 100).toFixed(2)} USD per month. First charge
-                              date: {review.firstChargeAt.slice(0, 10)} (UTC). Applicable tax is additional and is calculated from your billing address. Cancel before that date to
+                              date: {review.firstChargeAt.slice(0, 10)} (UTC). {review.taxMode==='off'?'No tax is collected on this subscription.':'Applicable tax is additional and is calculated from your billing address.'} Cancel before that date to
                               avoid renewal charges. This review expires at {date(review.expiresAt)}.
                             </p>
                             {review.limits && <p>Your trial includes up to {review.limits.contacts.toLocaleString('en-US')} active contacts and {review.limits.emails.toLocaleString('en-US')} recipient emails across {review.limits.campaigns} campaigns. Test emails also use this allowance.</p>}
@@ -535,7 +538,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                               />
                               I choose {plans.find((p) => p.id === plan)?.name} at $
                               {((plans.find((p) => p.id === plan)?.priceMinor ?? 0) / 100).toFixed(2)}{' '}
-                              USD per month plus applicable tax, with no free trial. I represent a US business and accept the linked terms and sending policy.
+                              USD per month{status.taxMode==='off'?', with no tax collected': ' plus applicable tax'}, with no free trial. I represent a US business and accept the linked terms and sending policy.
                             </label>
                             <button
                               className="btn secondary"
@@ -563,7 +566,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                           service ended. This opens normal paid checkout using your existing billing
                           account, with no free trial.
                         </p>
-                        <label><input type="checkbox" checked={paidAccepted} disabled={busy} onChange={e=>setPaidAccepted(e.target.checked)}/>I accept the linked terms and sending policy and the selected recurring monthly price plus applicable tax, with no new free trial.</label>
+                        <label><input type="checkbox" checked={paidAccepted} disabled={busy} onChange={e=>setPaidAccepted(e.target.checked)}/>I accept the linked terms and sending policy and the selected recurring monthly price{status.taxMode==='off'?', with no tax collected': ' plus applicable tax'}, with no new free trial.</label>
                         <button
                           className="btn"
                           type="button"
