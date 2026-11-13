@@ -1,3 +1,4 @@
+import type {ResendRoute} from './resend-route.js';
 import {Webhook} from 'standardwebhooks';
 import {z} from 'zod';
 import type {Database} from '../db.js';
@@ -11,7 +12,7 @@ import {resendReceipt,receiptTag,routeReceipt,type customerResendRuntime} from '
 const eventSchema=z.object({type:z.string().max(80),created_at:z.iso.datetime({offset:true}),data:z.object({email_id:z.uuid(),from:z.string().max(420),to:z.array(z.email()).length(1),bounce:z.object({type:z.string().max(80)}).optional()})});
 /** Signed provider event + independently retrieved receipt + frozen DB intent bind every fact. */
 export class CustomerResendFeedback {
- constructor(private db:Database,private runtime:NonNullable<ReturnType<typeof customerResendRuntime>>,private worker:CustomerDeliveryWorker){}
+ constructor(private db:Database,private runtime:NonNullable<ReturnType<typeof customerResendRuntime>>,private worker:CustomerDeliveryWorker,private resolveRoute?:(fingerprint:string)=>Promise<ResendRoute|null>){}
  async receive(body:Buffer,headers:Record<string,string>) {
   requireCondition(body.length<=16384,413,'delivery_feedback_too_large','Delivery feedback exceeds the intake limit.');
   const eventId=headers['svix-id']??'';
@@ -29,7 +30,8 @@ export class CustomerResendFeedback {
   const receipt=resendReceipt.safeParse(rawReceipt);
   requireCondition(receipt.success,503,'delivery_feedback_pending','The provider receipt is incomplete. Retry this event.');
   const sent=receipt.data,operation=receiptTag(sent.tags,'fl_operation'),fingerprint=receiptTag(sent.tags,'fl_route');
-  const entry=this.runtime.entries.find(e=>e.route.fingerprint===fingerprint);
+  let entry=this.runtime.entries.find(e=>e.route.fingerprint===fingerprint);
+  if(!entry&&/^[a-f0-9]{64}$/.test(fingerprint)&&this.resolveRoute){const route=await this.resolveRoute(fingerprint);if(route){this.runtime.register(route,false);entry=this.runtime.entries.find(e=>e.route.fingerprint===fingerprint);}}
   requireCondition(entry&&sent.id===event.data.email_id&&z.uuid().safeParse(operation).success&&routeReceipt(sent,entry.route)&&
    sent.from===event.data.from&&sent.to[0]===event.data.to[0],409,'delivery_feedback_unmapped','This event does not match a configured customer delivery.');
   const route=entry.route;

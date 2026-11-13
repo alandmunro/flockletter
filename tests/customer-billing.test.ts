@@ -878,3 +878,19 @@ it('refuses overlapping old provider service and requires an unchanged prior rev
   ).toBe(0);
   expect(f.posts()).toBe(2);
 });
+
+it('holds all new live Pro entry points at the canonical layer before Stripe or trial-history mutations',async()=>{
+ const s=await shop(),live=new CustomerBilling(db,{environment:'production',exerciseEnabled:false});
+ expect((await live.status(s.actor.workspaceId)).newSubscriptions).toEqual({starter:true,growth:true,pro:false});
+ for(const command of ['customerBilling.checkout','customerBilling.paidCheckout','customerBilling.restartCheckout','customerBilling.rejoin','customerBilling.portal']){
+  await expect(live.execute(command,{operationKey:randomUUID(),plan:'pro',...(command==='customerBilling.paidCheckout'?{accepted:true,priceMinor:3900}:{}),...(command==='customerBilling.rejoin'?{expectedRevision:1}:{})},s.actor)).rejects.toMatchObject({code:'plan_enrollment_paused'});
+ }
+ expect((await db.read(s.actor.workspaceId,sql=>sql.query('SELECT * FROM customer_billing_intents'))).rowCount).toBe(0);
+});
+it('requires the current terms acceptance for new live paid and rejoin agreements',async()=>{
+ const s=await shop(),live=new CustomerBilling(db,{environment:'production',exerciseEnabled:false});
+ for(const command of ['customerBilling.paidCheckout','customerBilling.restartCheckout','customerBilling.rejoin']){
+  await expect(live.execute(command,{operationKey:randomUUID(),plan:'starter',accepted:true,...(command==='customerBilling.paidCheckout'?{priceMinor:1500}:{}),...(command==='customerBilling.rejoin'?{expectedRevision:1}:{}),policyVersion:'old'},s.actor)).rejects.toMatchObject({code:'policy_review_required'});
+ }
+ expect((await db.read(s.actor.workspaceId,sql=>sql.query('SELECT * FROM customer_billing_intents'))).rowCount).toBe(0);
+});

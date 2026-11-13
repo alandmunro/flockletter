@@ -59,7 +59,7 @@ it('keeps production workflows off without staging scopes, a renderer or binary 
 it('prepares the gated production customer renderer without starting a legacy staging dispatcher or submitting mail', async () => {
   const { config, selected, db, customer } = runtime({
     FLOCKLETTER_PRIVATE_ENGINE: 'embedded',
-    FLOCKLETTER_CUSTOMER_DELIVERY: 'ses', FLOCKLETTER_LIVE_MAILING_APPROVED: 'true',
+    FLOCKLETTER_CUSTOMER_DELIVERY: 'ses', FLOCKLETTER_LIVE_MAILING_APPROVED: 'true',FLOCKLETTER_SENDING_POLICY:'permission-v1',
     FLOCKLETTER_CUSTOMER_SES_ACCESS_KEY_ID: 'synthetic-not-a-key',
     FLOCKLETTER_CUSTOMER_SES_SECRET_ACCESS_KEY: 'synthetic-not-a-secret',
     FLOCKLETTER_CUSTOMER_SES_BINDINGS: JSON.stringify([{
@@ -78,7 +78,7 @@ it('prepares the gated production customer renderer without starting a legacy st
 });
 
 it('still refuses unapproved mail and incomplete SES configuration before renderer readiness', () => {
-  const mailing = { FLOCKLETTER_PRIVATE_ENGINE: 'embedded', FLOCKLETTER_CUSTOMER_DELIVERY: 'ses' };
+  const mailing = { FLOCKLETTER_PRIVATE_ENGINE: 'embedded', FLOCKLETTER_CUSTOMER_DELIVERY: 'ses',FLOCKLETTER_SENDING_POLICY:'permission-v1' };
   expect(() => runtime(mailing)).toThrow('explicit activation approval');
   expect(() => runtime({ ...mailing, FLOCKLETTER_LIVE_MAILING_APPROVED: 'true' })).toThrow('bindings and credentials');
   expect(access).not.toHaveBeenCalled();

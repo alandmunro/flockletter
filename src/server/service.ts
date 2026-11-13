@@ -45,7 +45,7 @@ const connectionView = (row: ConnectionRow): Connection => ({ id: row.id, name: 
 
 export function authorize(actor: Actor, name: CommandName) {
   const scope = commands[name].scope;
-  if((scope==='campaign:send'||scope==='delivery:configure')&&actor.kind==='connection')requireCondition(actor.scopes.includes('read'),403,'scope_required','Delivery also requires draft read access.');
+  if((scope==='campaign:send'||scope==='delivery:configure'||scope==='sender:configure')&&actor.kind==='connection')requireCondition(actor.scopes.includes('read'),403,'scope_required','Delivery also requires draft read access.');
   if(scope==='campaign:rehearse' && actor.kind==='connection') requireCondition(actor.scopes.includes('read'),403,'scope_required','Rehearsals also require draft read access.');
   if (scope === 'owner') requireCondition(actor.kind === 'session' && actor.owner, 403, 'owner_required', 'Use a current workspace owner session for this action.');
   else {

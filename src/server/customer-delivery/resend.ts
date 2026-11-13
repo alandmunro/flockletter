@@ -75,7 +75,7 @@ export function customerResendRuntime(origin:string,env:NodeJS.ProcessEnv,send:t
  }
  const read=async(path:string)=>{const response=await send('https://api.resend.com/'+path,{redirect:'error',signal:AbortSignal.timeout(8000),headers:{authorization:'Bearer '+retrieveKey}});
   if(!response.ok){await response.body?.cancel();throw Error('Provider inspection unavailable.');}return boundedJson(response,65536);};
- const entries=routes.map(route=>{
+ const makeEntry=(route:ResendRoute)=>{
   let cached:{until:number;value:Promise<boolean>}|undefined;
   const inspect=async()=>{
    try{const [domain,hook]=await Promise.all([read('domains/'+route.domainId),read('webhooks/'+route.webhookId)]);
@@ -87,6 +87,17 @@ export function customerResendRuntime(origin:string,env:NodeJS.ProcessEnv,send:t
   };
   const ready=()=>{if(mode!=='ses'&&mode!=='resend')return Promise.resolve(false);if(!cached||Date.now()>=cached.until)cached={until:Date.now()+60000,value:inspect()};return cached.value;};
   return {route,provider:new CustomerResendProvider(route,origin,key,ready,scope,send,retrieveKey)};
- });
- return {entries,webhookSecret,retrieveKey,send,provider:(workspace:string,brand:string)=>entries.find(e=>e.route.workspaceId===workspace&&e.route.brandId===brand)?.provider};
+ };
+ const entries=routes.map(makeEntry);
+ const active=new Map(routes.map(route=>[route.workspaceId+'/'+route.brandId,route.fingerprint]));
+ const register=(route:ResendRoute,activate=true)=>{
+  const parsed=parseResendRoute({workspaceId:route.workspaceId,brandId:route.brandId,from:route.from,domainId:route.domainId,webhookId:route.webhookId,region:route.region});
+  if(parsed.fingerprint!==route.fingerprint)throw Error('Invalid stored Resend route.');
+  if(!entries.some(e=>e.route.fingerprint===parsed.fingerprint)){
+   if(entries.length>=2000||entries.some(e=>e.route.workspaceId!==parsed.workspaceId&&(e.route.domainId===parsed.domainId||e.route.from.split('@')[1]===parsed.from.split('@')[1])))throw Error('Resend route capacity or workspace conflict.');
+   entries.push(makeEntry(parsed));
+  }
+  if(activate)active.set(parsed.workspaceId+'/'+parsed.brandId,parsed.fingerprint);
+ };
+ return {entries,register,webhookSecret,retrieveKey,send,provider:(workspace:string,brand:string)=>entries.find(e=>e.route.fingerprint===active.get(workspace+'/'+brand))?.provider};
 }

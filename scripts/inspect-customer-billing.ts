@@ -9,7 +9,7 @@ export async function inspectCustomerBillingEnvironment(env:NodeJS.ProcessEnv,
   const environment=env.APP_ENV??'local',live=environment==='production';
   const failure=(name:'configuration'|'inspection',status:'fail'|'unavailable')=>({verified:false,live,checks:[{name,status}]});
   const mode=env.FLOCKLETTER_CUSTOMER_BILLING??'off',key=env.FLOCKLETTER_CUSTOMER_STRIPE_KEY??'';
-  const target:BillingInspectionTarget={account:env.FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT??'',live,origin:env.APP_ORIGIN??'',
+  const target:BillingInspectionTarget={taxEnabled:env.FLOCKLETTER_BILLING_TAX==='stripe-automatic',account:env.FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT??'',live,origin:env.APP_ORIGIN??'',
     cardConfiguration:env.FLOCKLETTER_CUSTOMER_STRIPE_CARD_CONFIG??'',portalConfiguration:env.FLOCKLETTER_CUSTOMER_STRIPE_PORTAL_CONFIG??'',
     planPortalConfigurations:{starter:env.FLOCKLETTER_CUSTOMER_STARTER_PORTAL_CONFIG??'',growth:env.FLOCKLETTER_CUSTOMER_GROWTH_PORTAL_CONFIG??'',pro:env.FLOCKLETTER_CUSTOMER_PRO_PORTAL_CONFIG??''},
     prices:{starter:env.FLOCKLETTER_CUSTOMER_STARTER_PRICE??'',growth:env.FLOCKLETTER_CUSTOMER_GROWTH_PRICE??'',pro:env.FLOCKLETTER_CUSTOMER_PRO_PRICE??''}};

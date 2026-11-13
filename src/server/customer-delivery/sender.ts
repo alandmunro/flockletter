@@ -33,6 +33,6 @@ export async function refreshCustomerSender(db:Database,workspace:string,brand:s
 const escape=(value:string)=>value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 export function legalFooter(html:string,text:string,profile:CustomerSenderProfile|null) {
   const legacy='<p style="font-size:12px;color:#69515d">Preview only. Verified sender details and unsubscribe controls are required before delivery.</p>';
-  const footer=profile?'<p style="font-size:12px;color:#69515d">'+escape(profile.organization)+' · '+escape(profile.postalAddress)+'</p>':'';
-  return {html:html.replace(legacy,'').replace(/<\/body>/i,footer+'</body>'),text:text+(profile?'\n\n'+profile.organization+' · '+profile.postalAddress:'')};
+  const footer=profile?'<p style="font-size:12px;color:#69515d">'+escape(profile.organization)+' · '+escape(profile.postalAddress)+'</p><p style="font-size:12px;color:#69515d">You are receiving this because you opted in to updates from '+escape(profile.organization)+'.</p>':'';
+  return {html:html.replace(legacy,'').replace(/<\/body>/i,footer+'</body>'),text:text+(profile?'\n\n'+profile.organization+' · '+profile.postalAddress+'\nYou are receiving this because you opted in to updates from '+profile.organization+'.':'')};
 }

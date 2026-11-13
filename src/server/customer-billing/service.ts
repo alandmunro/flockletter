@@ -1,3 +1,5 @@
+import {hostedPolicies} from '../../shared/hosted-policies.js';
+import {publicSubscriptionOffers,proEnrollmentNotice} from '../../shared/subscription-offers.js';
 import { lockWorkspace } from '../workspace-lock.js';
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
@@ -358,9 +360,8 @@ export class CustomerBilling {
     });
   }
   async status(workspace: string) {
-    return this.db.tenant(workspace, (sql) =>
-      customerEligibility(sql, workspace, this.options, this.clock()),
-    );
+    const status=await this.db.tenant(workspace,sql=>customerEligibility(sql,workspace,this.options,this.clock()));
+    return {...status,newSubscriptions:this.options.environment==='production'?publicSubscriptionOffers:{starter:true,growth:true,pro:true}};
   }
   async eligibility(workspace: string, at = this.clock()) {
     return this.db.tenant(workspace, (sql) => customerEligibility(sql, workspace, this.options, at));
@@ -391,6 +392,8 @@ export class CustomerBilling {
     const command = name as CustomerBillingCommandName;
     const input = customerBillingCommands[command].schema.parse(raw);
     await this.requireOwner(actor);
+    if(this.options.environment==='production'&&'plan' in input&&input.plan&&['customerBilling.checkout','customerBilling.paidCheckout','customerBilling.restartCheckout','customerBilling.rejoin','customerBilling.portal'].includes(command))requireCondition(publicSubscriptionOffers[input.plan],409,'plan_enrollment_paused',proEnrollmentNotice);
+    if(this.options.environment==='production'&&['customerBilling.paidCheckout','customerBilling.restartCheckout','customerBilling.rejoin'].includes(command))requireCondition('policyVersion' in input&&input.policyVersion===hostedPolicies.version&&'accepted' in input&&input.accepted===true,409,'policy_review_required','Accept the current hosted terms, sending policy and recurring price before continuing.');
     if (command === 'customerBilling.status') return this.status(actor.workspaceId);
     if (command === 'customerBilling.trialReview')
       return this.trials().review(actor, customerBillingCommands[command].schema.parse(raw).setupId);
@@ -420,6 +423,7 @@ export class CustomerBilling {
         priceMinor: accepted.priceMinor,
         currency: 'USD',
         acceptedAt: this.clock().toISOString(),
+        policyVersion:hostedPolicies.version,
       });
     }
     if (command === 'customerBilling.checkout') {
@@ -700,14 +704,14 @@ export class CustomerBilling {
       registry: this.options.trialRegistry,
       gateway: this.provider(),
       now: () => this.clock(),
-      requireOwner: (actor, sql) => this.requireOwner(actor, sql),
+      planAvailable:plan=>this.options.environment!=='production'||publicSubscriptionOffers[plan],requireOwner: (actor, sql) => this.requireOwner(actor, sql),
     });
   }
   private async checkout(
     actor: Actor,
     input: { operationKey: string; plan: CustomerPlan },
     restartExpired = false,
-    paidAcceptance?: { priceMinor: number; currency: 'USD'; acceptedAt: string },
+    paidAcceptance?: { priceMinor: number; currency: 'USD'; acceptedAt: string; policyVersion:string },
   ) {
     const gateway = this.provider(),
       workspace = actor.workspaceId;
@@ -848,6 +852,7 @@ export class CustomerBilling {
           JSON.stringify({
             plan: input.plan,
             trialDays: intent.trialDays,
+            ...(intent.trialDays===0?{policyVersion:hostedPolicies.version}:{}),
             ...(paidAcceptance ? { paidAcceptance } : {}),
           }),
         ],
@@ -1044,7 +1049,7 @@ export class CustomerBilling {
           hash,
           gateway.account,
           intent.createdAt,
-          JSON.stringify({ plan: input.plan, trialDays: 0, rejoin: binding }),
+          JSON.stringify({ plan: input.plan, trialDays: 0, rejoin: binding, policyVersion:hostedPolicies.version }),
         ],
       );
       await sql.query(

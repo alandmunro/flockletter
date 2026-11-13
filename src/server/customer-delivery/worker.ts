@@ -33,7 +33,7 @@ export class CustomerDeliveryWorker {
         JOIN customer_deliveries d ON(d.workspace_id,d.brand_id,d.id)=(p.workspace_id,p.brand_id,p.delivery_id)
         WHERE ($1::uuid IS NULL OR d.id=$1) AND
           ((d.purpose='test' AND d.state='paused' AND d.test_day<(clock_timestamp() AT TIME ZONE 'UTC')::date AND p.state IN('pending','preparing','prepared')) OR
-           (p.state IN('pending','prepared') AND d.state='queued' AND d.due_at<=$2) OR
+           (p.state IN('pending','prepared') AND d.state='queued' AND d.due_at<=$2 AND (p.next_check_at IS NULL OR p.next_check_at<=$2)) OR
            (p.state='preparing' AND d.state='queued' AND p.next_check_at<=$2) OR
            (p.state IN('submitting','uncertain') AND (p.next_check_at IS NULL OR p.next_check_at<=$2)))
         ORDER BY coalesce(p.next_check_at,d.due_at),p.id LIMIT 1 FOR UPDATE OF p`,[deliveryId??null,this.now()])).rows[0];
@@ -47,6 +47,14 @@ export class CustomerDeliveryWorker {
           await this.settle(sql,row);return;
         }
         if(kind==='submit')await sql.query("SELECT set_config('app.customer_test_dispatch','v1',true)");
+      }
+      if(kind==='submit'&&this.options.safeguards){
+        const admission=await this.options.safeguards.admit(sql,workspace,found.id);
+        if(!admission.allowed){
+          await sql.query('UPDATE customer_delivery_recipients SET reason=$2,next_check_at=$3 WHERE id=$1',[found.id,admission.reason,admission.retryAt??new Date(this.now().getTime()+60000)]);
+          if(admission.reason==='sending_reputation_hold')await sql.query("UPDATE customer_deliveries SET state='paused',reason='sending_reputation_hold' WHERE id=$1 AND state='queued'",[found.delivery_id]);
+          return;
+        }
       }
       const claim=kind==='render'?randomUUID():null;
       if(kind==='render'&&found.render_attempts>=3) {
@@ -74,6 +82,7 @@ export class CustomerDeliveryWorker {
       if(!await sameTestDay(sql,row))return 'test_day_expired';
       if(!(await testRecipient(sql,row,undefined,this.options)).matches)return 'test_snapshot_invalid';
     }
+    if(this.options.safeguards&&(await this.options.safeguards.status(sql,row.workspace_id)).held)return 'sending_reputation_hold';
     if(!this.options.render)return 'renderer_unavailable';
     const provider=selected.provider;
     if(profileFingerprint(row.sender_profile)!==profileFingerprint(await senderProfile(sql,row.brand_id)))return 'delivery_configuration_changed';
@@ -105,7 +114,7 @@ export class CustomerDeliveryWorker {
     return contact.email_normalized;
   }
   private async stop(sql:Sql,row:DeliveryRow,reason:string) {
-    if(row.state==='paused'||['provider_unavailable','sender_ineligible','renderer_unavailable'].includes(reason)) {
+    if(row.state==='paused'||['provider_unavailable','sender_ineligible','renderer_unavailable','sending_reputation_hold'].includes(reason)) {
       await sql.query("UPDATE customer_deliveries SET state='paused',reason=$2 WHERE id=$1 AND state IN ('queued','paused')",[row.id,reason]);
       await sql.query("UPDATE customer_delivery_recipients SET state='pending',render_claim=NULL,next_check_at=NULL,reason=$2 WHERE delivery_id=$1 AND state='preparing'",[row.id,reason]);
       return;
@@ -179,7 +188,7 @@ export class CustomerDeliveryWorker {
       } else {
         const blocked=await this.block(sql,row);
         if(blocked){
-          const paused=row.state==='paused'||['provider_unavailable','sender_ineligible','renderer_unavailable'].includes(blocked);
+          const paused=row.state==='paused'||['provider_unavailable','sender_ineligible','renderer_unavailable','sending_reputation_hold'].includes(blocked);
           await sql.query("UPDATE customer_delivery_recipients SET state=$2,reason=$3,attempts=attempts-1,next_check_at=NULL WHERE id=$1",[p.id,paused?'prepared':'cancelled',blocked]);
           await this.stop(sql,row,blocked);return;
         }
@@ -198,6 +207,7 @@ export class CustomerDeliveryWorker {
           try{const result=await provider.submit({...original,...payload.envelope});outcome=result.outcome;messageId=result.messageId;}catch{/* The committed intent could already have reached the provider. */}
         }
       }
+      if(outcome==='accepted'&&this.options.safeguards)await this.options.safeguards.outcome(sql,workspace,p.id,'accepted');
       if(outcome==='accepted')await sql.query("UPDATE customer_delivery_recipients SET state='accepted',message_id=coalesce($2,message_id),reason=NULL,next_check_at=NULL WHERE id=$1",[p.id,messageId??null]);
       else if(outcome==='rejected')await sql.query("UPDATE customer_delivery_recipients SET state='rejected',reason='provider_rejected',next_check_at=NULL WHERE id=$1",[p.id]);
       else if(outcome==='not_submitted')await sql.query("UPDATE customer_delivery_recipients SET state=$2,reason='verified_not_submitted',next_check_at=NULL WHERE id=$1",
@@ -220,6 +230,7 @@ export class CustomerDeliveryWorker {
     const prior=(await sql.query<{evidence:string}>('SELECT evidence FROM customer_delivery_events WHERE event_id=$1',[eventId])).rows[0];
     requireCondition(!prior||prior.evidence===evidence,409,'feedback_conflict','This event identity already describes a different outcome.');
     if(prior)return;
+    await this.options.safeguards?.outcome(sql,row.workspace_id,personId,kind);
     await sql.query('INSERT INTO customer_delivery_events(workspace_id,brand_id,delivery_id,recipient_id,event_id,kind,evidence) VALUES($1,$2,$3,$4,$5,$6,$7)',
       [row.workspace_id,row.brand_id,row.id,personId,eventId,kind,evidence]);
     const priority:Record<string,number>={delivered:1,temporary_bounce:2,hard_bounce:3,complaint:4};

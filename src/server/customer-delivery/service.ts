@@ -39,6 +39,7 @@ export class CustomerDelivery {
         return this.preflight(sql,actor,{...row,brandId:row.brand_id,status:'draft',createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString()},input,true);
       });
     }
+    if(name==='delivery.trust')return this.options.safeguards?this.db.read(actor.workspaceId,sql=>this.options.safeguards!.status(sql,actor.workspaceId)):null;
     if(name==='delivery.status')return this.status(actor,customerDeliveryCommands['delivery.status'].schema.parse(raw).brandId);
     const input=parsed as {operationKey?:string;brandId:string;id?:string};
     let processId:string|undefined;
@@ -134,7 +135,9 @@ export class CustomerDelivery {
     const gaps=this.options.mode==='off'?['Configure the delivery mode.']:this.options.mode==='capture'?[]:
       !brandId?['Choose a brand to inspect its current sender and provider readiness.']:
       senderVerified?[]:['Complete or refresh the selected brand’s sender verification and provider setup.'];
-    return {mode,scope:this.options.scope??'all',
+    const trust=this.options.safeguards?await this.db.read(actor.workspaceId,sql=>this.options.safeguards!.status(sql,actor.workspaceId)):null;
+    if(trust?.held)gaps.push(...trust.reasons);
+    return {trust,mode,scope:this.options.scope??'all',
       externalSendingEnabled:externalDelivery(mode)&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
       testSendingEnabled:externalDelivery(mode)&&deliveryPurposeAllowed(this.options.scope,'test'),
       broadcastsEnabled:this.options.mode!=='off'&&deliveryPurposeAllowed(this.options.scope,'broadcast'),

@@ -8,3 +8,8 @@ export function parseResendRoute(raw:unknown):ResendRoute {
  senderDomain.parse(domain);
  return Object.freeze({...route,fingerprint:createHash('sha256').update(JSON.stringify(['customer-resend-v1',route.workspaceId,route.brandId,route.from,route.domainId,route.webhookId,route.region])).digest('hex')});
 }
+
+export function storedResendRoute(raw:unknown):ResendRoute{
+ const {fingerprint,...fields}=binding.extend({fingerprint:z.string().regex(/^[a-f0-9]{64}$/)}).parse(raw);
+ const route=parseResendRoute(fields);if(route.fingerprint!==fingerprint)throw Error('Invalid stored sender route.');return route;
+}

@@ -42,6 +42,8 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
   let verified=false;try{verified=await senderEligible(sql,campaign.brandId,provider);}catch{/* Unknown readiness remains blocked. */}
   if(!verified)add('sender_verification_required','Verify this sender','Refresh domain ownership and the provider’s current sender/readiness checks.','sender');
  }
+ if(options.safeguards){const trust=await options.safeguards.status(sql,actor.workspaceId);
+  for(const [i,code] of trust.codes.entries())if(code==='sending_reputation_hold'||selected.mode==='resend'&&code.startsWith('sending_provider_'))add(code,'Review sending safeguards',trust.reasons[i]??'Sending needs operator review.','delivery');}
  const assets=(await sql.query<{id:string;sha256:string;bytes:Buffer}>('SELECT id,sha256,bytes FROM assets WHERE brand_id=$1 AND id=ANY($2::uuid[])',[campaign.brandId,campaign.content.assetIds])).rows;
  if(campaign.content.assetIds.some(id=>!assets.some(asset=>asset.id===id&&digest(asset.bytes)===asset.sha256)))add('image_unavailable','Review the original images','A selected original image is missing or changed.','content');
  if(input.segmentId)requireCondition((await sql.query('SELECT FROM audience_segments WHERE id=$1',[input.segmentId])).rowCount,404,'group_unavailable','Choose an available group in this brand.');

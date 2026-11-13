@@ -1,3 +1,4 @@
+import {publicSubscriptionOffers,proEnrollmentNotice} from '../shared/subscription-offers.js';
 import { useEffect, useId, useState } from 'react';
 import {sitePresentation} from '../shared/site-presentation.js';
 import './public-plans.css';
@@ -81,7 +82,7 @@ export function PlanCards({
                 <dd>{formatUsers(plan.users)}</dd>
               </div>
             </dl>
-            {signupLinks && <a className="btn secondary" href={subscriptionSignupUrl(plan.id)}>Choose {plan.name}</a>}
+            {signupLinks && (publicSubscriptionOffers[plan.id]?<a className="btn secondary" href={subscriptionSignupUrl(plan.id)}>Choose {plan.name}</a>:<p className="notice">{proEnrollmentNotice}</p>)}
           </article>
         );
       })}
@@ -130,6 +131,7 @@ export function PublicPlans({environment}:{environment?:unknown}) {
         </div>
       </header>
       <PlanCards signupLinks />
+      <p className="notice">New senders begin at 100 recipient emails per UTC day across all brands. Higher daily limits require verified delivery history and an operator review; plan allowances do not bypass this ramp or delivery-service capacity limits.</p>
       <section className="card public-trial" aria-labelledby="trial-heading">
         <h2 id="trial-heading">{formatCount(hostedTrial.days)}-day hosted trial</h2>
         <p>

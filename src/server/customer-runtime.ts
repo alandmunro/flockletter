@@ -1,3 +1,6 @@
+import {ResendSenderSetup,resendSenderSetupPort,capturedSenderSetupPort} from './customer-delivery/sender-setup.js';
+import {storedResendRoute} from './customer-delivery/resend-route.js';
+import {SendingSafeguards} from './customer-delivery/safeguards.js';
 import {externalDelivery,type SendingProvider} from '../shared/customer-delivery.js';
 import {selectedDelivery} from './customer-delivery/selection.js';
 import {customerResendRuntime} from './customer-delivery/resend.js';
@@ -40,7 +43,7 @@ import { CustomerInfrastructure } from './customer-infrastructure/index.js';
 import { createAwsInfrastructurePort } from './customer-infrastructure/aws.js';
 import { parseSesRoute, type SesRoute } from './campaign/ses-runtime.js';
 
-const prefixes=['customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
+const prefixes=['senderSetup.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
 export class CustomerWorkflows {
   readonly settings;
   readonly billing:CustomerBilling;
@@ -50,6 +53,7 @@ export class CustomerWorkflows {
   readonly retention:CustomerRetention;
   readonly delivery:CustomerDelivery;
   readonly infrastructure:CustomerInfrastructure;
+  readonly senderSetup:ResendSenderSetup;
   readonly engine?:CustomerEnginePool;
   readonly ses?:ReturnType<typeof customerSesRuntime>;
   readonly feedback?:SesFeedbackRouter;
@@ -92,11 +96,19 @@ export class CustomerWorkflows {
     this.ses=customerSesRuntime(config.origin,env);
     this.resend=customerResendRuntime(config.origin,env);
     const provider=(w:string,b:string,mode:SendingProvider=settings.delivery==='resend'?'resend':'ses')=>mode==='ses'?this.ses?.provider(w,b):this.resend?.provider(w,b);
-    this.delivery=new CustomerDelivery(db,{mode:settings.delivery,scope:settings.deliveryScope,environment:config.environment,origin:config.origin,
+    const safeguards=env.FLOCKLETTER_SENDING_POLICY==='permission-v1'?new SendingSafeguards(db,env.FLOCKLETTER_CUSTOMER_RESEND_RETRIEVE_KEY,fetch,Number(env.FLOCKLETTER_RESEND_APPROVED_MONTHLY_LIMIT??'50000')):undefined;
+    this.delivery=new CustomerDelivery(db,{safeguards,mode:settings.delivery,scope:settings.deliveryScope,environment:config.environment,origin:config.origin,
       billing:this.billing,eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),isOwner:identity.isOwner,
       render:this.engine?message=>this.engine!.render(message):undefined,optOut:createCustomerOptOut,liveConsent:productionConsentEligible,liveConsentBatch:productionConsentEligibleBatch,
       provider});
-    if(this.resend)this.resendFeedback=new CustomerResendFeedback(db,this.resend,this.delivery.worker);
+    if(this.resend)this.resendFeedback=new CustomerResendFeedback(db,this.resend,this.delivery.worker,async fingerprint=>{const value=(await db.pool.query('SELECT flockletter_customer_jobs.resolve_resend_route($1) route',[fingerprint])).rows[0]?.route;return value?storedResendRoute(value):null;});
+    const selfService=env.FLOCKLETTER_RESEND_SELF_SERVICE==='approved';
+    const capturedSetup=env.FLOCKLETTER_RESEND_SELF_SERVICE==='capture';
+    if(env.FLOCKLETTER_RESEND_SELF_SERVICE!==undefined&&!['off','approved','capture'].includes(env.FLOCKLETTER_RESEND_SELF_SERVICE))throw Error('Unknown sender setup mode.');
+    if(capturedSetup&&config.environment==='production'||selfService&&config.environment!=='production')throw Error('Use captured sender setup only outside production.');
+    const provisioningKey=env.FLOCKLETTER_RESEND_PROVISION_KEY;
+    if(selfService&&(!this.resend||!provisioningKey||[env.FLOCKLETTER_CUSTOMER_RESEND_KEY,env.FLOCKLETTER_CUSTOMER_RESEND_RETRIEVE_KEY].includes(provisioningKey)))throw Error('Self-service sending needs a separate Resend provisioning credential and configured newsletter service.');
+    this.senderSetup=new ResendSenderSetup(db,{enabled:selfService||capturedSetup,captured:capturedSetup,port:capturedSetup?capturedSenderSetupPort():provisioningKey?resendSenderSetupPort(provisioningKey):undefined,webhookId:env.FLOCKLETTER_RESEND_CUSTOMER_WEBHOOK_ID??this.resend?.entries[0]?.route.webhookId??(capturedSetup?'00000000-0000-4000-8000-000000000001':undefined),isOwner:identity.isOwner,eligible:w=>this.billing.eligibility(w),configured:(w,b,from)=>!!from&&this.resend?.provider(w,b)?.from===from,register:route=>this.resend?.register(route)});
     this.infrastructure=new CustomerInfrastructure(db,{mode:settings.infrastructure,environment:config.environment,isOwner:identity.isOwner,
       eligibility:w=>this.billing.eligibility(w),eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),
       provider:settings.infrastructure==='aws'?createAwsInfrastructurePort(env,async request=>db.brand(request.workspaceId,request.brandId,async sql=>{
@@ -143,6 +155,10 @@ export class CustomerWorkflows {
     }));
   }
   private async hydrateInfrastructure(workspace:string) {
+    await this.delivery.options.safeguards?.refreshUsage();
+    if(this.resend){const routes=(await this.db.read(workspace,sql=>sql.query<{route:unknown}>('SELECT flockletter_customer_jobs.resend_routes($1) route',[workspace]))).rows;requireCondition(routes.length<=100,503,'sender_route_capacity','Sender route history needs operator review.');for(const {route} of routes)this.resend.register(storedResendRoute(route),false);
+      const brands=(await this.db.read(workspace,sql=>sql.query<{id:string}>('SELECT id FROM brands ORDER BY id LIMIT 5'))).rows;
+      for(const brand of brands){const current=await this.db.brand(workspace,brand.id,async sql=>{const row=(await sql.query<{from_email:string;sender_revision:number}>("SELECT from_email,sender_revision FROM customer_resend_senders WHERE brand_id=$1 AND state='verified'",[brand.id])).rows[0];const profile=await senderProfile(sql,brand.id);return row&&profile?.fromEmail===row.from_email&&profile.revision===row.sender_revision?row:null;});if(current){const found=routes.map(r=>storedResendRoute(r.route)).filter(r=>r.brandId===brand.id&&r.from===current.from_email).at(-1);if(found)this.resend.register(found);}}}
     if(this.settings.infrastructure!=='aws')return;
     this.ses?.deactivate(workspace);
     for(const route of await this.infrastructure.routeCandidates(workspace)) {
@@ -248,6 +264,7 @@ export class CustomerWorkflows {
     else if(name.startsWith('teamLifecycle.'))result=await this.team.execute(name,raw,actor);
     else if(name.startsWith('support.'))result=await this.support.execute(name,raw,actor);
     else if(name.startsWith('retention.'))result=await this.retention.execute(name,raw,actor);
+    else if(name.startsWith('senderSetup.'))result=await this.senderSetup.execute(name,raw,actor);
     else if(name.startsWith('infrastructure.')){result=await this.infrastructure.execute(name,raw,actor);await this.hydrateInfrastructure(actor.workspaceId);}
     else result=await this.delivery.execute(name,raw,actor);
     if(mutation)await this.wake(actor.workspaceId);
@@ -267,6 +284,7 @@ export class CustomerWorkflows {
     const brands=await this.db.tenant(workspace,async sql=>(await sql.query<{id:string}>('SELECT id FROM brands ORDER BY id LIMIT 5')).rows);
     for(const brand of brands)if(this.settings.infrastructure==='aws'||externalDelivery(this.settings.delivery))
       await run(()=>refreshCustomerSender(this.db,workspace,brand.id));
+    await run(()=>this.senderSetup.tick(workspace));
     await run(()=>this.hydrateInfrastructure(workspace));
     await run(()=>this.infrastructure.tickWorkspace(workspace));
     await run(()=>this.hydrateInfrastructure(workspace));
@@ -309,9 +327,10 @@ export class CustomerWorkflows {
       'SELECT * FROM flockletter_customer_jobs.scope_status($1)',[workspace])).rows[0]);
     const queue=await this.db.tenant(workspace,async sql=>{
       const count=async(text:string)=>(await sql.query<{count:number}>(text)).rows[0]!.count;
-      let confirmations=0,confirmationUnknown=0;
+      let confirmations=0,confirmationUnknown=0,senderQueued=0,senderUnknown=0;
       for(const brand of (await sql.query<{id:string}>('SELECT id FROM brands')).rows) {
         await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[brand.id]);
+        senderQueued+=await count("SELECT count(*)::int count FROM customer_resend_senders WHERE state IN ('queued','creating','configuring','awaiting_dns')");senderUnknown+=await count("SELECT count(*)::int count FROM customer_resend_senders WHERE state='uncertain'");
         confirmationUnknown+=await count("SELECT count(*)::int count FROM customer_audience_confirmations WHERE state='uncertain'");
         confirmations+=await count("SELECT count(*)::int count FROM customer_audience_confirmations WHERE state IN ('queued','submitting','uncertain')");
       }
@@ -321,8 +340,8 @@ export class CustomerWorkflows {
         team:await count("SELECT count(*)::int count FROM customer_team_intents WHERE state IN ('submitting','uncertain')"),
         support:await count("SELECT count(*)::int count FROM customer_support_dispatches WHERE state IN ('queued','submitting')"),
         retention:await count("SELECT count(*)::int count FROM customer_retention_jobs WHERE state IN ('awaiting_operator','authorized')"),
-        infrastructure:await count("SELECT count(*)::int count FROM customer_infrastructure_intents WHERE state IN ('queued','provisioning','awaiting_dns','uncertain')"),
-        unknown:confirmationUnknown+await count("SELECT ((SELECT count(*) FROM customer_delivery_recipients WHERE state='uncertain')+(SELECT count(*) FROM customer_support_dispatches WHERE state='uncertain')+(SELECT count(*) FROM customer_team_intents WHERE state='uncertain')+(SELECT count(*) FROM customer_infrastructure_intents WHERE state='uncertain')+(SELECT count(*) FROM customer_trial_setups WHERE state='activation_pending'))::int count"),
+        infrastructure:senderQueued+await count("SELECT count(*)::int count FROM customer_infrastructure_intents WHERE state IN ('queued','provisioning','awaiting_dns','uncertain')"),
+        unknown:confirmationUnknown+senderUnknown+await count("SELECT ((SELECT count(*) FROM customer_delivery_recipients WHERE state='uncertain')+(SELECT count(*) FROM customer_support_dispatches WHERE state='uncertain')+(SELECT count(*) FROM customer_team_intents WHERE state='uncertain')+(SELECT count(*) FROM customer_infrastructure_intents WHERE state='uncertain')+(SELECT count(*) FROM customer_trial_setups WHERE state='activation_pending'))::int count"),
       };
     });
     const modes=this.settings,gaps:CustomerOperationsStatus['gaps']=[];

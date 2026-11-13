@@ -153,8 +153,8 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
     ).rows;
     expect(privateObjects.map(row=>row.name)).toEqual(expect.arrayContaining(['scopes','worker_instances','provisioning_budget',
       'support_reply_routes','confirmation_routes','trial_namespaces','trial_claims','trial_attempts','authorizations','receipts',
-      'platform_records','operations','approvals','approval_history','restore_quarantines']));
-    expect(privateObjects).toHaveLength(15);
+      'platform_records','operations','approvals','approval_history','restore_quarantines','sending_state','sending_admissions','sending_account','resend_domain_claims','resend_sender_routes']));
+    expect(privateObjects).toHaveLength(20);
     expect(privateObjects.every((row) => row.owner === 'flockletter_staging_migrator')).toBe(true);
     const schedulerFunctions = (
       await control.query(
@@ -163,8 +163,8 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
     ).rows;
     expect(schedulerFunctions.map(row=>row.name)).toEqual(expect.arrayContaining(['wake','due_scopes','snooze','record_pass',
       'scope_status','claim_provisioning_budget','trial_claim','trial_retention_inventory','trial_expire_claims',
-      'register_support_reply_route','resolve_support_reply_route','register_confirmation_route','resolve_confirmation_route','worker_heartbeat','worker_stop','worker_liveness']));
-    expect(schedulerFunctions).toHaveLength(16);
+      'register_support_reply_route','resolve_support_reply_route','register_confirmation_route','resolve_confirmation_route','worker_heartbeat','worker_stop','worker_liveness','sending_usage','sending_status','sending_admit','sending_outcome','claim_resend_domain','bind_resend_domain','owned_resend_domain','register_resend_route','resend_routes','resolve_resend_route']));
+    expect(schedulerFunctions).toHaveLength(26);
     expect(schedulerFunctions.every((row) => row.owner === 'flockletter_staging_migrator')).toBe(true);
     await control.query('ALTER SCHEMA flockletter_customer_jobs OWNER TO flockletter_staging_migrator');
     const alreadyMigratorOwned = prepareSchemas(ownerUrl.href);

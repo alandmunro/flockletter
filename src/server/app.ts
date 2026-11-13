@@ -1,3 +1,4 @@
+import {publicSubscriptionOffers} from '../shared/subscription-offers.js';
 import {externalDelivery} from '../shared/customer-delivery.js';
 import express, { type ErrorRequestHandler } from 'express';
 import helmet from 'helmet';
@@ -61,7 +62,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
       testSendingEnabled:externalDelivery(service?.customer?.settings.delivery??'off') });
   });
   platformRoutes(app,config,platform);
-  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), operatorMfaPolicy:config.operatorMfaPolicy??'required', platformMode:platform?.options.mode??'off', plans,
+  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), operatorMfaPolicy:config.operatorMfaPolicy??'required', platformMode:platform?.options.mode??'off', plans,subscriptionOffers:publicSubscriptionOffers,
     sendingEnabled: externalDelivery(service?.customer?.settings.delivery??'off')&&service?.customer?.settings.deliveryScope==='all',
     testSendingEnabled:externalDelivery(service?.customer?.settings.delivery??'off'),
     customerWorkflows:service?.customer?{billing:service.customer.settings.billing,delivery:service.customer.settings.delivery,deliveryScope:service.customer.settings.deliveryScope,audience:service.customer.settings.audience,team:service.customer.settings.team,support:service.customer.settings.support,retention:service.customer.settings.retention}:null }));

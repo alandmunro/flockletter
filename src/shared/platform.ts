@@ -12,6 +12,8 @@ export const platformCommands={
   'platform.support':define('Run a validated support action within the exact case target.',true,{caseId,command:z.enum(['support.get','support.draft','support.editDraft','support.approve','support.reauthorize','support.process','support.escalate','support.close','support.policyPreview','support.publishPolicy','support.policyHistory']),input:z.record(z.string(),z.unknown())}),
   'platform.retentionPlan':define('Build an exact hosted retention plan from protected evidence.',false,{caseId}),
   'platform.retentionApprove':define('Sign an expiring exact-target plan; never erase through HTTP.',true,{operationKey,caseId,expectedDigest:z.string().regex(/^[a-f0-9]{64}$/)}),
+  'platform.sendingTrust':define('Inspect sending trust within this exact workspace review case.',false,{caseId}),
+  'platform.reviewSendingTrust':define('Record an audited sending-trust review without sending mail, resetting usage or clearing subscriber suppression.',true,{operationKey,caseId,expectedRevision:z.number().int().nonnegative(),phase:z.enum(['limited','established','full']),reason}),
   'platform.abuseHold':define('Set a reversible workspace review hold without resetting trial history.',true,{operationKey,caseId,held:z.boolean(),reason}),
   'platform.alertAck':define('Acknowledge an alert without clearing the underlying risk.',true,{operationKey,alertId:z.uuid(),reason}),
   'platform.inbox':define('Inspect quarantined unassigned inbound support; sender is not authority.',false,{}),

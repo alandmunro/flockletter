@@ -28,7 +28,7 @@ async function setup(){
  const operation=(await db.tenant(f.workspaceId,sql=>sql.query<{id:string}>('SELECT id FROM customer_delivery_recipients WHERE delivery_id=$1',[review.id]))).rows[0]!.id;
  let receipt={id:messageId,from:route.from,to:['confirmed@shop.test'],tags:[{name:'fl_kind',value:'customer'},{name:'fl_operation',value:operation},{name:'fl_workspace',value:f.workspaceId},{name:'fl_brand',value:f.brandId},{name:'fl_route',value:route.fingerprint}]};
  const send=vi.fn<typeof fetch>(async()=>new Response(JSON.stringify(receipt)));
- const feedback=new CustomerResendFeedback(db,{entries:[{route,provider}],retrieveKey:'synthetic-retrieve',webhookSecret:secret,send,provider:()=>provider},f.delivery.worker);
+ const feedback=new CustomerResendFeedback(db,{register:vi.fn(),entries:[{route,provider}],retrieveKey:'synthetic-retrieve',webhookSecret:secret,send,provider:()=>provider},f.delivery.worker);
  const event=(type='email.delivered',bounce?:{type:string})=>({type,created_at:new Date().toISOString(),data:{email_id:messageId,from:route.from,to:['confirmed@shop.test'],...(bounce?{bounce}:{})}});
  const rows=()=>db.brand(f.workspaceId,f.brandId,async sql=>({person:(await sql.query('SELECT state,feedback,message_id FROM customer_delivery_recipients WHERE id=$1',[operation])).rows[0],subscriber:(await sql.query('SELECT state FROM subscribers WHERE id=$1',[f.subscriberId])).rows[0]}));
  return {...f,feedback,send,event,rows,review,receipt,setReceipt:(value:typeof receipt)=>{receipt=value;}};

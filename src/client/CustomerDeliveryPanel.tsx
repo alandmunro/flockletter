@@ -1,3 +1,6 @@
+import {SenderSetupPanel} from './SenderSetupPanel.js';
+import {SendingTrustNotice} from './SendingTrustNotice.js';
+import type {SendingTrustStatus} from '../shared/sending-safeguards.js';
 import {DeliveryProviderPanel} from './DeliveryProviderPanel.js';
 import {externalDelivery} from '../shared/customer-delivery.js';
 import { useCallback,useEffect,useRef,useState } from 'react';
@@ -13,7 +16,7 @@ import {CustomerTestSendPanel} from './CustomerTestSendPanel.js';
 import type { CustomerCampaignPreflight } from '../shared/customer-preflight.js';
 import {DeliveryScopeNotice} from './DeliveryScopeNotice.js';
 
-type Status={mode:DeliveryMode;scope?:DeliveryScope;eligible:boolean;eligibility:CustomerBillingStatus;gaps:string[]};
+type Status={trust?:SendingTrustStatus|null;mode:DeliveryMode;scope?:DeliveryScope;eligible:boolean;eligibility:CustomerBillingStatus;gaps:string[]};
 type Captured={to:string;subject:string;html:string;text:string;images:{sha256:string;mime:string;base64:string}[]};
 const explain=(error:unknown)=>error instanceof Error?error.message:'This action could not finish. Retry with the same inputs.';
 function captureHtml(message:Captured) {
@@ -29,7 +32,7 @@ export function CustomerDeliveryPanel({api,brands,canChooseProvider=false}:{api:
   return <><h1 className="page-heading">Delivery</h1><p className="page-intro">Review your saved message and audience, then approve that exact version.</p>
     <div className="field"><label htmlFor="delivery-brand">Sending brand</label><select id="delivery-brand" value={id} onChange={event=>setId(event.target.value)}>
       {brands.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
-    {brand&&<>{canChooseProvider&&<DeliveryProviderPanel key={'provider-'+brand.id} api={api} brandId={brand.id} onChanged={()=>setProviderRevision(v=>v+1)}/>}<DeliveryBrand key={brand.id+'-'+providerRevision} api={api} brand={brand}/><SenderProfilePanel key={'sender-'+brand.id+'-'+providerRevision} api={api} brandId={brand.id}/></>}
+    {brand&&<>{canChooseProvider&&<DeliveryProviderPanel key={'provider-'+brand.id} api={api} brandId={brand.id} onChanged={()=>setProviderRevision(v=>v+1)}/>}<DeliveryBrand key={brand.id+'-'+providerRevision} api={api} brand={brand}/><SenderProfilePanel key={'sender-'+brand.id+'-'+providerRevision} api={api} brandId={brand.id}/>{canChooseProvider&&<SenderSetupPanel key={'setup-'+brand.id} api={api} brandId={brand.id}/>}</>}
   </>;
 }
 function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
@@ -108,6 +111,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
     {!loaded?<p>Loading delivery settings…</p>:<>
       <p className="badge">{status?.mode==='capture'?'Captured exercise · no external email':externalDelivery(status?.mode??'off')?'Customer provider configured':'Delivery is off'}</p>
       {status&&<DeliveryScopeNotice mode={status.mode} scope={status.scope??'all'}/>}
+      {status?.trust&&<SendingTrustNotice status={status.trust}/>}
       {status?.mode==='capture'&&<p className="help">These messages stay in your staging workspace. Captured outcomes exercise the workflow and cannot prove inbox delivery.</p>}
       {!!status?.gaps.length&&<ul>{status.gaps.map(gap=><li key={gap}>{gap}</li>)}</ul>}
       {!status?.eligible&&<div className="notice"><strong>Service activation needed</strong><ul>{status?.eligibility.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul><p>Open Subscription to review your plan or start a captured trial.</p></div>}
