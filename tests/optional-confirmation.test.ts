@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import pg from "pg";
 import { beforeAll, afterAll, it, expect } from "vitest";
 import { startDatabase } from "../scripts/database-fixture.js";
 import { Database } from "../src/server/db.js";
@@ -525,4 +526,59 @@ it("certifies a first newsletter list of 2,500 with one receipt and one permissi
   ]);
   expect((await a.importContacts("email\nover-cap@import.test", { ...input, operationKey: randomUUID() })).rows[0]?.outcome).toBe("contact_limit");
   expect((await a.status()).messages).toEqual([]);
+});
+
+it("rolls back a later consent batch and retries the whole 2,500-row import under the runtime statement limit", async () => {
+  const count = 2500;
+  const a = await setup("exercise", count);
+  const csv = ["email", ...Array.from({ length: count }, (_, i) => `reader-${i}@example.test`)].join("\n");
+  const input = { operationKey: randomUUID(), confirmWithoutEmail: true, consentPolicyVersion: "v1" };
+  const counts = () => db.brand(a.w, a.brand, async sql => (await sql.query(
+    `SELECT (SELECT count(*)::int FROM subscribers) people,
+            (SELECT count(*)::int FROM subscriber_consent_events WHERE event='signup_requested') signup_events,
+            (SELECT count(DISTINCT subscriber_id)::int FROM subscriber_consent_events WHERE event='confirmed') confirmed_people,
+            (SELECT count(*)::int FROM subscriber_consent_events WHERE event='confirmed') confirmation_events,
+            (SELECT count(*)::int FROM customer_audience_imports) imports,
+            (SELECT count(*)::int FROM operations WHERE operation_key=$1) receipts,
+            (SELECT count(*)::int FROM subscriber_outbox) outbox`, [input.operationKey])).rows[0]);
+  const admin = new pg.Client({ connectionString: fixture.adminUrl });
+  await admin.connect();
+  try {
+    // Test hooks live only in this disposable database. An oversized SQL statement must fail
+    // even on fast developer machines. Sleep only in a later batch to exercise a real 57014.
+    await admin.query(`
+      CREATE SCHEMA import_fixture;
+      CREATE FUNCTION import_fixture.require_small_batch() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF (SELECT count(*) FROM inserted) > 100 THEN RAISE EXCEPTION 'oversized_import_statement'; END IF;
+        RETURN NULL;
+      END $$;
+      CREATE TRIGGER check_contact_batch AFTER INSERT ON subscribers
+        REFERENCING NEW TABLE AS inserted FOR EACH STATEMENT EXECUTE FUNCTION import_fixture.require_small_batch();
+      CREATE TRIGGER check_consent_batch AFTER INSERT ON subscriber_consent_events
+        REFERENCING NEW TABLE AS inserted FOR EACH STATEMENT EXECUTE FUNCTION import_fixture.require_small_batch();
+      CREATE FUNCTION import_fixture.slow_confirmation() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF EXISTS(SELECT FROM inserted WHERE event='confirmed') AND
+           (SELECT count(*) FROM subscriber_consent_events WHERE event='confirmed') > (SELECT count(*) FROM inserted)
+        THEN PERFORM pg_sleep(12); END IF;
+        RETURN NULL;
+      END $$;
+      CREATE TRIGGER slow_second_confirmation AFTER INSERT ON subscriber_consent_events
+        REFERENCING NEW TABLE AS inserted FOR EACH STATEMENT EXECUTE FUNCTION import_fixture.slow_confirmation()`);
+    const timeout = (await db.pool.query("SHOW statement_timeout")).rows[0].statement_timeout;
+    expect(timeout).toBe("10s");
+    await expect(a.importContacts(csv, input)).rejects.toMatchObject({ code: "57014" });
+    expect(await counts()).toEqual({ people: 0, signup_events: 0, confirmed_people: 0, confirmation_events: 0, imports: 0, receipts: 0, outbox: 0 });
+    await admin.query("DROP TRIGGER slow_second_confirmation ON subscriber_consent_events");
+
+    const result = await a.importContacts(csv, input);
+    expect(result.rows).toHaveLength(count);
+    expect(result.rows.every(row => row.outcome === "subscribed_added")).toBe(true);
+    expect(await a.importContacts(csv, input)).toEqual(result);
+    expect(await counts()).toEqual({ people: count, signup_events: count, confirmed_people: count, confirmation_events: count, imports: 1, receipts: 1, outbox: 0 });
+    expect((await a.status()).messages).toEqual([]);
+  } finally {
+    try { await admin.query("DROP SCHEMA IF EXISTS import_fixture CASCADE"); } finally { await admin.end(); }
+  }
 });

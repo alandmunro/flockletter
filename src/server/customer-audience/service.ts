@@ -160,6 +160,13 @@ export async function productionConsentEligibleBatch(sql:Sql,ids:string[]) {
   NOT EXISTS(SELECT FROM subscriber_consent_events e WHERE e.subscriber_id=s.id AND e.event='confirmed' AND e.source IN ('customer-exercise-confirmation','customer-exercise-single-opt-in','customer-exercise-owner-attestation'))
   OR EXISTS(SELECT FROM subscriber_consent_events e WHERE e.subscriber_id=s.id AND e.event='confirmed' AND e.source IN ('customer-live-confirmation','customer-live-single-opt-in','customer-live-owner-attestation')))`,[ids])).rows.map(row=>row.id);
 }
+// Imports share one operation receipt and transaction. Bound each writing statement separately:
+// PostgreSQL runs the retention and foreign-key checks for every row within its statement timeout.
+function* contactWriteBatches(values: string[]) {
+  const rowsPerStatement = 100;
+  for (let start = 0; start < values.length; start += rowsPerStatement)
+    yield values.slice(start, start + rowsPerStatement);
+}
 async function factualEvents(
   sql: Sql,
   workspace: string,
@@ -171,24 +178,14 @@ async function factualEvents(
   evidenceSource = '',
   recordedBy = '',
 ) {
-  if (!subscribers.length) return;
-  await sql.query(
-    `INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain,evidence_source,recorded_by)
-    SELECT $1,$2,gen_random_uuid(),id,$4,$5,$6,$7,$8,$9,$10,$11 FROM unnest($3::uuid[]) ids(id)`,
-    [
-      workspace,
-      brand,
-      subscribers,
-      event,
-      p.purpose,
-      p.policyVersion,
-      hash(p.consentText),
-      source,
-      p.sourceDomain,
-      evidenceSource,
-      recordedBy,
-    ],
-  );
+  const textDigest = hash(p.consentText);
+  for (const batch of contactWriteBatches(subscribers)) {
+    await sql.query(
+      `INSERT INTO subscriber_consent_events(workspace_id,brand_id,id,subscriber_id,event,purpose,policy_version,text_digest,source,source_domain,evidence_source,recorded_by)
+       SELECT $1,$2,gen_random_uuid(),id,$4,$5,$6,$7,$8,$9,$10,$11 FROM unnest($3::uuid[]) ids(id)`,
+      [workspace, brand, batch, event, p.purpose, p.policyVersion, textDigest, source, p.sourceDomain, evidenceSource, recordedBy],
+    );
+  }
 }
 
 export class CustomerAudience {
@@ -496,12 +493,14 @@ export class CustomerAudience {
     }
     const insertedIds = new Set<string>();
     if (additions.length) {
-      const inserted = await sql.query<{id: string}>(`
-        INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
-        SELECT $1,$2,gen_random_uuid(),address,'pending' FROM unnest($3::text[]) addresses(address) ORDER BY address
-        ON CONFLICT(workspace_id,brand_id,email_normalized) DO NOTHING RETURNING id`,
-        [actor.workspaceId, input.brandId, additions]);
-      for (const row of inserted.rows) insertedIds.add(row.id);
+      for (const batch of contactWriteBatches(additions.sort())) {
+        const inserted = await sql.query<{id: string}>(`
+          INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+          SELECT $1,$2,gen_random_uuid(),address,'pending' FROM unnest($3::text[]) addresses(address) ORDER BY address
+          ON CONFLICT(workspace_id,brand_id,email_normalized) DO NOTHING RETURNING id`,
+          [actor.workspaceId, input.brandId, batch]);
+        for (const row of inserted.rows) insertedIds.add(row.id);
+      }
       // First-party intake can win the unique constraint; lock and recheck its actual state.
       for (const person of await readPeople(additions)) people.set(person.email_normalized, person);
     }
@@ -575,7 +574,9 @@ export class CustomerAudience {
       }
     }
     if (toConfirm.length) {
-      await sql.query("UPDATE subscribers SET state='confirmed',confirmed_at=now(),updated_at=now() WHERE id=ANY($1::uuid[]) AND state IN ('pending','confirmed')", [toConfirm]);
+      for (const batch of contactWriteBatches(toConfirm)) {
+        await sql.query("UPDATE subscribers SET state='confirmed',confirmed_at=now(),updated_at=now() WHERE workspace_id=$2 AND brand_id=$3 AND id=ANY($1::uuid[]) AND state IN ('pending','confirmed')", [batch, workspace, brand]);
+      }
       await factualEvents(sql, workspace, brand, toConfirm, 'confirmed', policy(row), 'customer-' + this.options.mode + '-' + method, evidenceSource, recordedBy);
       // An in-flight confirmation must retain its provider outcome and remain available for reconciliation.
       await sql.query("UPDATE customer_audience_confirmations SET state='cancelled',consumed_at=now() WHERE subscriber_id=ANY($1::uuid[]) AND attempts=0 AND state IN ('queued','captured')", [toConfirm]);
