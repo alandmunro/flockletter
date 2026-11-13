@@ -104,6 +104,7 @@ export type AudienceSettingsView = {
   consentText: string;
   sourceDomain: string;
   confirmationMode: 'double_opt_in' | 'single_opt_in';
+  signupUrl?: string | null;
   publicUrl: string | null;
   trackingEnabled: false;
   messages: { id: string; email: string; state: string; mode: string; createdAt: string; transport?: {kind: 'accepted'|'delivered'|'hard_bounce'|'complaint'|'failed'|'delayed'; occurredAt: string}|null }[];
