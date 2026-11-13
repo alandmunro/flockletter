@@ -56,5 +56,6 @@ export function releaseInputPreflight(operation,input,environment){
 
 export function refuseReleaseInput(codes){
  process.stderr.write(JSON.stringify({ok:false,stage:'preflight',codes})+'\n');
- process.exit(1);
+ // Reserved for refusals reached before the first target database connection.
+ process.exit(78);
 }

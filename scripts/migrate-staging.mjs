@@ -8,6 +8,8 @@ import pg from 'pg';
 import { applyMigrations } from './apply-migrations.mjs';
 import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
 import {releaseInputPreflight,refuseReleaseInput} from './release-input.mjs';
+import {migrationEvidenceGaps,readProtectedReleaseFile,releaseSourceFingerprint} from './release-plan.mjs';
+import {checkMigrationIdentity} from './check-migration-identity.mjs';
 
 async function run() {
   const tag = process.argv[2];
@@ -19,13 +21,19 @@ async function run() {
   input.close();
   let data;
   try {
-    if(line.done||Buffer.byteLength(line.value,'utf8')>65536)throw Error('Invalid input.');
+  if(line.done||Buffer.byteLength(line.value,'utf8')>65536)throw Error('Invalid input.');
     const single=process.argv[3]==='--uri-stdin',pair=process.argv[3]==='--pair-stdin';
     if(!single&&!pair)throw Error('Invalid input.');
-    data=single?{migrationUrl:line.value,runtimeUrl:process.env.DATABASE_URL}:JSON.parse(line.value);
+    data=single?{migrationUrl:line.value,runtimeUrl:process.env.DATABASE_URL,compatibility:JSON.parse(await readProtectedReleaseFile(process.argv[4],4096))}:JSON.parse(line.value);
   } catch { refuseReleaseInput(['private_input_invalid']); }
+  const compatibility=data?.compatibility;
+  if(data&&typeof data==='object')delete data.compatibility;
   const gaps=releaseInputPreflight('staging.migrate',data,process.env.APP_ENV);
   if(gaps.length)refuseReleaseInput(gaps);
+  const proof=migrationEvidenceGaps(compatibility,'staging',await releaseSourceFingerprint());
+  if(proof.length)refuseReleaseInput(proof);
+  const identityGaps=await checkMigrationIdentity('staging',compatibility.webRevision);
+  if(identityGaps.length)refuseReleaseInput(identityGaps);
   const migration=new URL(data.migrationUrl),runtime=new URL(data.runtimeUrl);
   const client = new pg.Client({
     connectionString: migration.href,

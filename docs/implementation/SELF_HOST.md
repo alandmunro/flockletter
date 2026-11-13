@@ -4,6 +4,16 @@ Run Flockletter as an independent local preparation workspace with Docker, Docke
 
 The built image serves the [Studio dependency inventory](../../public/studio-dependencies.json) and [copyright notices](../../public/studio-notices.txt) at the corresponding root URLs. Distribute both files with custom web bundles. [Editor provenance](STUDIO_LICENSES.md)
 
+## Upgrade an existing installation
+
+For an upgrade of an existing installation, record the full Git commits for the currently deployed web image, worker image (use the web commit for an embedded worker) and proposed release. From a reviewed checkout containing those Git objects and lockfile dependencies, rehearse before running the Compose migration:
+
+```sh
+node --import tsx scripts/rehearse-schema-compatibility.ts self-host "$WEB_SHA" "$WORKER_SHA" "$CANDIDATE_SHA"
+```
+
+This command starts disposable loopback PostgreSQL and needs no Render, Clerk, provider or installed database credentials. If a serving build fails against the new schema, keep the current installation and use the bridge or maintenance recovery steps. Confirm the installed image revisions and a recoverable backup before migrating. [Compatibility and recovery steps](RELEASE_RUNNER.md#before-migrating-an-existing-installation)
+
 ## Start a clean installation
 
 From the repository root:

@@ -6,6 +6,7 @@ import { startDatabase } from '../scripts/database-fixture.js';
 import tables from '../src/shared/runtime-tables.json' with { type: 'json' };
 import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
 import { hasSupportedProductionConnectionOptions } from '../scripts/production-connection.mjs';
+import { fixtureMigrationEvidence } from './helpers/migration-evidence.js';
 
 let fixture: Awaited<ReturnType<typeof startDatabase>>;
 let releaseInput: {adminUrl:string;expectedHost:string;expectedSource:string;runtimePassword:string;migratorPassword:string;confirmProduction:boolean};
@@ -155,9 +156,10 @@ it('preserves foreign grants and data, then provisions and replays the complete 
   runtimeUrl.password=String(releaseInput.runtimePassword);
   const migratorUrl=new URL(runtimeUrl);
   migratorUrl.username='flockletter_production_migrator';migratorUrl.password=releaseInput.migratorPassword;
+  const compatibility=await fixtureMigrationEvidence('production');
   const migrate=(migrationUrl:string,selectedRuntime=runtimeUrl.href,pair=true)=>spawnSync(process.execPath,
-    ['scripts/migrate-production.mjs','fixture-release',...(pair?['--pair-stdin']:[])],
-    {input:JSON.stringify({migrationUrl,runtimeUrl:selectedRuntime})+'\n',encoding:'utf8',timeout:25000,
+    ['--import','./tests/helpers/migration-readiness.mjs','scripts/migrate-production.mjs','fixture-release',...(pair?['--pair-stdin']:[])],
+    {input:JSON.stringify({migrationUrl,runtimeUrl:selectedRuntime,compatibility})+'\n',encoding:'utf8',timeout:25000,
       env:{...process.env,APP_ENV:'production'}});
   const updated=migrate(migratorUrl.href);
   expect(updated.status,updated.stderr).toBe(0);
