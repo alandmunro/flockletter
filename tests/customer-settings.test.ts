@@ -104,7 +104,7 @@ it('requires exact live-mail approval and production together', () => {
   expect(
     customerSettings(config('production'), {
       FLOCKLETTER_CUSTOMER_DELIVERY: 'ses',
-      FLOCKLETTER_LIVE_MAILING_APPROVED: 'true',
+      FLOCKLETTER_LIVE_MAILING_APPROVED: 'true',FLOCKLETTER_SENDING_POLICY:'permission-v1',
     }).delivery,
   ).toBe('ses');
 });
@@ -152,3 +152,5 @@ it('gates cloud infrastructure independently and defaults its bounded monthly al
   for (const maximum of ['-1', '21', '2.5', 'unlimited'])
     expect(() => customerSettings(config(), { FLOCKLETTER_INFRASTRUCTURE_MONTHLY_LIMIT: maximum })).toThrow();
 });
+
+it('requires the accepted safeguards for general mailing even with the activation flag',()=>{expect(()=>customerSettings(config('production'),{FLOCKLETTER_CUSTOMER_DELIVERY:'resend',FLOCKLETTER_LIVE_MAILING_APPROVED:'true'})).toThrow('permission-v1');});

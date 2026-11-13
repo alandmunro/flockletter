@@ -26,7 +26,7 @@ export function OnboardingProgress({workspace,hasDraft,readiness:observed,loadin
     {label:'First brand',status:names.length?'Complete':'Upcoming',detail:names.join(', ')||'Name your first sending brand.'},
     {label:'First campaign draft',status:hasDraft&&names.length?'Complete':hasDraft===false&&workspace&&names.length?'Ready to start':'Upcoming',detail:hasDraft?'A campaign draft is saved in this workspace.':'Create a draft and preview it before sending.'},
     {label:'Service access',status:serviceLabel,detail:service?.eligible?'Recorded service eligibility is separate from sender and campaign approval.':service?.reasons.join(' ')||'Refresh setup to inspect current service access.'},
-    {label:'Live delivery',status:!readiness?'Not checked':readiness.mode==='capture'?'Captured exercise':readiness.mode==='off'?'Not configured':'Exact review required',detail:'A delivery mode or completed setup never grants permission to send.'},
+    {label:'Live delivery',status:!readiness?'Not checked':readiness.mode==='capture'?'Captured exercise':readiness.mode==='off'?'Not configured':readiness.deliveryScope==='tests'?'Test emails only':'Exact review required',detail:'A delivery mode or completed setup never grants permission to send.'},
   ];
   return <section className="card onboarding-progress" aria-labelledby="onboarding-progress-title" aria-busy={loading||undefined}>
     <h2 id="onboarding-progress-title">Workspace setup</h2>

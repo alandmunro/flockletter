@@ -1,3 +1,6 @@
+import {hostedPolicies} from '../shared/hosted-policies.js';
+import {proEnrollmentNotice} from '../shared/subscription-offers.js';
+import {PolicyLinks} from './HostedPolicies.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { plans } from '../shared/contracts.js';
 import { SubscriptionUsage } from './SubscriptionUsage.js';
@@ -12,8 +15,9 @@ type BillingApi = {
 };
 const date = (value: string | null) => (value ? new Date(value).toLocaleString() : '—');
 
-export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=false, onPlanChange }: {
+export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=false, onPlanChange, onContinueSetup }: {
   api: BillingApi;
+  onContinueSetup?: () => void;
   initialPlan?: CustomerPlan;
   returnedFromStripe?: boolean;
   onPlanChange?: (plan:CustomerPlan)=>void;
@@ -140,7 +144,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
   }
   const exercise = status?.mode === 'exercise' && status.source !== 'complimentary';
   return (
-    <section className="card" aria-labelledby="subscription-heading" aria-busy={busy}>
+    <section className="card" aria-labelledby="subscription-heading" aria-busy={busy}><PolicyLinks/>{status?.newSubscriptions?.[plan]===false&&<p role="status" className="notice">{proEnrollmentNotice}</p>}
       <div className="actions">
         <h2 id="subscription-heading">Subscription and usage</h2>
         <button
@@ -239,6 +243,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
               ? 'Subscription eligibility is satisfied. Sender, audience and campaign checks still apply.'
               : status.reasons.join(' ')}
           </p>
+          {status.eligible && onContinueSetup && <button className="btn" onClick={onContinueSetup}>Continue to sender setup</button>}
           {status.source !== 'complimentary' && (
             <>
               <label>
@@ -253,7 +258,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                   }}
                 >
                   {plans.map((p) => (
-                    <option key={p.id} value={p.id}>
+                    <option key={p.id} value={p.id} disabled={status.newSubscriptions?.[p.id]===false}>
                       {p.name} — ${(p.priceMinor / 100).toFixed(0)}/month
                     </option>
                   ))}
@@ -372,11 +377,13 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
               ) : (
                 status.mode === 'stripe' && (
                   <>
+                    {status.source==='preparation'&&checkoutExpired&&<label><input type="checkbox" checked={paidAccepted} disabled={busy} onChange={e=>setPaidAccepted(e.target.checked)}/>I represent a US business and accept the linked policies and selected monthly price plus applicable tax, with no new free trial.</label>}
                     <button
                       className="btn"
                       type="button"
                       disabled={
                         busy ||
+                        (status.source==='preparation'&&(status.newSubscriptions?.[plan]===false||(checkoutExpired&&!paidAccepted))) ||
                         (status.source === 'preparation' &&
                           ((!status.trialProtectionReady && !status.legacyCheckout) ||
                             ['activation_pending', 'active'].includes(status.trialSetup?.state ?? '')))
@@ -388,7 +395,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                             : checkoutExpired
                               ? 'customerBilling.restartCheckout'
                               : 'customerBilling.checkout',
-                          status.source === 'stripe' ? {} : { plan },
+                          status.source === 'stripe' ? {} : { plan, ...(checkoutExpired?{accepted:true,policyVersion:hostedPolicies.version}:{}) },
                         )
                       }
                     >
@@ -402,7 +409,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                     </button>
                     {status.source === 'stripe' && (
                       <>
-                        <button className="btn secondary" type="button" disabled={busy || plan === status.plan}
+                        <button className="btn secondary" type="button" disabled={busy || plan === status.plan || status.newSubscriptions?.[plan]===false}
                           onClick={() => void run('customerBilling.portal', { plan })}>
                           Review selected plan with Stripe
                         </button>
@@ -442,9 +449,10 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                             <p>
                               {plans.find((p) => p.id === review.plan)?.name}: 14 days from acceptance,
                               then ${(review.priceMinor / 100).toFixed(2)} USD per month. First charge
-                              date: {review.firstChargeAt.slice(0, 10)} (UTC). Cancel before that date to
+                              date: {review.firstChargeAt.slice(0, 10)} (UTC). Applicable tax is additional and is calculated from your billing address. Cancel before that date to
                               avoid renewal charges. This review expires at {date(review.expiresAt)}.
                             </p>
+                            {review.limits && <p>Your trial includes up to {review.limits.contacts.toLocaleString('en-US')} active contacts and {review.limits.emails.toLocaleString('en-US')} recipient emails across {review.limits.campaigns} campaigns. Test emails also use this allowance.</p>}
                             <p>Read how lifetime trial-eligibility history is retained in the <a href="/privacy">privacy notice</a>.</p>
                             <label>
                               <input
@@ -453,13 +461,13 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                                 disabled={busy}
                                 onChange={(event) => setTrialAccepted(event.target.checked)}
                               />
-                              I accept this 14-day trial and the displayed recurring monthly
+                              I represent a US business and accept the linked terms and sending policy, this 14-day trial and the displayed recurring monthly
                               subscription.
                             </label>
                             <button
                               className="btn"
                               type="button"
-                              disabled={busy || !trialAccepted}
+                              disabled={busy || !trialAccepted || status.newSubscriptions?.[review.plan]===false}
                               onClick={() =>
                                 void run('customerBilling.activateTrial', {
                                   setupId: review.setupId,
@@ -527,17 +535,18 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                               />
                               I choose {plans.find((p) => p.id === plan)?.name} at $
                               {((plans.find((p) => p.id === plan)?.priceMinor ?? 0) / 100).toFixed(2)}{' '}
-                              USD per month, with no free trial.
+                              USD per month plus applicable tax, with no free trial. I represent a US business and accept the linked terms and sending policy.
                             </label>
                             <button
                               className="btn secondary"
                               type="button"
-                              disabled={busy || !paidAccepted}
+                              disabled={busy || !paidAccepted || status?.newSubscriptions?.[plan]===false}
                               onClick={() =>
                                 void run('customerBilling.paidCheckout', {
                                   plan,
                                   accepted: true,
                                   priceMinor: plans.find((p) => p.id === plan)!.priceMinor,
+                                  policyVersion:hostedPolicies.version,
                                 })
                               }
                             >
@@ -554,14 +563,16 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                           service ended. This opens normal paid checkout using your existing billing
                           account, with no free trial.
                         </p>
+                        <label><input type="checkbox" checked={paidAccepted} disabled={busy} onChange={e=>setPaidAccepted(e.target.checked)}/>I accept the linked terms and sending policy and the selected recurring monthly price plus applicable tax, with no new free trial.</label>
                         <button
                           className="btn"
                           type="button"
-                          disabled={busy}
+                          disabled={busy || !paidAccepted || status.newSubscriptions?.[plan]===false}
                           onClick={() =>
                             void run('customerBilling.rejoin', {
                               plan,
                               expectedRevision: status.revision,
+                              accepted:true,policyVersion:hostedPolicies.version,
                             })
                           }
                         >

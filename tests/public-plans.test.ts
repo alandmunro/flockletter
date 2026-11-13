@@ -36,15 +36,17 @@ describe('public hosted pricing and staging setup', () => {
     expect(page.match(/<h1\b/g)).toHaveLength(1);
     for (const phrase of [
       /14.day/i,
-      /250 active contacts/i,
-      /500 total recipient emails/i,
+      /2,500 active contacts/i,
+      /2,500 total recipient emails/i,
       /card/i,
       /staging/i,
       /does not charge|no payment|without a charge|no charge/i,
     ])
       expect(page).toMatch(phrase);
+    expect(page).not.toContain('href="/sign-up?plan=pro"');
+    expect(page).toContain('Pro enrollment is paused');
     expect(page).toContain('href="/sign-up"');
-    for(const plan of ['starter','growth','pro'])expect(page).toContain('href="/sign-up?plan='+plan+'"');
+    for(const plan of ['starter','growth'])expect(page).toContain('href="/sign-up?plan='+plan+'"');
     expect(page).toContain('href="/"');
     expect(page).not.toContain('<form');
     expect(page).not.toMatch(/>(?:choose this plan|buy now|start (?:your |a )?(?:14-day )?trial)[^<]*<\/a>/i);

@@ -27,4 +27,14 @@ describe('sitePresentation', () => {
     expect(r.trialNote).toMatch(/not automatic|before accepting/i);
   });
 
+  it('invites customers to a hosted trial when live billing is configured', () => {
+    expect(sitePresentation('production','stripe_live').accountLabel).toBe('Start your 14-day trial');
+  });
+
+  it.each([
+    ['local','stripe_live'], ['staging','stripe_live'], [undefined,undefined],
+    ['production','stripe_test'], ['production','off'],
+  ])('keeps the ordinary account invitation for %p with %p', (environment,mode) => {
+    expect(sitePresentation(environment,mode).accountLabel).not.toContain('trial');
+  });
 });

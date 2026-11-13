@@ -1,3 +1,4 @@
+import {SendingSafeguards} from '../src/server/customer-delivery/safeguards.js';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {beforeAll,afterAll,it,expect} from 'vitest';
@@ -241,4 +242,23 @@ it('filters queued staging notices under the claim lock and reconciles prior sub
  await service.notifications(target);
  expect(submissions).toHaveLength(3);
  await service.close();
+});
+
+it('binds sending-trust reviews to current exact cases, earned history and incident revisions',async()=>{
+ const prior=platform.options.sendingSafeguards;platform.options.sendingSafeguards=new SendingSafeguards(db);
+ try{
+  const supportCase=await open('support');await expect(platform.execute('platform.sendingTrust',{caseId:supportCase.id},session)).rejects.toMatchObject({code:'case_scope_mismatch'});
+  const c=await open('abuse');const input={operationKey:randomUUID(),caseId:c.id,phase:'full',expectedRevision:0,reason:'Review the bounded earned sending history.'};
+  await expect(platform.execute('platform.reviewSendingTrust',input,session)).rejects.toMatchObject({code:'sending_trust_not_earned'});
+  await admin.query("UPDATE flockletter_customer_jobs.sending_account SET exercise=true");
+  await admin.query("INSERT INTO flockletter_customer_jobs.sending_state(workspace_id,held,incident_revision,first_sent_at) VALUES($1,true,1,clock_timestamp()-interval '15 days') ON CONFLICT(workspace_id) DO UPDATE SET held=true,incident_revision=1,first_sent_at=excluded.first_sent_at",[owner.workspaceId]);
+  await admin.query("INSERT INTO flockletter_customer_jobs.sending_admissions(workspace_id,recipient_id,provider,delivered_at) SELECT $1,gen_random_uuid(),'capture',clock_timestamp() FROM generate_series(1,500)",[owner.workspaceId]);
+  await expect(platform.execute('platform.reviewSendingTrust',input,session)).rejects.toMatchObject({code:'sending_review_changed'});
+  await expect(platform.execute('platform.reviewSendingTrust',{...input,expectedRevision:1},session)).rejects.toMatchObject({code:'limited_restart_required'});
+  const request={...input,phase:'limited',expectedRevision:1};const result=await platform.execute('platform.reviewSendingTrust',request,session);
+  expect(await platform.execute('platform.reviewSendingTrust',request,session)).toEqual(result);
+  expect(await platform.execute('platform.sendingTrust',{caseId:c.id},session)).toMatchObject({held:false,phase:'limited',dailyLimit:100});
+  await admin.query('UPDATE flockletter_customer_jobs.sending_state SET incident_revision=2 WHERE workspace_id=$1',[owner.workspaceId]);
+  expect(await platform.execute('platform.sendingTrust',{caseId:c.id},session)).toMatchObject({held:true,revision:2});
+ }finally{platform.options.sendingSafeguards=prior;await admin.query('UPDATE flockletter_customer_jobs.sending_account SET exercise=false');}
 });

@@ -1,3 +1,4 @@
+import {senderSetupCommands} from './sender-setup.js';
 import { z } from 'zod';
 import { studioSchema, studioAssetIds } from './studio.js';
 import { normalizedEmail } from './subscriber.js';
@@ -20,7 +21,7 @@ import { customerOperationsCommands } from './customer-operations.js';
 import { customerInfrastructureCommands } from './customer-infrastructure.js';
 
 export type { IntakeStatus } from './subscriber.js';
-export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write','audience:confirm','delivery:configure'] as const;
+export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write','audience:confirm','delivery:configure','sender:configure'] as const;
 export type Capability = typeof capabilities[number];
 export const limits = { fileBytes: 5 * 1024 * 1024, batchBytes: 20 * 1024 * 1024, batchFiles: 10, imagePixels: 25_000_000, campaignImages: 6, workspaceBytes: 100 * 1024 * 1024, assets: 500, drafts: 100, connections: 10, preparationOperations: 2000 } as const;
 export const plans = [
@@ -66,6 +67,7 @@ export const commands = {
   ...customerDeliveryCommands,
   ...customerOperationsCommands,
   ...customerInfrastructureCommands,
+  ...senderSetupCommands,
   'workspace.get': descriptor('Inspect workspace, plan catalogue and preparation limits. Does not create records.', 'read', false, {}),
   'workspace.preflight': descriptor('Start here: inspect all workspace setup gaps and preparation limits before gathering content or photos. Never starts billing or sends.', 'read', false, {}),
   'workspace.initialize': descriptor('Create the current Clerk organization workspace and first brand once. Does not activate a subscription.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(100), brandName: z.string().trim().min(1).max(100) }),

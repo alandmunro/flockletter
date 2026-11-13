@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 export type AudienceImportRow = { row: number; outcome: string; subscriberId?: string };
 
 export function AudienceImportResults({
@@ -9,6 +11,9 @@ export function AudienceImportResults({
   disabled: boolean;
   onRequestConfirmation: (id: string) => void;
 }) {
+  const [page, setPage] = useState(0);
+  const pageSize = 50;
+  const start = page * pageSize;
   const counts = rows.reduce<Record<string, number>>((acc, row) => {
     acc[row.outcome] = (acc[row.outcome] ?? 0) + 1;
     return acc;
@@ -38,7 +43,7 @@ export function AudienceImportResults({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {rows.slice(start, start + pageSize).map((row) => (
             <tr key={row.row}>
               <td>{row.row}</td>
               <td>{row.outcome.replaceAll('_', ' ')}</td>
@@ -58,6 +63,13 @@ export function AudienceImportResults({
           ))}
         </tbody>
       </table>
+      {rows.length > pageSize && (
+        <nav aria-label="Import result pages" className="actions">
+          <button type="button" className="btn secondary" disabled={!page} onClick={() => setPage(page - 1)}>Previous rows</button>
+          <span role="status">Rows {start + 1}–{Math.min(rows.length, start + pageSize)} of {rows.length}</span>
+          <button type="button" className="btn secondary" disabled={start + pageSize >= rows.length} onClick={() => setPage(page + 1)}>Next rows</button>
+        </nav>
+      )}
     </div>
   );
 }

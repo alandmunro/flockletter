@@ -18,7 +18,7 @@ Allowances are pooled across the subscription. All limits apply together. One ca
 
 Tier 3 can send ten full-audience campaigns to 10,000 contacts or twenty targeted campaigns averaging 5,000 recipients within its 100,000-email ceiling. It does not include twenty full-audience sends. No automatic overage billing is in the MVP.
 
-The card-required trial is 14 days with 250 active contacts and 500 total recipient emails across the complete trial. Trial campaign/seat/company/brand limits and the transition to paid usage are unresolved; no unlimited entitlement is implied. FFA's separately issued complimentary entitlement bypasses Stripe/card and is not a trial. Its assigned tier remains unresolved.
+The card-required trial is 14 days with 2,500 active contacts and 2,500 total recipient emails across the complete trial. The trial includes two campaigns, one user, one company and one brand. A full trial consumes up to 2,500 messages of shared provider capacity; at the planning rate below that is $0.50 in modeled delivery cost. FFA has a separate complimentary Growth entitlement.
 
 ## Direct cost assumptions at full allowance
 

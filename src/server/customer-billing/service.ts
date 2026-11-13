@@ -1,3 +1,6 @@
+import {preparationContactLimit} from '../../shared/trial.js';
+import {hostedPolicies} from '../../shared/hosted-policies.js';
+import {publicSubscriptionOffers,proEnrollmentNotice} from '../../shared/subscription-offers.js';
 import { lockWorkspace } from '../workspace-lock.js';
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
@@ -19,7 +22,7 @@ import {
   trialAllowance,
   utcMonth,
 } from './policy.js';
-import type { CustomerBillingProvider, ProviderIntent } from './provider.js';
+import type { CustomerBillingEvents, CustomerBillingProvider, ProviderIntent } from './provider.js';
 import { TrialEnrollment, trialSetupStatus, trialEligibility } from './trial-enrollment.js';
 import type { TrialRegistry } from '../customer-abuse/registry.js';
 import { plans } from '../../shared/contracts.js';
@@ -29,6 +32,7 @@ export type BillingOptions = {
   exerciseEnabled: boolean;
   now?: () => Date;
   gateway?: CustomerBillingProvider;
+  eventGateway?: CustomerBillingEvents;
   trialRegistry?: TrialRegistry;
   checkOwner?: (userId: string, workspace: string) => Promise<boolean>;
 };
@@ -242,10 +246,26 @@ export async function customerCapacity(sql: Sql) {
     (await sql.query<{ brand: string }>("SELECT current_setting('app.intake_brand_id',true) brand"))
       .rows[0]?.brand ?? '';
   const brands = (await sql.query<{ id: string }>('SELECT id FROM brands')).rows;
-  const contacts = new Set<string>();
+  const companies = (await sql.query<{ count: number }>('SELECT count(*)::int count FROM companies')).rows[0]!.count;
+  let scopedBrand = selected;
   try {
+    // Trial and Starter have one brand, where the per-brand email uniqueness constraint
+    // lets PostgreSQL count contacts without transferring every address on each send check.
+    if (brands.length === 1) {
+      const brand = brands[0]!.id;
+      if (scopedBrand !== brand) {
+        await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand]);
+        scopedBrand = brand;
+      }
+      const count = await sql.query<{ contacts: number }>(
+        "SELECT count(*)::int contacts FROM subscribers WHERE state='confirmed'",
+      );
+      return { brands: 1, companies, contacts: count.rows[0]!.contacts };
+    }
+    const contacts = new Set<string>();
     for (const brand of brands) {
       await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand.id]);
+      scopedBrand = brand.id;
       for (const row of (
         await sql.query<{ email_normalized: string }>(
           "SELECT email_normalized FROM subscribers WHERE state='confirmed'",
@@ -253,15 +273,10 @@ export async function customerCapacity(sql: Sql) {
       ).rows)
         contacts.add(row.email_normalized);
     }
+    return { brands: brands.length, companies, contacts: contacts.size };
   } finally {
-    await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [selected]);
+    if (scopedBrand !== selected) await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [selected]);
   }
-  return {
-    brands: brands.length,
-    companies: (await sql.query<{ count: number }>('SELECT count(*)::int count FROM companies')).rows[0]!
-      .count,
-    contacts: contacts.size,
-  };
 }
 export async function customerContactLimit(
   sql: Sql,
@@ -269,7 +284,7 @@ export async function customerContactLimit(
   options?: Partial<BillingOptions>,
 ) {
   const status = await customerEligibility(sql, workspace, options);
-  return status.eligible ? status.limits!.contacts : trialAllowance.contacts;
+  return status.eligible ? status.limits!.contacts : preparationContactLimit;
 }
 export async function customerSeatLimit(sql: Sql, workspace: string, options?: Partial<BillingOptions>) {
   const status = await customerEligibility(sql, workspace, options);
@@ -358,9 +373,8 @@ export class CustomerBilling {
     });
   }
   async status(workspace: string) {
-    return this.db.tenant(workspace, (sql) =>
-      customerEligibility(sql, workspace, this.options, this.clock()),
-    );
+    const status=await this.db.tenant(workspace,sql=>customerEligibility(sql,workspace,this.options,this.clock()));
+    return {...status,newSubscriptions:this.options.environment==='production'?publicSubscriptionOffers:{starter:true,growth:true,pro:true}};
   }
   async eligibility(workspace: string, at = this.clock()) {
     return this.db.tenant(workspace, (sql) => customerEligibility(sql, workspace, this.options, at));
@@ -391,6 +405,8 @@ export class CustomerBilling {
     const command = name as CustomerBillingCommandName;
     const input = customerBillingCommands[command].schema.parse(raw);
     await this.requireOwner(actor);
+    if(this.options.environment==='production'&&'plan' in input&&input.plan&&['customerBilling.checkout','customerBilling.paidCheckout','customerBilling.restartCheckout','customerBilling.rejoin','customerBilling.portal'].includes(command))requireCondition(publicSubscriptionOffers[input.plan],409,'plan_enrollment_paused',proEnrollmentNotice);
+    if(this.options.environment==='production'&&['customerBilling.paidCheckout','customerBilling.restartCheckout','customerBilling.rejoin'].includes(command))requireCondition('policyVersion' in input&&input.policyVersion===hostedPolicies.version&&'accepted' in input&&input.accepted===true,409,'policy_review_required','Accept the current hosted terms, sending policy and recurring price before continuing.');
     if (command === 'customerBilling.status') return this.status(actor.workspaceId);
     if (command === 'customerBilling.trialReview')
       return this.trials().review(actor, customerBillingCommands[command].schema.parse(raw).setupId);
@@ -420,6 +436,7 @@ export class CustomerBilling {
         priceMinor: accepted.priceMinor,
         currency: 'USD',
         acceptedAt: this.clock().toISOString(),
+        policyVersion:hostedPolicies.version,
       });
     }
     if (command === 'customerBilling.checkout') {
@@ -700,14 +717,14 @@ export class CustomerBilling {
       registry: this.options.trialRegistry,
       gateway: this.provider(),
       now: () => this.clock(),
-      requireOwner: (actor, sql) => this.requireOwner(actor, sql),
+      planAvailable:plan=>this.options.environment!=='production'||publicSubscriptionOffers[plan],requireOwner: (actor, sql) => this.requireOwner(actor, sql),
     });
   }
   private async checkout(
     actor: Actor,
     input: { operationKey: string; plan: CustomerPlan },
     restartExpired = false,
-    paidAcceptance?: { priceMinor: number; currency: 'USD'; acceptedAt: string },
+    paidAcceptance?: { priceMinor: number; currency: 'USD'; acceptedAt: string; policyVersion:string },
   ) {
     const gateway = this.provider(),
       workspace = actor.workspaceId;
@@ -848,6 +865,7 @@ export class CustomerBilling {
           JSON.stringify({
             plan: input.plan,
             trialDays: intent.trialDays,
+            ...(intent.trialDays===0?{policyVersion:hostedPolicies.version}:{}),
             ...(paidAcceptance ? { paidAcceptance } : {}),
           }),
         ],
@@ -1044,7 +1062,7 @@ export class CustomerBilling {
           hash,
           gateway.account,
           intent.createdAt,
-          JSON.stringify({ plan: input.plan, trialDays: 0, rejoin: binding }),
+          JSON.stringify({ plan: input.plan, trialDays: 0, rejoin: binding, policyVersion:hostedPolicies.version }),
         ],
       );
       await sql.query(
@@ -1223,7 +1241,7 @@ export class CustomerBilling {
     return { url };
   }
   async webhook(raw: Buffer, signature: string) {
-    const gateway = this.provider();
+    const gateway = this.options.eventGateway ?? this.provider();
     let notice;
     try {
       notice = gateway.verify(raw, signature);

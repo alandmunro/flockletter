@@ -23,7 +23,11 @@ export function customerSettings(config:Config,env:NodeJS.ProcessEnv=process.env
   };
   if(config.environment==='production' && Object.values(settings).some(value=>value==='capture'||value==='exercise'))
     throw Error('Captured exercises cannot be enabled in production.');
-  if(externalDelivery(settings.delivery))requireMailingActivation(config.environment,env,settings.deliveryScope);
+  if(externalDelivery(settings.delivery)){
+    requireMailingActivation(config.environment,env,settings.deliveryScope);
+    if(settings.deliveryScope==='all'&&env.FLOCKLETTER_SENDING_POLICY!=='permission-v1')throw Error('General mailing requires the permission-v1 sending safeguards.');
+  }
+  if(env.FLOCKLETTER_SENDING_POLICY!==undefined&&env.FLOCKLETTER_SENDING_POLICY!=='permission-v1')throw Error('Unknown sending policy.');
   if(settings.audience==='live' && env.FLOCKLETTER_CONFIRMATION_ACTIVATION_APPROVED!=='true')
     throw Error('Confirmation delivery requires explicit activation approval.');
   if(settings.team==='clerk' && (!config.clerkSecretKey||!config.clerkPublishableKey))

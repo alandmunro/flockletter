@@ -21,7 +21,7 @@ export async function senderStatus(sql: Sql): Promise<SenderStatus> {
 export async function registerSender(sql: Sql, workspace: string, brand: string, domain: string) {
   await sql.query(
     `INSERT INTO sender_domains(workspace_id,brand_id,domain,challenge) VALUES($1,$2,$3,$4)
-    ON CONFLICT(workspace_id,brand_id) DO UPDATE SET domain=excluded.domain,challenge=excluded.challenge,verified_at=NULL
+    ON CONFLICT(workspace_id,brand_id) DO UPDATE SET domain=excluded.domain,challenge=excluded.challenge,checked_at=NULL,verified_at=NULL
     WHERE sender_domains.domain<>excluded.domain`,
     [workspace, brand, domain, randomUUID()],
   );

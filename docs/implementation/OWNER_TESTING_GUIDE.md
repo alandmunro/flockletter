@@ -10,7 +10,7 @@ Review Subscription, the brand’s Audience setup, and Operations. The API/MCP `
 
 ## 1. Subscription
 
-Select a plan, affirm the simulated card control and start the captured trial. Expect `trialing`, fourteen days, one company/brand/user, at most 250 active contacts and 500 total recipient emails for the trial. These are trial limits even when you choose Growth or Pro.
+Select a plan, affirm the simulated card control and start the captured trial. Expect `trialing`, fourteen days, one company/brand/user, at most 2,500 active contacts and 2,500 total recipient emails for the trial. These are trial limits even when you choose Growth or Pro.
 
 Use the captured successful-payment control to exercise an active paid plan. Growth then provides five campaigns, 5,000 contacts and 25,000 total monthly recipient emails, shared across its companies and brands. Try changing plans and reviewing the saved remaining allowance. No real card details are needed or accepted by the captured payment controls.
 

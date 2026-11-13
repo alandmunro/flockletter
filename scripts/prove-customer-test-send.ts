@@ -72,6 +72,7 @@ try{
     assert.equal(await panel.getByRole('option',{name:'pending@trail.example.com',exact:true}).count(),0);
     assert.equal(await picker.inputValue(),'','A recipient must be explicitly selected.');
     await picker.selectOption(subscriber);
+    const beforeTestActions=calls.length;
     const reviewResponse=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/commands/delivery.reviewTest'&&response.request().method()==='POST');
     void reviewResponse.catch(()=>{});
     const readinessResponse=page.waitForResponse(reply=>new URL(reply.url()).pathname==='/api/v1/commands/delivery.preflight');
@@ -127,6 +128,8 @@ try{
     assert.equal(calls.some(call=>call.name==='delivery.review'||call.name==='delivery.approve'),false,'No broadcast review or approval is called.');
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Test controls fit the viewport.');
     assert.deepEqual(errors,[]);await panel.screenshot({path:path.join(images,'single-recipient-test-'+width+'.png')});
+    const irrelevantReads=calls.slice(beforeTestActions).filter(call=>call.name==='campaign.list'||call.name==='segment.list'||call.name==='delivery.list'&&call.body.purpose==='broadcast');
+    assert.deepEqual(irrelevantReads,[],'Test-only actions must not refetch campaigns, groups or broadcast history.');
     await page.reload();await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Delivery',exact:true}).click();
     const row=panel.locator('article.delivery-record').filter({has:page.getByRole('heading',{name:saved.subject,exact:true})}).filter({hasText:'One-recipient test'}).first();
     await row.getByRole('button',{name:'Open one-recipient test',exact:true}).click();

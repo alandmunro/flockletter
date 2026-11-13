@@ -82,7 +82,7 @@ export function ImportPreview({ api, brand, onApplied }: { api: Api; brand: Bran
     setReading(Boolean(file));
     if (!file) return;
     try {
-      if (file.size > importLimits.bytes) throw new Error('Choose a CSV file of 256 KiB or less.');
+      if (file.size > importLimits.bytes) throw new Error('Choose a CSV file of 1 MiB or less.');
       const bytes = new Uint8Array(await file.arrayBuffer());
       const { headers } = readImportCsv(bytes);
       if (attempt !== request.current) return;
@@ -136,7 +136,7 @@ export function ImportPreview({ api, brand, onApplied }: { api: Api; brand: Bran
     >
       <summary>Preview a contact CSV</summary>
       <p>
-        Choose a UTF-8 CSV with a header and up to 1,000 data rows (256 KiB). Select Preview CSV to send the
+        Choose a UTF-8 CSV with a header and up to 2,500 data rows (1 MiB). Select Preview CSV to send the
         file to Flockletter for a read-only comparison with {brand.name}.
       </p>
       <form onSubmit={preview}>

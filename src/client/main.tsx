@@ -1,3 +1,4 @@
+import {HostedPolicies} from './HostedPolicies.js';
 import { StrictMode, lazy, Suspense, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Portal, Header } from './App.js';
@@ -23,5 +24,6 @@ function Root() {
   }
   return <><Header /><main className="main"><SetupStatus environment={config.environment} gaps={config.setupGaps}/></main></>;
 }
-const publicPage=window.location.pathname==='/pricing'?<PublicPricingPage/>:window.location.pathname==='/help'?<Help/>:['/privacy','/policies/privacy','/cookies'].includes(window.location.pathname)?<Privacy/>:null;
+const legalPage=window.location.pathname==='/terms'?'terms':window.location.pathname==='/acceptable-use'?'acceptable-use':window.location.pathname==='/refunds'?'refunds':null;
+const publicPage=legalPage?<HostedPolicies page={legalPage}/>:window.location.pathname==='/pricing'?<PublicPricingPage/>:window.location.pathname==='/help'?<Help/>:['/privacy','/policies/privacy','/cookies'].includes(window.location.pathname)?<Privacy/>:null;
 createRoot(document.getElementById('root')!).render(<StrictMode>{publicPage?<><Header/>{publicPage}</>:<Root/>}<CookieControls/></StrictMode>);

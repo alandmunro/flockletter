@@ -1,3 +1,5 @@
+import {trialAllowance} from './policy.js';
+import {hostedPolicies} from '../../shared/hosted-policies.js';
 import {lockWorkspace} from '../workspace-lock.js';
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
@@ -38,6 +40,7 @@ type Setup = {
   created_at: Date;
 };
 export type TrialEnrollmentOptions = {
+  planAvailable?:(plan:ProviderIntent['plan'])=>boolean;
   registry?: TrialRegistry;
   gateway: CustomerBillingProvider;
   now: () => Date;
@@ -313,6 +316,9 @@ export class TrialEnrollment {
         revision = s.revision + 1;
       const base = {
         version: 1 as const,
+        policyVersion:hostedPolicies.version,
+        limits: trialAllowance,
+        ...(proof.locationDigest?{locationDigest:proof.locationDigest,tax:'exclusive' as const}:{}),
         setupId: s.id,
         revision,
         plan: s.plan,
@@ -363,6 +369,7 @@ export class TrialEnrollment {
       actor,
       async (sql) => {
         const s = await this.setup(sql, actor, input.setupId);
+        if(!s.activation_key)requireCondition(this.options.planAvailable?.(s.plan)!==false,409,'plan_enrollment_paused','New subscriptions to this tier are paused. Select an offered tier before starting.');
         if (s.activation_key) {
           requireCondition(
             s.activation_key === input.operationKey &&
@@ -382,7 +389,7 @@ export class TrialEnrollment {
             input.accepted &&
             s.review_expires_at &&
             s.review_expires_at > this.options.now() &&
-            s.review?.firstChargeAt,
+            s.review?.firstChargeAt && s.review.policyVersion===hostedPolicies.version,
           409,
           'trial_review_changed',
           'Review the current trial terms again before accepting.',
@@ -400,7 +407,7 @@ export class TrialEnrollment {
             proof.customer === s.customer_id &&
             proof.paymentMethod === s.payment_method_id &&
             proof.setupIntent === s.setup_intent_id &&
-            registry.card(proof.fingerprint) === s.card_digest,
+            registry.card(proof.fingerprint) === s.card_digest && (!s.review.locationDigest || proof.locationDigest===s.review.locationDigest),
           409,
           'card_setup_changed',
           'Review the current verified card setup again.',
@@ -443,7 +450,7 @@ export class TrialEnrollment {
             input.operationKey,
             digest(JSON.stringify(input)),
             g.account,
-            JSON.stringify({ plan: s.plan, trialDays: 14, setupId: s.id, reviewHash: s.review_hash }),
+            JSON.stringify({ plan: s.plan, trialDays: 14, setupId: s.id, reviewHash: s.review_hash,policyVersion:hostedPolicies.version }),
           ],
         );
         s.activation_key = input.operationKey;
@@ -469,6 +476,7 @@ export class TrialEnrollment {
       paymentMethod: s.payment_method_id,
       activationKey: s.activation_key,
       trialEnd: s.trial_end_at,
+      ...(s.review?.locationDigest?{locationDigest:s.review.locationDigest}:{}),
     };
     // Saved approval/claim is already committed. New agreement creation and hold
     // writes serialize on this same lock. Read-only lookup remains available while held.

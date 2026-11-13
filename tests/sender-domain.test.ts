@@ -69,6 +69,7 @@ describe('sender domain ownership', () => {
     expect(await verify()).toMatchObject({ status: 'ownership_verified', providerVerified: false });
     await expect(verify()).rejects.toMatchObject({ status: 429 });
     expect(await save('second.example.com')).toMatchObject({
+      checkedAt: null, verifiedAt: null,
       status: 'awaiting_dns',
       providerVerified: false,
     });

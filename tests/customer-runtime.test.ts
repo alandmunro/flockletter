@@ -1,4 +1,7 @@
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import Stripe from 'stripe';
+import {createServer} from 'node:http';
+import {createApp} from '../src/server/app.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {createMcpServer} from '../src/mcp/bridge.js';
 import { randomUUID } from 'node:crypto';
@@ -63,7 +66,7 @@ function makeIdentity(owners: Map<string, string>): IdentityProvider {
   };
 }
 
-async function factory() {
+async function factory(overrides:NodeJS.ProcessEnv={}) {
   const workspaceId = 'org_' + randomUUID().replace(/-/g, '');
   const userId = 'user_' + randomUUID();
   owners.set(workspaceId, userId);
@@ -78,6 +81,7 @@ async function factory() {
     FLOCKLETTER_CUSTOMER_TEAM: 'exercise',
     FLOCKLETTER_CUSTOMER_SUPPORT: 'capture',
     FLOCKLETTER_CUSTOMER_RETENTION: 'capture',
+    ...overrides,
   };
 
   const config = loadConfig(env);
@@ -145,6 +149,35 @@ async function factory() {
   };
 }
 
+it('acknowledges authenticated irrelevant events at the HTTP endpoint with billing off and rejects invalid signatures',async()=>{
+  const f=await factory({
+    APP_ORIGIN:'https://flockletter.example.test',FLOCKLETTER_CUSTOMER_BILLING:'off',
+    FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT:'acct_fixture',FLOCKLETTER_CUSTOMER_STRIPE_KEY:'rk_test_SYNTHETIC',
+    FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK:'whsec_fixture',FLOCKLETTER_CUSTOMER_STARTER_PRICE:'price_starter',
+    FLOCKLETTER_CUSTOMER_GROWTH_PRICE:'price_growth',FLOCKLETTER_CUSTOMER_PRO_PRICE:'price_pro',
+  });
+  expect(f.runtime.billing.options.gateway).toBeUndefined();
+  expect(f.runtime.billing.options.eventGateway).toBeDefined();
+  expect(f.runtime.billing.options.eventGateway).not.toHaveProperty('checkout');
+  expect((await f.runtime.billing.status(f.workspaceId)).eligible).toBe(false);
+  const app=createServer(createApp(f.config,f.service,f.authenticator));
+  await new Promise<void>(resolve=>app.listen(0,'127.0.0.1',resolve));
+  try{
+    const address=app.address();
+    if(!address||typeof address==='string')throw Error('Missing disposable listener');
+    const raw=JSON.stringify({id:'evt_unrelated',object:'event',livemode:false,type:'customer.created',data:{object:{id:'cus_other'}}});
+    const stripe=new Stripe('sk_test_SYNTHETIC');
+    const signature=stripe.webhooks.generateTestHeaderString({payload:raw,secret:'whsec_fixture'});
+    const target='http://127.0.0.1:'+address.port+'/api/v1/customer-billing/stripe-events';
+    const received=await fetch(target,{method:'POST',headers:{'content-type':'application/json','stripe-signature':signature},body:raw});
+    expect(received.status).toBe(200);
+    expect(await received.json()).toEqual({received:true});
+    const invalid=await fetch(target,{method:'POST',headers:{'content-type':'application/json','stripe-signature':'invalid'},body:raw});
+    expect(invalid.status).toBe(400);
+    expect((await f.runtime.billing.status(f.workspaceId)).eligible).toBe(false);
+  }finally{await new Promise<void>((resolve,reject)=>app.close(error=>error?reject(error):resolve()));}
+});
+
 it('preparation status through CommandService is ineligible and operations shows captured modes/safeguards', async () => {
   const f = await factory();
 
@@ -170,6 +203,18 @@ it('preparation status through CommandService is ineligible and operations shows
   expect(deliveryStatus.eligible).toBe(false);
 });
 
+it('drains due campaign work beyond eight transitions and returns its actual pacing deadline',async()=>{
+  const f=await factory();
+  const tick=vi.spyOn(f.runtime.delivery.worker,'tick');
+  for(let i=0;i<12;i++)tick.mockResolvedValueOnce({processed:true});
+  tick.mockImplementation(async()=>({processed:false,retryAt:new Date(Date.now()+250).toISOString()}));
+  const maintenance=vi.spyOn(f.runtime.senderSetup,'tick');
+  const delay=await f.runtime.processWorkspace(f.workspaceId,false);
+  expect(tick).toHaveBeenCalledTimes(13);
+  expect(delay).toBeGreaterThan(0);
+  expect(delay).toBeLessThanOrEqual(251);
+  expect(maintenance).not.toHaveBeenCalled();
+});
 it('shares activated Growth company and brand limits through the ordinary command dispatcher', async () => {
   const f = await factory();
 

@@ -18,7 +18,7 @@ export function importRows(input: ImportPreviewInput): CsvRow[] {
     bytes.length <= importLimits.bytes,
     413,
     'csv_too_large',
-    'Choose a CSV file of 256 KiB or less.',
+    'Choose a CSV file of 1 MiB or less.',
   );
   requireCondition(
     bytes.toString('base64') === input.csvBase64,

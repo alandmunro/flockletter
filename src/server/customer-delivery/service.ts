@@ -1,4 +1,4 @@
-import {selectedDelivery,deliveryProviders,selectDeliveryProvider} from './selection.js';
+import {eligibleBroadcastContacts,selectedDelivery,deliveryProviders,selectDeliveryProvider} from './selection.js';
 import {externalDelivery} from '../../shared/customer-delivery.js';
 import {admitTest,testRecipient} from './test-send.js';
 import type {TestDeliveryReview,TestDeliveryDetails} from '../../shared/customer-test-send.js';
@@ -17,6 +17,9 @@ import { CustomerDeliveryWorker } from './worker.js';
 import { senderProfile,senderFingerprint,senderEligible,legalFooter } from './sender.js';
 import { deliveryOutcomes } from './outcomes.js';
 import {deliveryPurposeAllowed} from './policy.js';
+
+// Bound the row-level guard and foreign-key work per statement on hosted Postgres.
+const RECIPIENTS_PER_INSERT=100;
 
 export class CustomerDelivery {
   readonly worker:CustomerDeliveryWorker;
@@ -39,6 +42,7 @@ export class CustomerDelivery {
         return this.preflight(sql,actor,{...row,brandId:row.brand_id,status:'draft',createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString()},input,true);
       });
     }
+    if(name==='delivery.trust')return this.options.safeguards?this.db.read(actor.workspaceId,sql=>this.options.safeguards!.status(sql,actor.workspaceId)):null;
     if(name==='delivery.status')return this.status(actor,customerDeliveryCommands['delivery.status'].schema.parse(raw).brandId);
     const input=parsed as {operationKey?:string;brandId:string;id?:string};
     let processId:string|undefined;
@@ -134,7 +138,9 @@ export class CustomerDelivery {
     const gaps=this.options.mode==='off'?['Configure the delivery mode.']:this.options.mode==='capture'?[]:
       !brandId?['Choose a brand to inspect its current sender and provider readiness.']:
       senderVerified?[]:['Complete or refresh the selected brand’s sender verification and provider setup.'];
-    return {mode,scope:this.options.scope??'all',
+    const trust=this.options.safeguards?await this.db.read(actor.workspaceId,sql=>this.options.safeguards!.status(sql,actor.workspaceId)):null;
+    if(trust?.held)gaps.push(...trust.reasons);
+    return {trust,mode,scope:this.options.scope??'all',
       externalSendingEnabled:externalDelivery(mode)&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
       testSendingEnabled:externalDelivery(mode)&&deliveryPurposeAllowed(this.options.scope,'test'),
       broadcastsEnabled:this.options.mode!=='off'&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
@@ -198,12 +204,10 @@ export class CustomerDelivery {
       SELECT *, (SELECT count(*)::int FROM population) total FROM population
       WHERE state='confirmed' ORDER BY id LIMIT 10001`,[input.segmentId??null,testSubscriberId??null])).rows;
     requireCondition(population.length<=10000,422,'audience_limit','Choose a group with at most 10,000 confirmed contacts.');
-    const selected=[];
-    for(const person of population)if(person.state==='confirmed'&&
-      (this.options.mode==='capture'||await this.options.liveConsent?.(sql,person.id)))selected.push(person);
+    const selectedProvider=await selectedDelivery(sql,this.options,actor.workspaceId,input.brandId),provider=selectedProvider.provider;
+    const selected=await eligibleBroadcastContacts(sql,this.options,selectedProvider.mode,population);
     if(purpose==='test')requireCondition(selected.length===1,422,'test_recipient_ineligible','Select one existing confirmed and consent-eligible contact in this brand.');
     requireCondition(selected.length>0&&selected.length<=10000,422,'audience_empty','Choose between one and 10,000 confirmed eligible contacts.');
-    const selectedProvider=await selectedDelivery(sql,this.options,actor.workspaceId,input.brandId),provider=selectedProvider.provider;
     const profile=await senderProfile(sql,input.brandId);
     if(externalDelivery(selectedProvider.mode))requireCondition(await senderEligible(sql,input.brandId,provider),503,'provider_unavailable','Complete the legal sender profile, current domain verification and provider verification for this brand.');
     const assets=(await sql.query<{id:string;name:string;sha256:string}>('SELECT id,name,sha256 FROM assets WHERE brand_id=$1 AND id=ANY($2::uuid[])',[input.brandId,draft.content.assetIds])).rows;
@@ -216,12 +220,19 @@ export class CustomerDelivery {
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
       [actor.workspaceId,input.brandId,id,draft.id,draft.version,actor.actorId,actor.userId,selectedProvider.mode,JSON.stringify(snapshot.content),
         rendered.html,rendered.text,JSON.stringify(ordered),senderFingerprint(provider,profile),due,selected.length,(population[0]?.total??0)-selected.length,profile?JSON.stringify(profile):null,purpose,selectedProvider.revision]);
-    const people=selected.map(person=>{const operation=randomUUID();return {operation,subscriber:person.id,
-      email:digest(person.email_normalized),reference:listmonkReference(actor.workspaceId,input.brandId,operation)};});
-    await sql.query(`INSERT INTO customer_delivery_recipients(workspace_id,brand_id,delivery_id,id,subscriber_id,email_digest,engine_reference,state)
-      SELECT $1,$2,$3,p.operation,p.subscriber,p.email,p.reference,'pending'
-      FROM unnest($4::uuid[],$5::uuid[],$6::text[],$7::text[]) p(operation,subscriber,email,reference)`,
-      [actor.workspaceId,input.brandId,id,people.map(p=>p.operation),people.map(p=>p.subscriber),people.map(p=>p.email),people.map(p=>p.reference)]);
+    // Freeze only the already selected audience. All batches, the review and its replay record
+    // share the workspace transaction: a failed batch cannot expose a partial review to approval.
+    for(let offset=0;offset<selected.length;offset+=RECIPIENTS_PER_INSERT) {
+      const people=selected.slice(offset,offset+RECIPIENTS_PER_INSERT).map(person=>{
+        const operation=randomUUID();
+        return {operation,subscriber:person.id,email:digest(person.email_normalized),reference:listmonkReference(actor.workspaceId,input.brandId,operation)};
+      });
+      const written=await sql.query(`INSERT INTO customer_delivery_recipients(workspace_id,brand_id,delivery_id,id,subscriber_id,email_digest,engine_reference,state)
+        SELECT $1,$2,$3,p.operation,p.subscriber,p.email,p.reference,'pending'
+        FROM unnest($4::uuid[],$5::uuid[],$6::text[],$7::text[]) p(operation,subscriber,email,reference)`,
+        [actor.workspaceId,input.brandId,id,people.map(p=>p.operation),people.map(p=>p.subscriber),people.map(p=>p.email),people.map(p=>p.reference)]);
+      requireCondition(written.rowCount===people.length,503,'audience_freeze_incomplete','The audience review could not be saved. Retry with the same operation key.');
+    }
     const result=await deliveryView(sql,await deliveryRow(sql,id,input.brandId));
     return testSubscriberId?{...result,purpose:'test' as const,testSubscriberId} satisfies TestDeliveryReview:result;
   }

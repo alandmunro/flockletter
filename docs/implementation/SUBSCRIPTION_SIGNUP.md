@@ -4,7 +4,7 @@ Applicable requirements: FL-PROD-002, FL-ONB-001/003/004, FL-ID-001/002, FL-BIL-
 
 ## Customer flow
 
-Each pricing card offers **Choose Starter**, **Choose Growth** or **Choose Pro**. The link carries only a recognized plan ID into account setup. Prices, eligibility and provider references remain server-owned. Selecting a link starts no trial, subscription or payment.
+Pricing offers **Choose Starter** and **Choose Growth**. Pro shows a paused-enrollment notice under D-060. The link carries only a recognized plan ID into account setup. Prices, eligibility and provider references remain server-owned. Selecting a link starts no trial, subscription or payment.
 
 Clerk sign-up, sign-in, organization creation and organization selection retain the internal Subscription destination and chosen plan. If an organization is already selected, the customer continues in that workspace. A new customer names the app workspace and first brand, then reaches Subscription. Clerk remains authoritative for identity and current membership; the URL and local navigation state grant no workspace access.
 
