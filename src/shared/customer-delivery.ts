@@ -3,6 +3,7 @@ import {customerTestSendCommands} from './customer-test-send.js';
 import {customerPreflightCommands} from './customer-preflight.js';
 import { commandDefinition as command } from './command-definition.js';
 import { normalizedEmail } from './subscriber.js';
+import type {CustomerBillingStatus} from './customer-billing.js';
 
 const id = z.uuid();
 const operationKey = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/);
@@ -21,7 +22,7 @@ export const customerDeliveryCommands = {
     fromEmail:normalizedEmail,replyTo:normalizedEmail,organization:z.string().trim().min(1).max(150).regex(/^[^\p{Cc}\p{Cf}]+$/u),
     postalAddress:z.string().trim().min(10).max(500).regex(/^[^\p{Cc}\p{Cf}]+$/u),
   }),
-  'delivery.status': command('View delivery mode and allowed sending scope, workspace usage and current sender checks for an optional authorized brand. Test-only scope never permits broadcasts.', 'campaign:send', false, {brandId:id.optional()}),
+  'delivery.status': command('Diagnose the current environment/workspace, selected brand provider route, renderer, sender checks and sending scope without sending. Test-only scope permits one confirmed contact per review, never a group or broadcast.', 'campaign:send', false, {brandId:id.optional()}),
   'delivery.list': command('List this brand’s reviewed campaigns and delivery outcomes.', 'campaign:send', false, {brandId:id,purpose:z.enum(['broadcast','test']).optional()}),
   'delivery.review': command('Freeze the saved draft and confirmed audience before approval.', 'campaign:send', true, {
     operationKey,brandId:id,campaignId:id,expectedVersion:z.number().int().positive(),
@@ -48,6 +49,12 @@ export type DeliveryMode = 'off'|'capture'|SendingProvider;
 export function externalDelivery(mode:DeliveryMode|string):mode is SendingProvider{return mode==='ses'||mode==='resend';}
 export type DeliveryProviders = {selected:SendingProvider|null;revision:number;mode:DeliveryMode;choices:{provider:SendingProvider;configured:boolean;ready:boolean}[]};
 export type DeliveryScope = 'all'|'tests';
+export type CustomerDeliveryStatus={
+  mode:DeliveryMode;scope:DeliveryScope;externalSendingEnabled:boolean;testSendingEnabled:boolean;broadcastsEnabled:boolean;
+  eligible:boolean;eligibility:CustomerBillingStatus;brandId:string|null;senderVerified:boolean|null;providerConfigured:boolean|null;
+  rendererConfigured:boolean;gaps:string[];
+  context:{environment:'local'|'test'|'staging'|'production';workspaceId:string;observedAt:string};
+};
 export type DeliveryRecipientOutcome = {
   id:string;state:typeof deliveryRecipientStates[number];feedback:typeof deliveryFeedbackKinds[number]|null;reason:string|null;attempts:number;
 };

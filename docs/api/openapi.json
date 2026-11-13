@@ -4942,7 +4942,7 @@
     "/api/v1/commands/delivery.status": {
       "post": {
         "operationId": "delivery_status",
-        "summary": "View delivery mode and allowed sending scope, workspace usage and current sender checks for an optional authorized brand. Test-only scope never permits broadcasts.",
+        "summary": "Diagnose the current environment/workspace, selected brand provider route, renderer, sender checks and sending scope without sending. Test-only scope permits one confirmed contact per review, never a group or broadcast.",
         "security": [
           {
             "bearerAuth": []
