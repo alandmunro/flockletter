@@ -250,10 +250,12 @@ export class CustomerWorkflows {
         limits,allowance:owner?service.limits:null,brands,gaps};
     });
   }
-  async wake(workspace:string) {
-    await this.db.tenant(workspace,async sql=>{
+  async wake(workspace:string,delayMs=0) {
+    // The routing table’s insert guard takes this same lock. Wait before inserting
+    // so a concurrent owner action cannot discard the worker’s next pacing deadline.
+    await locked(this.db,workspace,async sql=>{
       if(!(await sql.query('SELECT FROM workspaces')).rowCount)return;
-      await sql.query('SELECT flockletter_customer_jobs.wake($1,now())',[workspace]);
+      await sql.query("SELECT flockletter_customer_jobs.wake($1,clock_timestamp()+$2*interval '1 millisecond')",[workspace,delayMs]);
     });
   }
   async execute(name:CommandName,raw:unknown,actor:Actor):Promise<unknown> {
@@ -355,7 +357,7 @@ export class CustomerWorkflows {
             const maintenance=(maintenanceDue.get(workspace)??0)<=Date.now();
             if(maintenance)maintenanceDue.set(workspace,Date.now()+15000);
             const delay=await this.processWorkspace(workspace,maintenance);
-            if(delay<15000)await this.db.tenant(workspace,sql=>sql.query("SELECT flockletter_customer_jobs.wake($1,clock_timestamp()+$2*interval '1 millisecond')",[workspace,delay]));
+            if(delay<15000)await this.wake(workspace,delay);
             nextPoll=Math.min(nextPoll,delay);
           }
           if(scopes.length>10)nextPoll=1;
