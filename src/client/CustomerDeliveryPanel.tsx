@@ -84,6 +84,14 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
     if(acting.current)return;acting.current=true;setBusy('refresh');setError('');
     try{apply(await read());}catch(error){setError(explain(error));}finally{acting.current=false;setBusy('');}
   }
+  async function refreshAfterTest() {
+    const revision = context.current;
+    const next = await api.call<Status>('delivery.status', { brandId: brand.id });
+    if (revision === context.current) {
+      setStatus(next);
+      setChecks(null);
+    }
+  }
   async function mutate<T>(name:CommandName,input:Record<string,unknown>,slot:string,after?:(result:T)=>void,before?:()=>Promise<boolean>) {
     if(acting.current)return;acting.current=true;setBusy(slot);setError('');setNotice('');
     const current=context.current;
@@ -147,7 +155,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
     </>}
   </section>
   <CustomerTestSendPanel api={api} brandId={brand.id} draft={campaigns.find(campaign=>campaign.id===campaignId)??null}
-    restoreId={testRestoreId} onSelectTest={(id,test)=>{setCampaignId(id);setReview(null);setTestRestoreId(test);}} onRestoreConsumed={consumeTestRestore} onChanged={refresh}/>
+    restoreId={testRestoreId} onSelectTest={(id,test)=>{setCampaignId(id);setReview(null);setTestRestoreId(test);}} onRestoreConsumed={consumeTestRestore} onChanged={refreshAfterTest}/>
   <section className="card"><h2>Delivery history</h2>{loaded&&!deliveries.length&&<p>No reviewed deliveries yet.</p>}
     {deliveries.map(item=><article className="delivery-record" key={item.id}>
       <h3>{item.subject}</h3><p>Version {item.version} · {item.state} · {new Date(item.dueAt).toLocaleString()}</p>
