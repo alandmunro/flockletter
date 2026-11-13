@@ -457,6 +457,38 @@ it('limits the durable scheduler to fixed functions and current-scope changes', 
   ).toBe(true);
 });
 
+it.each([false,true])('waits for concurrent writes before scheduling active delivery, quarantine=%s',async quarantine=>{
+  const f=await factory();
+  await f.runtime.wake(f.workspaceId);
+  await db.tenant(f.workspaceId,sql=>sql.query("SELECT flockletter_customer_jobs.snooze($1,now()+interval '15 seconds')",[f.workspaceId]));
+  const holder=await operator.pool.connect();
+  try {
+    await holder.query('BEGIN');
+    const holderPid=(await holder.query<{pid:number}>('SELECT pg_backend_pid() pid, pg_advisory_xact_lock(hashtextextended($1,0))',[f.workspaceId])).rows[0]!.pid;
+    const result=f.runtime.wake(f.workspaceId,25).then(()=>null,error=>error);
+    // Observe this exact blocking transaction before releasing it.
+    let waiting=false;
+    for(let i=0;i<100&&!waiting;i++) {
+      waiting=(await operator.pool.query<{waiting:boolean}>(`SELECT EXISTS(
+        SELECT FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))) waiting`,[holderPid])).rows[0]!.waiting;
+      if(!waiting)await new Promise(resolve=>setTimeout(resolve,5));
+    }
+    expect(waiting).toBe(true);
+    if(quarantine)await holder.query(`INSERT INTO flockletter_retention_control.restore_quarantines
+      (workspace_id,checkpoint_digest,checkpoint_version,protected_phase,blocked) VALUES($1,'test','v1','quarantined',true)`,[f.workspaceId]);
+    await holder.query('COMMIT');
+    const outcome=await result;
+    const next=(await operator.pool.query<{short:boolean}>(
+      "SELECT next_due_at<clock_timestamp()+interval '2 seconds' AS short FROM flockletter_customer_jobs.scopes WHERE workspace_id=$1",[f.workspaceId])).rows[0]!;
+    if(quarantine)expect(outcome).toMatchObject({code:'workspace_retention_blocked'});
+    else expect(outcome).toBeNull();
+    expect(next.short).toBe(!quarantine);
+  } finally {
+    await holder.query('ROLLBACK');
+    holder.release();
+  }
+});
+
 it('recovers the durable directory and worker receipt after application and connection restart', async () => {
   const f = await factory();
   await trial(f);
