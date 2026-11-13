@@ -1,5 +1,5 @@
 import { SignupDesignStudio } from './SignupDesignStudio.js';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { base64, operationKey, type Api } from './api.js';
 import { AudienceImportResults, type AudienceImportRow } from './AudienceImportResults.js';
 import { importLimits, readImportCsv, type ImportPreviewResult } from '../shared/import-preview.js';
@@ -27,6 +27,7 @@ export function AudienceOnboarding({
   brandId: string;
   onChanged?: () => void;
 }) {
+  const consentFieldId = useId();
   const [view, setView] = useState<AudienceSettingsView>();
   const [revision, setRevision] = useState(0),
     [error, setError] = useState(''),
@@ -268,16 +269,15 @@ export function AudienceOnboarding({
               Consent version
               <input required maxLength={80} value={version} onChange={(e) => setVersion(e.target.value)} />
             </label>
-            <label>
-              Consent shown next to the signup checkbox
-              <textarea
-                required
-                minLength={20}
-                maxLength={2000}
-                value={consent}
-                onChange={(e) => setConsent(e.target.value)}
-              />
-            </label>
+            <label htmlFor={consentFieldId}>Consent shown next to the signup checkbox</label>
+            <textarea
+              id={consentFieldId}
+              required
+              minLength={20}
+              maxLength={2000}
+              value={consent}
+              onChange={(e) => setConsent(e.target.value)}
+            />
             <p className="help">
               Name the brand and what subscribers will receive. Change the version whenever the wording or
               purpose or confirmation choice changes.
