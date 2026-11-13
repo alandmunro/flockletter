@@ -15,8 +15,29 @@ The release runner supports eight fixed operations: `production.inspect/prepare/
 
 | Step | Command | Description |
 | :--- | :--- | :--- |
-| **Plan** | `node scripts/release-runner.mjs plan /absolute/owner-private/target.json` | Generates `{ok:true,plan,planDigest}`. Save output securely as `plan.json`. |
+| **Provisioning plan** | `node scripts/release-runner.mjs plan /absolute/owner-private/target.json` | Generates `{ok:true,plan,planDigest}`. Save output securely as `plan.json`. |
+| **Migration plan** | `node scripts/release-runner.mjs plan /absolute/owner-private/target.json /absolute/owner-private/compatibility.json` | Binds the passing compatibility rehearsal to the migration. |
 | **Execute** | `node scripts/release-runner.mjs execute /absolute/owner-private/plan.json /absolute/owner-private/input.json` | Runs the operation using fixed child dispatch. |
+
+### Before migrating an existing installation
+
+1. Read the full currently serving web revision from `/api/health/version` and verify `/readyz`. Read the **live deployment** commit for the dedicated worker in Render, even if web and worker are on different commits. For an embedded worker, use its web commit in both positions. Record the separately approved candidate commit. Confirm the prior application and database recovery points and how to restore them.
+2. Use a reviewed checkout containing all three Git commits, the lockfile dependencies and a local PostgreSQL fixture. Run as an unprivileged user with no hosted or provider credentials available. The rehearsal reads the immutable Git objects and executes the build's migration and runtime-check modules against disposable loopback databases. Review or isolate source before executing it.
+
+   ```sh
+   umask 077
+   node --import tsx scripts/rehearse-schema-compatibility.ts production "$WEB_SHA" "$WORKER_SHA" "$CANDIDATE_SHA" > "$PRIVATE_RELEASE_DIR/compatibility.json"
+   ```
+
+   Use `staging` for staging. The expected exit code is zero. For each distinct serving revision the rehearsal installs its own schema, connects as the restricted login, upgrades with the candidate, and verifies both candidate and serving runtime checks. A failure identifies the step or the incompatible web and worker roles. The output contains no credentials.
+3. For a failed rehearsal, retain the currently serving application and database. Build and stage a bridge revision whose narrowly reviewed checks accept both schemas, deploy that bridge to web and worker, then rehearse with the bridge as the serving revision. If a bridge cannot serve both, stop and prepare a separately approved maintenance and recovery procedure. If SQL already ran, reconcile its actual schema and the deployed revisions before picking a known-compatible application or an isolated, verified restore.
+4. For a pass, create the migration plan with the protected evidence file. Compare its candidate, source fingerprint and target with the approved artifact. Recheck Render's **live worker** revision immediately before execution. The migration helper checks the live web identity, exact commit and readiness at the fixed Flockletter origin before connecting to the target database. Stale evidence, failed checks and mismatched release source refuse. Both the plan and the evidence expire after 30 minutes. Generate fresh evidence after a deployment change.
+
+The evidence is a trusted operator's record and a source correlation. It does not sign source code or prove a remote worker revision. These checks exercise restricted database readiness; keep the application's functional staging tests, backup, actual database identity check, post-migration runtime verification and production promotion checks. Use `apply` for provisioning and reconciliation of its original provisioning operation. Use the protected `migrate` workflow for a future schema change.
+
+The paired-URI child receives `compatibility` through the validated plan. For a separately approved direct invocation of the child, include the same passing evidence object alongside `migrationUrl` and `runtimeUrl`. The staging single-URI form requires the evidence file as its fourth argument. The normal protected runner keeps the credential envelope unchanged.
+
+**Regression evidence, November 13, 2026.** On two disposable PostgreSQL instances, screening web `15f2bc0e` and worker `fd8d0db2` against candidate `c177d907` found that both serving revisions passed their original schemas and both failed after the candidate migration. The candidate's own restricted check passed. The rehearsal exited before producing valid release evidence. Tests also cover a compatible revision, a worker-only conflict and before-write refusal when web identity, evidence age, source or environment changes. [Regression tests](../../tests/schema-compatibility.test.ts)
 
 ## 3. File & Security Boundaries
 

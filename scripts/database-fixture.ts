@@ -17,7 +17,7 @@ async function freePort(): Promise<number> {
     });
   });
 }
-export async function startDatabase() {
+export async function startDatabase(initialMigration: typeof applyMigrations = applyMigrations) {
   const directory = await mkdtemp(path.join(tmpdir(), 'flockletter-pg-'));
   const password = randomBytes(24).toString('hex');
   const port = await freePort();
@@ -33,7 +33,7 @@ export async function startDatabase() {
       await admin.query(`CREATE ROLE flockletter_runtime LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
       await admin.query('REVOKE ALL ON DATABASE flockletter_test FROM PUBLIC');
       await admin.query('GRANT CONNECT ON DATABASE flockletter_test TO flockletter_runtime');
-      await applyMigrations(admin, 'flockletter_runtime');
+      await initialMigration(admin, 'flockletter_runtime');
     } finally { await admin.end(); }
     return { url: adminUrl.replace('postgres:', 'flockletter_runtime:'), adminUrl, stop: () => postgres.stop() };
   } catch (error) { await postgres.stop(); throw error; }

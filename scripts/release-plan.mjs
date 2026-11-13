@@ -53,26 +53,43 @@ export async function verifyReleaseSourceFile(file){
 
 /** Correlates the exact reviewed release source; not remote identity attestation. */
 export const releaseBoundaryFiles=Object.freeze(['package.json','package-lock.json','src/server/runtime-boundary.mjs','src/server/test-send-boundary.mjs','src/shared/runtime-tables.json']);
-export async function releaseSourceFingerprint(){
+export async function releaseSourceFingerprint(root=releaseRoot){
  const files=[...releaseBoundaryFiles];
  for(const [directory,suffix] of [['scripts','.mjs'],['migrations','.sql']]){
-  for(const name of (await readdir(path.join(releaseRoot,directory))).sort())if(name.endsWith(suffix))files.push(directory+'/'+name);
+  for(const name of (await readdir(path.join(root,directory))).sort())if(name.endsWith(suffix))files.push(directory+'/'+name);
  }
  const hash=createHash('sha256');
  for(const name of files.sort()){
-  const file=path.join(releaseRoot,name);await verifyReleaseSourceFile(file);
+  const file=path.join(root,name);await verifyReleaseSourceFile(file);
   const bytes=await readFile(file);hash.update(name+'\0'+bytes.length+'\0').update(bytes).update('\0');
  }
  return hash.digest('hex');
 }
-export async function createReleasePlan(spec,now=new Date()){
+export function migrationEvidenceGaps(evidence,environment,source,now=new Date()){
+ if(!exactKeys(evidence,['ok','version','environment','webRevision','workerRevision','candidateRevision','sourceFingerprint','checked','checkedAt'])
+  ||evidence.ok!==true||evidence.version!==1)return ['compatibility_evidence_required'];
+ const codes=[],revisions=[evidence.webRevision,evidence.workerRevision,evidence.candidateRevision];
+ if(evidence.environment!==environment)codes.push('compatibility_environment_mismatch');
+ if(!revisions.every(value=>typeof value==='string'&&/^[a-f0-9]{40}$/.test(value))
+   ||JSON.stringify(evidence.checked)!==JSON.stringify([...new Set(revisions.slice(0,2))]))codes.push('compatibility_checks_incomplete');
+ if(evidence.sourceFingerprint!==source)codes.push('compatibility_source_mismatch');
+ const time=typeof evidence.checkedAt==='string'?Date.parse(evidence.checkedAt):NaN;
+ if(!Number.isFinite(time)||new Date(time).toISOString()!==evidence.checkedAt||time>now.getTime()+60000||now.getTime()-time>1800000)codes.push('compatibility_evidence_expired');
+ return codes;
+}
+export async function createReleasePlan(spec,now=new Date(),compatibility){
  const codes=targetSpecGaps(spec);if(codes.length)return {codes};
- const target=canonicalTarget(spec);
+ const target=canonicalTarget(spec),selected=releaseOperations[spec.operation],source=await releaseSourceFingerprint();
+ if(selected.mode==='migrate'){
+  const missing=migrationEvidenceGaps(compatibility,selected.environment,source,now);if(missing.length)return {codes:missing};
+ }else if(compatibility!==undefined)return {codes:['unexpected_compatibility_evidence']};
  return {plan:{version:1,operation:spec.operation,environment:releaseOperations[spec.operation].environment,target,
-  targetFingerprint:targetFingerprint(target),sourceFingerprint:await releaseSourceFingerprint(),createdAt:now.toISOString(),operationId:randomBytes(16).toString('hex')}};
+  targetFingerprint:targetFingerprint(target),sourceFingerprint:source,createdAt:now.toISOString(),operationId:randomBytes(16).toString('hex'),
+  ...(selected.mode==='migrate'?{compatibility}:{})}};
 }
 export function releasePlanGaps(plan,sourceFingerprint,now=new Date()){
- if(!exactKeys(plan,['version','operation','environment','target','targetFingerprint','sourceFingerprint','createdAt','operationId']))return ['plan_shape_invalid'];
+ const migration=typeof plan?.operation==='string'&&Object.hasOwn(releaseOperations,plan.operation)&&releaseOperations[plan.operation].mode==='migrate';
+ if(!exactKeys(plan,['version','operation','environment','target','targetFingerprint','sourceFingerprint','createdAt','operationId',...(migration?['compatibility']:[])]))return ['plan_shape_invalid'];
  const codes=targetSpecGaps(plan.target),selected=typeof plan.operation==='string'&&Object.hasOwn(releaseOperations,plan.operation)?releaseOperations[plan.operation]:undefined;
  if(plan.version!==1||!selected||plan.target?.operation!==plan.operation||selected.environment!==plan.environment)codes.push('plan_scope_invalid');
  if(typeof plan.operationId!=='string'||!/^[a-f0-9]{32}$/.test(plan.operationId))codes.push('plan_id_invalid');
@@ -80,11 +97,12 @@ export function releasePlanGaps(plan,sourceFingerprint,now=new Date()){
  if(!Number.isFinite(created)||new Date(created).toISOString()!==plan.createdAt||created>now.getTime()+60000||now.getTime()-created>1800000)codes.push('plan_time_invalid');
  if(codes.length===0&&plan.targetFingerprint!==targetFingerprint(plan.target))codes.push('target_fingerprint_mismatch');
  if(plan.sourceFingerprint!==sourceFingerprint)codes.push('source_fingerprint_mismatch');
+ if(migration)codes.push(...migrationEvidenceGaps(plan.compatibility,selected.environment,sourceFingerprint,now));
  return codes;
 }
 export function releasePlanDigest(plan){
  return digest({version:plan.version,operation:plan.operation,environment:plan.environment,target:canonicalTarget(plan.target),targetFingerprint:plan.targetFingerprint,
-  sourceFingerprint:plan.sourceFingerprint,createdAt:plan.createdAt,operationId:plan.operationId});
+  sourceFingerprint:plan.sourceFingerprint,createdAt:plan.createdAt,operationId:plan.operationId,...(plan.compatibility?{compatibility:plan.compatibility}:{})});
 }
 export function privateEnvelopeGaps(envelope,plan){
  if(!exactKeys(envelope,['version','operation','planDigest','input'])||envelope.version!==1)return ['private_envelope_invalid'];
