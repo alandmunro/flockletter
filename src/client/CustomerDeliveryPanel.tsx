@@ -4,18 +4,18 @@ import { useCallback,useEffect,useRef,useState } from 'react';
 import type { Api } from './api.js';
 import { operationKey } from './api.js';
 import type { Brand,Campaign,CommandName } from '../shared/contracts.js';
-import type { DeliveryView,DeliveryMode,DeliveryScope } from '../shared/customer-delivery.js';
-import type { CustomerBillingStatus } from '../shared/customer-billing.js';
+import type { DeliveryView,CustomerDeliveryStatus } from '../shared/customer-delivery.js';
 import type { SegmentDirectory } from '../shared/segments.js';
 import { SenderProfilePanel } from './SenderProfilePanel.js';
 import { DeliveryOutcomes } from './DeliveryOutcomes.js';
 import {CustomerTestSendPanel} from './CustomerTestSendPanel.js';
 import type { CustomerCampaignPreflight } from '../shared/customer-preflight.js';
 import {DeliveryScopeNotice} from './DeliveryScopeNotice.js';
+import {DeliveryDiagnostics} from './DeliveryDiagnostics.js';
+import {explainDeliveryError as explain} from './delivery-error.js';
 
-type Status={mode:DeliveryMode;scope?:DeliveryScope;eligible:boolean;eligibility:CustomerBillingStatus;gaps:string[]};
+type Status=CustomerDeliveryStatus;
 type Captured={to:string;subject:string;html:string;text:string;images:{sha256:string;mime:string;base64:string}[]};
-const explain=(error:unknown)=>error instanceof Error?error.message:'This action could not finish. Retry with the same inputs.';
 function captureHtml(message:Captured) {
   const images=new Map(message.images.filter(image=>['image/jpeg','image/png','image/webp','image/gif'].includes(image.mime)&&/^[a-f0-9]{64}$/.test(image.sha256))
     .map(image=>[image.sha256,'data:'+image.mime+';base64,'+image.base64]));
@@ -102,12 +102,14 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
     try{const message=await api.call<Captured>('delivery.message',{brandId:brand.id,id:deliveryId,recipientId});setCapture({deliveryId,recipientId,message});}
     catch(error){setError(explain(error));}finally{acting.current=false;setBusy('');}
   }
+  const selectedCampaign=campaigns.find(item=>item.id===campaignId);
   return <><section className="card">
     <div className="actions"><h2>Review and approve</h2><button className="btn secondary" disabled={!!busy} onClick={()=>void refresh()}>{busy==='refresh'?'Refreshing…':'Refresh delivery'}</button></div>
     {error&&<p role="alert" className="notice error">{error}</p>}{notice&&<p role="status" className="notice success">{notice}</p>}
     {!loaded?<p>Loading delivery settings…</p>:<>
-      <p className="badge">{status?.mode==='capture'?'Captured exercise · no external email':externalDelivery(status?.mode??'off')?'Customer provider configured':'Delivery is off'}</p>
+      <p className="badge">{status?.mode==='capture'?'Captured exercise · no external email':externalDelivery(status?.mode??'off')?`${status?.mode==='resend'?'Resend':'AWS SES'} · ${status?.providerConfigured===false?'brand route missing':status?.senderVerified?'sender checks current':'sender/provider checks needed'}`:'Delivery is off'}</p>
       {status&&<DeliveryScopeNotice mode={status.mode} scope={status.scope??'all'}/>}
+      {status?.context&&<DeliveryDiagnostics status={status} brand={brand} campaign={selectedCampaign?{id:selectedCampaign.id,version:selectedCampaign.version,title:selectedCampaign.content.title}:null}/>}
       {status?.mode==='capture'&&<p className="help">These messages stay in your staging workspace. Captured outcomes exercise the workflow and cannot prove inbox delivery.</p>}
       {!!status?.gaps.length&&<ul>{status.gaps.map(gap=><li key={gap}>{gap}</li>)}</ul>}
       {!status?.eligible&&<div className="notice"><strong>Service activation needed</strong><ul>{status?.eligibility.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul><p>Open Subscription to review your plan or start a captured trial.</p></div>}
@@ -115,10 +117,10 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
         <div className="field"><label htmlFor="delivery-campaign">Saved campaign</label><select id="delivery-campaign" value={campaignId} onChange={event=>{setCampaignId(event.target.value);setReview(null);setChecks(null);}}>
           {campaigns.map(item=><option key={item.id} value={item.id}>{item.content.subject||item.content.title||'Untitled'} · version {item.version}</option>)}</select></div>
         <div className="field"><label htmlFor="delivery-audience">Audience</label><select id="delivery-audience" disabled={status?.scope==='tests'} value={segmentId} onChange={event=>{setSegmentId(event.target.value);setReview(null);setChecks(null);}}>
-          <option value="">All confirmed contacts</option>
+          <option value="">{status?.scope==='tests'?'Not used for one-recipient tests':'All confirmed contacts'}</option>
           {missingGroup&&<option value={segmentId} disabled>Selected group unavailable</option>}
           {groups?.items.map(group=><option key={group.id} value={group.id}>{group.name} · {group.counts.confirmed} confirmed</option>)}</select>
-          {missingGroup?<p className="help" role="status">Selected group unavailable. Choose an available audience.</p>:<p className="help">Review freezes the eligible recipients in this audience. Later group additions are not added to that review.</p>}
+          {status?.scope==='tests'?<p className="help">Group delivery is disabled, including groups named Test. Choose one intended confirmed contact in the test panel below. This selector does not choose your test recipient.</p>:missingGroup?<p className="help" role="status">Selected group unavailable. Choose an available audience.</p>:<p className="help">Review freezes the eligible recipients in this audience. Later group additions are not added to that review.</p>}
         </div>
         {!campaigns.length&&<p>Create and save a campaign before reviewing delivery.</p>}
         <div className="field"><label htmlFor="delivery-time">Schedule in your local time, optional</label><input id="delivery-time" type="datetime-local" disabled={status?.scope==='tests'} value={schedule} onChange={event=>{setSchedule(event.target.value);setReview(null);setChecks(null);}}/></div>

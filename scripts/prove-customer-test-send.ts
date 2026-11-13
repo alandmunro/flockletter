@@ -65,6 +65,12 @@ try{
     await page.getByText('Only reviewed one-recipient tests are allowed.',{exact:false}).waitFor();
     assert.equal(await page.getByRole('button',{name:'Review saved campaign',exact:true}).isDisabled(),true);
     assert.equal(await page.getByLabel('Audience',{exact:true}).isDisabled(),true);
+    assert.equal(await page.getByLabel('Audience',{exact:true}).textContent().then(text=>text?.includes('Not used for one-recipient tests')),true);
+    await page.getByText('Delivery details for support',{exact:true}).click();
+    await page.getByText('Workspace ID',{exact:true}).waitFor();
+    assert.equal(await page.getByText(actor.workspaceId,{exact:true}).count(),1);
+    assert.equal(await page.getByText(draft.id,{exact:true}).count(),1);
+    await page.getByText('Delivery details for support',{exact:true}).click();
     assert.equal(await page.getByLabel('Schedule in your local time, optional',{exact:true}).isDisabled(),true);
     const panel=page.getByRole('region',{name:'Test one confirmed contact',exact:true});
     const picker=panel.getByRole('combobox',{name:'Test recipient',exact:true});

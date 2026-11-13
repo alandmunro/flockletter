@@ -586,7 +586,7 @@ it('reports current selected-brand sender readiness without a permanent false se
  await saveSenderProfile(f.delivery,f.actor,f.brandId);
  await db.brand(f.workspaceId,f.brandId,sql=>sql.query('INSERT INTO sender_domains(workspace_id,brand_id,domain,challenge,verified_at) VALUES($1,$2,$3,$4,clock_timestamp())',[f.workspaceId,f.brandId,'shop.test',randomUUID()]));
  expect(await f.delivery.execute('delivery.status',{brandId:f.brandId},f.actor)).toMatchObject({brandId:f.brandId,senderVerified:true,gaps:[]});
- ready=false;expect(await f.delivery.execute('delivery.status',{brandId:f.brandId},f.actor)).toMatchObject({senderVerified:false,gaps:[expect.stringContaining('selected brand')]});
+ ready=false;expect(await f.delivery.execute('delivery.status',{brandId:f.brandId},f.actor)).toMatchObject({providerConfigured:true,senderVerified:false,gaps:[expect.stringContaining('AWS SES readiness')]});
  ready=true;await db.brand(f.workspaceId,f.brandId,sql=>sql.query("UPDATE sender_domains SET verified_at=now()-interval '25 hours'"));
  expect(await f.delivery.execute('delivery.status',{brandId:f.brandId},f.actor)).toMatchObject({senderVerified:false});expect(checks).toBe(2);
  expect(await f.delivery.execute('delivery.status',{},f.actor)).toMatchObject({brandId:null,senderVerified:null,gaps:[expect.stringContaining('Choose a brand')]});

@@ -17,6 +17,7 @@ import { CustomerDeliveryWorker } from './worker.js';
 import { senderProfile,senderFingerprint,senderEligible,legalFooter } from './sender.js';
 import { deliveryOutcomes } from './outcomes.js';
 import {deliveryPurposeAllowed} from './policy.js';
+import type {CustomerDeliveryStatus} from '../../shared/customer-delivery.js';
 
 export class CustomerDelivery {
   readonly worker:CustomerDeliveryWorker;
@@ -119,26 +120,32 @@ export class CustomerDelivery {
   preflight(sql:Sql,actor:Actor,campaign:Campaign,input:{expectedVersion?:number;segmentId?:string;dueAt?:string;purpose?:'broadcast'|'test';subscriberId?:string}={},requireSend=false) {
     return customerCampaignPreflight(sql,actor,campaign,this.options,input,requireSend);
   }
-  async status(actor:Actor,brandId?:string) {
+  async status(actor:Actor,brandId?:string):Promise<CustomerDeliveryStatus> {
     const eligibility=await this.options.billing.eligibility(actor.workspaceId);
     let senderVerified:boolean|null=null;
+    let providerConfigured:boolean|null=null;
     let mode=this.options.mode;
     if(brandId)await this.db.tenant(actor.workspaceId,async sql=>{
       await brandScope(sql,actor,brandId);
       const selected=await selectedDelivery(sql,this.options,actor.workspaceId,brandId);mode=selected.mode;
       if(externalDelivery(mode)) {
+        providerConfigured=Boolean(selected.provider);
         try {senderVerified=await senderEligible(sql,brandId,selected.provider);}
         catch {senderVerified=false;}
       }
     });
-    const gaps=this.options.mode==='off'?['Configure the delivery mode.']:this.options.mode==='capture'?[]:
+    const providerName=mode==='resend'?'Resend':'AWS SES';
+    const gaps=this.options.mode==='off'?['Delivery is off. A platform operator must configure the intended sending service.']:this.options.mode==='capture'?[]:
       !brandId?['Choose a brand to inspect its current sender and provider readiness.']:
-      senderVerified?[]:['Complete or refresh the selected brand’s sender verification and provider setup.'];
+      !providerConfigured?[`No ${providerName} route is configured for this brand on this service. Ask the platform operator to verify the brand binding and matching website/worker setup; do not switch providers to retry an uncertain send.`]:
+      senderVerified?[]:[`Refresh this brand’s legal sender profile, domain ownership and ${providerName} readiness checks. A configured route alone does not verify the sender or provider.`];
+    if(this.options.mode!=='off'&&!this.options.render)gaps.push('The private message renderer is unavailable. Ask the platform operator to restore it before reviewing a delivery.');
     return {mode,scope:this.options.scope??'all',
       externalSendingEnabled:externalDelivery(mode)&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
       testSendingEnabled:externalDelivery(mode)&&deliveryPurposeAllowed(this.options.scope,'test'),
       broadcastsEnabled:this.options.mode!=='off'&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
-      eligible:eligibility.eligible,eligibility,brandId:brandId??null,senderVerified,gaps};
+      eligible:eligibility.eligible,eligibility,brandId:brandId??null,senderVerified,providerConfigured,rendererConfigured:Boolean(this.options.render),gaps,
+      context:{environment:this.options.environment,workspaceId:actor.workspaceId,observedAt:new Date().toISOString()}};
   }
   private async read(name:string,raw:unknown,actor:Actor,sql:Sql) {
     if(name==='delivery.testDetails') {

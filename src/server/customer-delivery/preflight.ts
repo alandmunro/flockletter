@@ -32,7 +32,7 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
  const add=(code:string,title:string,detail:string,area:Gap['area'])=>gaps.push({code,title,detail,area});
  if(input.expectedVersion!==undefined&&input.expectedVersion!==campaign.version)add('version_conflict','Reload the campaign','The saved revision changed. Review the current version.','content');
  if(options.mode==='off')add('delivery_off','Configure delivery','A platform operator must configure the delivery mode.','delivery');
- if(!deliveryPurposeAllowed(options.scope,purpose))add('broadcasts_disabled','Use a one-recipient test','Only separately reviewed tests to one confirmed contact are enabled. Broadcasts and schedules are disabled.','delivery');
+ if(!deliveryPurposeAllowed(options.scope,purpose))add('broadcasts_disabled','Use a one-recipient test','Only separately reviewed tests to one confirmed contact are enabled. Groups, including a group named Test, use the broadcast path and are disabled. Choose one intended confirmed member with purpose test and its subscriberId; do not enable broadcasts to work around this restriction.','delivery');
  if(!options.render)add('renderer_required','Configure the renderer','The private message renderer is not available.','delivery');
  const selected=await selectedDelivery(sql,options,actor.workspaceId,campaign.brandId);
  const profile=await senderProfile(sql,campaign.brandId),provider=selected.provider;
