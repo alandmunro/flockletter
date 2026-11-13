@@ -3,7 +3,7 @@
 ## 1. Current State & Constraints
 *   **Provider:** Resend Team ($20/mo, 50,000 emails).
 *   **Capacity:** 10 domains total (2 active). No upgrades, add-ons, or overages authorized.
-*   **Verification Status:** Code and local checks are recorded below. Hosted migration, staging deployment and production activation are pending.
+*   **Verification status:** Migrations 035–037 and the application-role check passed on hosted staging. The first hosted trial rehearsal and its release blocker are recorded below. Production activation is a separate gate.
 
 ## 2. Subscription & Pricing
 *   **Offerings:** Starter ($15), Growth ($25) remain offered, subject to actual launch verification. Pro ($39/100k) catalogue unchanged but **new enrollment paused**.
@@ -60,7 +60,7 @@ Read-only production inspection found the approved Flockletter prices exclusive 
 
 Resend account usage confirmed 50,000 monthly capacity, two of ten domains used, no daily provider cap and a billing-anniversary reset. The declined 100,000-email upgrade was closed without purchase. The owner approved the customer-domain provisioning and broader verified-domain sending keys. Resend requires owner email verification before issuance; existing confirmation/retrieval keys stay separate. The existing production transport remains test-only and live billing remains off until release verification.
 
-Still pending: exact hosted migration/helper, staging review, production deployment/configuration, matching customer-domain credentials, enabled billing webhook and signed hosted signup reconciliation, and resolved local taxability. No campaign was submitted by this work.
+At this point in the local rehearsal, hosted checks had not started. See the dated hosted results below for subsequent evidence.
 
 ## 9. Model contributions
 
@@ -87,3 +87,11 @@ GitHub's broader customer browser journey caught an accessibility bug in the def
 The 1,000-recipient paced benchmark used the actual private Listmonk renderer, a photo attachment on every message, the production scheduler and PostgreSQL admission limits. From a queued campaign the first simulated provider submission took 0.91 seconds and the last took 4 minutes 42.80 seconds. It recorded exactly 1,000 distinct destinations, 1,000 submissions and zero duplicate attempts. Clerk and the provider were simulated. A separate read-only Stripe live inventory found zero subscriptions in any status at the three Flockletter prices and zero subscriptions with Flockletter workspace metadata. The internal database trial-history check still belongs to the protected release.
 
 The mobile test history journey exposed a redundant refresh of unrelated campaign, segment and broadcast lists that exhausted the API read budget. Test actions now refresh the affected delivery status and test history; the existing API rate limit is retained. The desktop and mobile one-recipient exercise verifies this request scope and restores the saved test after reload.
+
+### Hosted rehearsal · November 13, 2026 (UTC)
+
+The Free staging website served `622903a` and passed its readiness check after the protected release applied 035–037 and verified the restricted runtime role. Render's checkout sits under a group-writable ancestor. On the private helper, copy the exact source and dependencies to an owner-private temporary directory, remove group/other write access on the copy, and verify the source fingerprint there. Do not relax the release check or change permissions on Render's shared directory.
+
+A fresh Clerk development test customer chose Growth, created a separate organization, workspace and brand, and remained signed in after a refresh. Exercise billing recorded a fourteen-day trial with **2,500 available** contacts and recipient emails. That allowance is not a contact count or a delivery receipt. The customer saved a sender profile, verified the simulated provider domain and saved newsletter version 2. No live DNS, card or recipient was used.
+
+The CSV preview counted 2,500 unique valid addresses. Committing them timed out while inserting consent evidence. The customer saw a retry message and the brand showed zero confirmed contacts. This is a failed hosted import on this revision; the local benchmark above does not supersede it. Repeat the same batch and verify the exact recipient count, evidence and capture before promotion. Stripe Tax support has the SaaS/tangible comparison; no determination or change to production tax settings has been recorded.
