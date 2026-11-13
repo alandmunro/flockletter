@@ -1,6 +1,6 @@
 # Launch policy review packet
 
-**Status: internal review drafts; not published customer agreements or policies in force.** Prepared from repository revision `05992ffa3549df92d6e6d7c80018b8f61902f7c1` on November 9, 2026. No business address, tax registration, provider outcome or legal review is inferred. These files create no runtime route or acceptance flow and activate no sending, billing, automatic support or hosted erasure.
+**Status: internal review drafts; not published customer agreements or policies in force.** Initially prepared from repository revision `05992ffa3549df92d6e6d7c80018b8f61902f7c1` on November 9, 2026; counsel-review additions were prepared from `f2a16fd5dbac277757c51a0447897924ef1d73c6` on November 12, 2026. No business address, tax registration, provider outcome or legal review is inferred. These files create no runtime route or acceptance flow and activate no sending, billing, automatic support or hosted erasure.
 
 The [SRD](../SRD.md), [decision ledger](../DECISIONS.md) and [production preparation checklist](../implementation/PRODUCTION_LAUNCH_PREPARATION.md) remain authoritative. D-048/049/050 are already accepted; this packet does not ask the owner to accept them again. Draft text must not weaken their limits or existing eligibility/hold controls.
 
@@ -11,11 +11,21 @@ The [SRD](../SRD.md), [decision ledger](../DECISIONS.md) and [production prepara
 | [Hosted terms draft](TERMS_DRAFT.md) | Consolidates accepted product/commercial facts. Final contractual provisions and factual blanks remain for owner review. |
 | [Refund draft](REFUND_DRAFT.md) | Implements the accepted manual-review position in draft wording; no automatic refund or no-refunds rule. |
 | [Acceptable-use draft](ACCEPTABLE_USE_DRAFT.md) | Distinguishes existing consent/suppression controls from proposed customer obligations and unresolved trust thresholds. |
-| Public privacy/storage notice | Source: [Privacy.tsx](../../src/client/Privacy.tsx), version `flockletter-privacy-v1`, November 9, 2026; public source routes `/privacy`, `/policies/privacy` and `/cookies`. Covers necessary storage, no optional website analytics/advertising, account data, ordinary retention and the D-048 pseudonymous lifetime trial-history exception. Source presence does not verify hosted publication or complete the remaining privacy review. |
+| [Privacy counsel draft](PRIVACY_DRAFT.md) | Proposed expanded notice and verification list; not a substitute for the runtime privacy page or a verified data-flow inventory. |
+| Public privacy/storage notice | Source: [Privacy.tsx](../../src/client/Privacy.tsx), version `flockletter-privacy-v2`, November 11, 2026; public source routes `/privacy`, `/policies/privacy` and `/cookies`. Covers necessary storage, no optional website analytics/advertising, account data, ordinary retention and the D-048 pseudonymous lifetime trial-history exception. Source presence does not verify hosted publication or complete the remaining privacy review. |
 | Support disclosure | [Help.tsx](../../src/client/Help.tsx) discloses AI-assisted drafts with human review. [Support controls](../implementation/CUSTOMER_SUPPORT_RETENTION.md) describe separate bounded automation gates. Reconcile approved public wording with the actual enabled behavior before activation. |
 | Existing customer price/date acceptance | [SubscriptionLifecycle.tsx](../../src/client/SubscriptionLifecycle.tsx) displays the recurring price and first-charge date and uses a frozen review before trial activation. Final document versions, links and any required agreement evidence need separate review; this packet does not alter that flow. |
 
 The old S53 [design prototype](../design/prototype/screens.js) explicitly labels legal text unfinished. It is not a final agreement.
+
+## Counsel review priorities (November 12 additions)
+
+1. **Privacy and data roles — high.** Confirm customer/subscriber geography, controller/processor allocation, actual provider/subprocessor flows, security/retention facts, tracking and privacy-rights process. The new privacy draft is deliberately conditional.
+2. **Commercial allocation — high.** Select and draft liability, indemnity, warranties, suspension/termination, service-change, dispute and governing-law provisions. The new Terms section supplies candidate operational language but no accepted risk allocation.
+3. **Email policy — high.** Set final list-permission/import standard, prohibited uses, postal-address disclosure, abuse thresholds, hold notice/appeal and reinstatement before external sending. The [FTC CAN-SPAM guide](https://www.ftc.gov/business-guidance/resources/can-spam-act-compliance-guide-business) is a federal baseline, not a conclusion that a proposed list or campaign is permitted.
+4. **Billing/refunds — medium.** Reconcile automatic-renewal disclosures, cancellation, manual refund review and non-waivable customer rights with actual provider behavior and intended states/customer types.
+
+**Handoff:** privacy/technology-SaaS counsel should review and redline all four drafts together. Owner must verify the factual blanks. Only after counsel and owner approval should a separate change update customer-facing routes, version/effective dates and exact acceptance evidence. The November 12 additions were written and reviewed by the primary assistant; local-model delegation was skipped because the work is legal-risk allocation and privacy fact qualification rather than mechanical scaffolding.
 
 ## Remaining owner facts and decisions
 
