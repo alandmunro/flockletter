@@ -98,12 +98,13 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Ask each workflow directly: listing every run for a SHA is capped per page and other
-          # workflows share main's SHA, which can push a passing run off the page.
+          # GitHub's status search can omit a completed run. Check the run's own facts.
           for workflow in ci.yml selfhost.yml; do
-            count="$(gh api "repos/${REPO}/actions/workflows/${workflow}/runs?head_sha=${SHA}&status=success&per_page=30" \
-              --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
-            [ "${count}" -gt 0 ] || { echo "::error::${workflow} has no successful run for this exact commit."; exit 1; }
+            gh api "repos/${REPO}/actions/workflows/${workflow}/runs?head_sha=${SHA}&per_page=100" |
+              jq -e --arg sha "$SHA" --arg path ".github/workflows/$workflow" '
+                any(.workflow_runs[]; .head_sha == $sha and .path == $path and
+                  .status == "completed" and .conclusion == "success")
+              ' >/dev/null || { echo "::error::${workflow} requires a successful completed run for ${SHA}."; exit 1; }
           done
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6

@@ -80,7 +80,10 @@ describe('production promotion workflow', () => {
 
   it('asks the CI and restore-drill workflows directly and refuses unknown or changed migrations without confirmation', () => {
     expect(workflow).toContain('for workflow in ci.yml selfhost.yml');
-    expect(workflow).toContain('actions/workflows/${workflow}/runs?head_sha=${SHA}&status=success');
+    expect(workflow).toContain('actions/workflows/${workflow}/runs?head_sha=${SHA}&per_page=100');
+    expect(workflow).not.toContain('&status=success');
+    expect(workflow).toContain('.head_sha == $sha and .path == $path');
+    expect(workflow).toContain('.status == "completed" and .conclusion == "success"');
     expect(workflow).toContain('changed=unknown');
     expect(workflow).toContain('[ "${changed}" != "false" ] && [ "${MIGRATIONS_APPLIED}" != "true" ]');
     expect(workflow).not.toMatch(/migrate-production|apply-migrations/);
