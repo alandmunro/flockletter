@@ -159,26 +159,42 @@ export async function customerEligibility(
   options?: Partial<BillingOptions>,
   at = options?.now?.() ?? new Date(),
 ): Promise<BillingEligibility> {
-  await requireScope(sql, workspace);
-  const grant = (
-    await sql.query<{ plan: CustomerPlan | null; revision: number }>(
-      'SELECT plan,revision FROM workspace_access_events ORDER BY revision DESC LIMIT 1',
-    )
-  ).rows[0];
-  const stored = await row(sql);
+  // One statement observes the billing facts under the caller's current tenant policies.
+  // Keep native pg timestamp columns for calendar calculations, including legacy subscriptions.
+  type Facts = Subscription & {
+    granted_plan: CustomerPlan | null;
+    grant_revision: number | null;
+    erased: boolean;
+    held: boolean;
+    legacy_checkout: boolean;
+  };
+  const facts = (await sql.query<Facts>(`
+    SELECT s.*,g.plan AS granted_plan,g.revision AS grant_revision,
+      EXISTS(SELECT FROM customer_retention_receipts) AS erased,
+      public.flockletter_platform_hold($1) AS held,
+      EXISTS(SELECT FROM customer_billing_intents WHERE command='customerBilling.checkout') AS legacy_checkout
+    FROM (SELECT current_setting('app.workspace_id',true) AS workspace) scope
+    LEFT JOIN customer_subscriptions s ON s.workspace_id=scope.workspace
+    LEFT JOIN LATERAL (
+      SELECT plan,revision FROM workspace_access_events WHERE workspace_id=scope.workspace
+      ORDER BY revision DESC LIMIT 1
+    ) g ON true
+    WHERE scope.workspace=$1`, [workspace])).rows[0];
+  requireCondition(facts, 403, 'workspace_scope', 'Use the authenticated workspace transaction.');
+  const stored = facts.id ? facts : undefined;
   const now =
-    !grant?.plan && stored?.source === 'exercise'
+    !facts.granted_plan && stored?.source === 'exercise'
       ? new Date(at.getTime() + stored.clock_offset_days * millisecondsPerDay)
       : at;
   const s = stored && effective(stored, now);
-  const complimentary = !!grant?.plan;
+  const complimentary = !!facts.granted_plan;
   const source = complimentary ? 'complimentary' : (s?.source ?? 'preparation');
   const state: CustomerBillingState = complimentary ? 'active' : (s?.state ?? 'preparation');
-  const plan = complimentary ? grant!.plan : (s?.plan ?? null);
+  const plan = complimentary ? facts.granted_plan : (s?.plan ?? null);
   const trial = state === 'trialing';
   const period = trial && s ? 'trial:' + s.id : utcMonth(now);
   const reasons: string[] = [];
-  if ((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount)
+  if (facts.erased)
     reasons.push('This workspace has completed its retention erasure.');
   if (!plan) reasons.push('Choose a plan and complete its required activation.');
   if (!complimentary && (!s || (s.source === 'stripe' && !s.observed_at)))
@@ -197,10 +213,7 @@ export async function customerEligibility(
   if (!complimentary && s?.source === 'stripe' && !options?.gateway)
     reasons.push('This environment’s dedicated billing provider is disabled.');
   if (s?.risk_hold) reasons.push('A billing risk signal requires operator review.');
-  if (
-    (await sql.query<{ held: boolean }>('SELECT public.flockletter_platform_hold($1) held', [workspace]))
-      .rows[0]?.held
-  )
+  if (facts.held)
     reasons.push('This workspace requires a platform review.');
   if (!complimentary && trial && !(await trialEligibility(sql, workspace, options?.trialRegistry)))
     reasons.push('The trial’s protected eligibility requires review.');
@@ -220,7 +233,7 @@ export async function customerEligibility(
     state,
     plan,
     pendingPlan: complimentary ? null : (s?.pending_plan ?? null),
-    revision: complimentary ? grant!.revision : (s?.revision ?? 0),
+    revision: complimentary ? facts.grant_revision! : (s?.revision ?? 0),
     eligible: reasons.length === 0,
     reasons,
     now: now.toISOString(),
@@ -234,29 +247,25 @@ export async function customerEligibility(
     exerciseEnabled,
     trialSetup: await trialSetupStatus(sql),
     trialProtectionReady: !!options?.trialRegistry,
-    legacyCheckout: !!(
-      await sql.query(
-        "SELECT FROM customer_billing_intents WHERE command='customerBilling.checkout' LIMIT 1",
-      )
-    ).rowCount,
+    legacyCheckout: facts.legacy_checkout,
   };
 }
 export async function customerCapacity(sql: Sql) {
-  const selected =
-    (await sql.query<{ brand: string }>("SELECT current_setting('app.intake_brand_id',true) brand"))
-      .rows[0]?.brand ?? '';
-  const brands = (await sql.query<{ id: string }>('SELECT id FROM brands')).rows;
-  const companies = (await sql.query<{ count: number }>('SELECT count(*)::int count FROM companies')).rows[0]!.count;
+  // A worker already scoped to the only brand can count its unique confirmed addresses
+  // in the same statement. Other callers still select each brand under normal row policies.
+  const inventory = (await sql.query<{brands: string[]; companies: number; selected: string; contacts: number | null}>(`
+    SELECT brands,selected,(SELECT count(*)::int FROM companies) AS companies,
+      CASE WHEN cardinality(brands)=1 AND brands[1]::text=selected
+        THEN (SELECT count(*)::int FROM subscribers WHERE state='confirmed') END AS contacts
+    FROM (SELECT ARRAY(SELECT id FROM brands) AS brands,
+      coalesce(current_setting('app.intake_brand_id',true),'') AS selected) scope`)).rows[0]!;
+  const {brands, companies, selected} = inventory;
+  if (inventory.contacts !== null) return {brands: 1, companies, contacts: inventory.contacts};
   let scopedBrand = selected;
   try {
-    // Trial and Starter have one brand, where the per-brand email uniqueness constraint
-    // lets PostgreSQL count contacts without transferring every address on each send check.
     if (brands.length === 1) {
-      const brand = brands[0]!.id;
-      if (scopedBrand !== brand) {
-        await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand]);
-        scopedBrand = brand;
-      }
+      scopedBrand = brands[0]!;
+      await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [scopedBrand]);
       const count = await sql.query<{ contacts: number }>(
         "SELECT count(*)::int contacts FROM subscribers WHERE state='confirmed'",
       );
@@ -264,8 +273,8 @@ export async function customerCapacity(sql: Sql) {
     }
     const contacts = new Set<string>();
     for (const brand of brands) {
-      await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand.id]);
-      scopedBrand = brand.id;
+      await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand]);
+      scopedBrand = brand;
       for (const row of (
         await sql.query<{ email_normalized: string }>(
           "SELECT email_normalized FROM subscribers WHERE state='confirmed'",

@@ -10,6 +10,8 @@ import { CommandService, type Actor } from '../src/server/service.js';
 import {
   CustomerBilling,
   customerContactLimit,
+  customerCapacity,
+  customerEligibility,
   customerSeatLimit,
   retentionServiceEndSql,
 } from '../src/server/customer-billing/service.js';
@@ -103,6 +105,26 @@ async function shop() {
     ) as Promise<CustomerBillingStatus>;
   return { workspaceId, brandId, actor, campaign, call };
 }
+it('counts only distinct confirmed contacts and restores the caller’s brand scope', async () => {
+  const {workspaceId,brandId}=await shop();
+  const second=randomUUID();
+  await db.brand(workspaceId,brandId,async sql=>{
+    await sql.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES
+      ($1,$2,gen_random_uuid(),'shared@example.test','confirmed'),
+      ($1,$2,gen_random_uuid(),'optout@example.test','unsubscribed')`,[workspaceId,brandId]);
+    expect(await customerCapacity(sql)).toEqual({brands:1,companies:1,contacts:1});
+    await sql.query('INSERT INTO brands(workspace_id,id,name) VALUES($1,$2,$3)',[workspaceId,second,'Second']);
+  });
+  await db.brand(workspaceId,second,async sql=>{
+    await sql.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES
+      ($1,$2,gen_random_uuid(),'shared@example.test','confirmed'),
+      ($1,$2,gen_random_uuid(),'second@example.test','confirmed')`,[workspaceId,second]);
+    expect(await customerCapacity(sql)).toEqual({brands:2,companies:1,contacts:2});
+    expect((await sql.query("SELECT current_setting('app.intake_brand_id') brand")).rows[0].brand).toBe(second);
+    await expect(customerEligibility(sql,'org_different')).rejects.toMatchObject({code:'workspace_scope'});
+  });
+});
+
 // Simulate an already-recorded pre-upgrade agreement and provider request. New trials use
 // the protected two-stage tests; these fixtures verify legacy reconciliation/rejoin only.
 async function seedLegacyCheckout(
