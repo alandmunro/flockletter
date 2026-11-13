@@ -978,6 +978,7 @@ it('binds paid Checkout tax acceptance and holds the saved open agreement across
  expect(await billing.execute('customerBilling.paidCheckout',input,s.actor)).toMatchObject({state:'checkout_ready'});
  expect(posts).toHaveLength(1);expect(posts[0]!.taxMode).toBe('off');
  mode='stripe-automatic';
+ expect(await billing.execute('customerBilling.paidCheckout',input,s.actor)).toEqual({state:'tax_policy_changed',url:null});
  expect(await billing.execute('customerBilling.paidCheckout',{...input,taxMode:mode},s.actor)).toEqual({state:'tax_policy_changed',url:null});
  expect(posts).toHaveLength(1);
  expect((await db.read(s.workspaceId,sql=>sql.query("SELECT result->>'taxMode' mode FROM customer_billing_intents"))).rows).toEqual([{mode:'off'}]);

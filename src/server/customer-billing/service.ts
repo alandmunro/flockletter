@@ -409,7 +409,6 @@ export class CustomerBilling {
     await this.requireOwner(actor);
     if(this.options.environment==='production'&&'plan' in input&&input.plan&&['customerBilling.checkout','customerBilling.paidCheckout','customerBilling.restartCheckout','customerBilling.rejoin','customerBilling.portal'].includes(command))requireCondition(publicSubscriptionOffers[input.plan],409,'plan_enrollment_paused',proEnrollmentNotice);
     if(this.options.environment==='production'&&['customerBilling.paidCheckout','customerBilling.restartCheckout','customerBilling.rejoin'].includes(command))requireCondition('policyVersion' in input&&input.policyVersion===hostedPolicies.version&&'accepted' in input&&input.accepted===true,409,'policy_review_required','Accept the current hosted terms, sending policy and recurring price before continuing.');
-    if(this.options.gateway?.taxMode&&['customerBilling.paidCheckout','customerBilling.restartCheckout','customerBilling.rejoin'].includes(command))requireCondition('taxMode' in input&&input.taxMode===this.options.gateway.taxMode,409,'tax_policy_changed','Review the current tax collection terms before continuing.');
     if (command === 'customerBilling.status') return this.status(actor.workspaceId);
     if (command === 'customerBilling.trialReview')
       return this.trials().review(actor, customerBillingCommands[command].schema.parse(raw).setupId);
@@ -725,7 +724,7 @@ export class CustomerBilling {
   }
   private async checkout(
     actor: Actor,
-    input: { operationKey: string; plan: CustomerPlan },
+    input: { operationKey: string; plan: CustomerPlan; taxMode?:BillingTaxMode },
     restartExpired = false,
     paidAcceptance?: { priceMinor: number; currency: 'USD'; acceptedAt: string; policyVersion:string },
   ) {
@@ -844,6 +843,7 @@ export class CustomerBilling {
         'checkout_missing',
         'Start the initial checkout first.',
       );
+      requireCondition(!gateway.taxMode||input.taxMode===gateway.taxMode,409,'tax_policy_changed','Review the current tax collection terms before continuing.');
       const intent: ProviderIntent = {
         id: randomUUID(),
         workspace,
@@ -892,7 +892,7 @@ export class CustomerBilling {
   }
   private async rejoin(
     actor: Actor,
-    input: { operationKey: string; plan: CustomerPlan; expectedRevision: number },
+    input: { operationKey: string; plan: CustomerPlan; expectedRevision: number; taxMode?:BillingTaxMode },
   ) {
     const gateway = this.provider(),
       workspace = actor.workspaceId;
@@ -1036,6 +1036,7 @@ export class CustomerBilling {
         subscription: current.provider_subscription,
         revision: current.revision,
       };
+      requireCondition(!gateway.taxMode||input.taxMode===gateway.taxMode,409,'tax_policy_changed','Review the current tax collection terms before continuing.');
       const intent: ProviderIntent = {
         id: randomUUID(),
         workspace,
