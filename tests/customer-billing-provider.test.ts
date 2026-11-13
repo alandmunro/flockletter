@@ -2,7 +2,7 @@ import {locationDigest} from '../src/server/customer-billing/tax-policy.js';
 import { randomUUID } from 'node:crypto';
 import Stripe from 'stripe';
 import { expect, it } from 'vitest';
-import { stripeCustomerProvider, stripeCustomerEventProvider, type ProviderNotice } from '../src/server/customer-billing/provider.js';
+import { stripeCustomerProvider, stripeCustomerEventProvider, UnsupportedTrialPaymentMethod, type ProviderNotice } from '../src/server/customer-billing/provider.js';
 import type { CustomerPlan } from '../src/shared/customer-billing.js';
 
 const environment = {
@@ -396,7 +396,7 @@ it('resolves a dispute through its charge, invoice payment and subscription inst
 it('collects a card in setup-only Checkout and obtains its fingerprint only from authenticated provider facts', async () => {
   const id = randomUUID(),
     workspace = 'org_fixture';
-  let fingerprint = 'synthetic_fingerprint',
+  let methodType = 'card', fingerprint = 'synthetic_fingerprint',
     methodCustomer = 'cus_fixture';
   const site = fixture((url, body) => {
     if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
@@ -431,7 +431,7 @@ it('collects a card in setup-only Checkout and obtains its fingerprint only from
         metadata: { fl_workspace: workspace, fl_intent: id },
         payment_method: {
           id: 'pm_fixture',
-          type: 'card',
+          type: methodType,
           livemode: false,
           customer: methodCustomer,
           card: { fingerprint },
@@ -445,6 +445,9 @@ it('collects a card in setup-only Checkout and obtains its fingerprint only from
   const afterSetup = Date.now();
   const posted = site.calls.find((c) => c.url.pathname === '/v1/checkout/sessions')!.body;
   expect(posted.get('mode')).toBe('setup');
+  expect(posted.get('allowed_payment_method_types[0]')).toBe('card');
+  expect(posted.has('payment_method_configuration')).toBe(false);
+  expect(posted.get('wallet_options[link][display]')).toBe('never');
   expect(posted.get('managed_payments[enabled]')).toBe('false');
   expect(posted.get('currency')).toBe('usd');
   expect(Number(posted.get('expires_at'))).toBeGreaterThanOrEqual(
@@ -471,7 +474,8 @@ it('collects a card in setup-only Checkout and obtains its fingerprint only from
   await expect(site.provider.inspectSetup!({ ...intent, reference: 'cs_setup' })).rejects.toThrow(
     'could not be verified',
   );
-  fingerprint = 'synthetic';
+  methodType = 'link';
+  await expect(site.provider.inspectSetup!({ ...intent, reference: 'cs_setup' })).rejects.toBeInstanceOf(UnsupportedTrialPaymentMethod);
   methodCustomer = 'cus_wrong';
   await expect(site.provider.inspectSetup!({ ...intent, reference: 'cs_setup' })).rejects.toThrow(
     'could not be verified',

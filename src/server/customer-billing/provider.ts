@@ -95,6 +95,9 @@ export type ProviderCheckout = {
   subscription?: string | null;
 };
 const invalid = () => Error('The Flockletter billing provider could not be verified.');
+export class UnsupportedTrialPaymentMethod extends Error {
+  constructor() { super('The trial requires a card entered directly in Stripe.'); }
+}
 const reference = (v: string | { id: string } | null | undefined) =>
   typeof v === 'string' ? v : (v?.id ?? null);
 const date = (n: number | null | undefined) => (n ? new Date(n * 1000) : null);
@@ -441,7 +444,9 @@ function buildStripeCustomerProvider(
           client_reference_id: intent.workspace,
           metadata,
           customer_creation: 'always',
-          payment_method_configuration: card,
+          // Stripe accepts either a method allowlist or a named method configuration.
+          allowed_payment_method_types: ['card'],
+          wallet_options: { link: { display: 'never' } },
           setup_intent_data: { metadata },
           expires_at: Math.floor(requestTime / 1000) + 31 * 60,
           success_url: origin + '/?billing=card-returned',
@@ -477,12 +482,12 @@ function buildStripeCustomerProvider(
         setup.metadata?.fl_intent !== intent.id ||
         typeof method !== 'object' ||
         !method ||
-        method.type !== 'card' ||
         method.livemode !== live ||
-        reference(method.customer) !== customer ||
-        !method.card?.fingerprint
+        reference(method.customer) !== customer
       )
         throw invalid();
+      if (method.type !== 'card') throw new UnsupportedTrialPaymentMethod();
+      if (!method.card?.fingerprint) throw invalid();
       let billingLocation:string|undefined;
       if(collectAddress){const customerRecord=await stripe.customers.retrieve(customer);if(customerRecord.deleted)throw invalid();billingLocation=locationDigest(customerRecord.address);}
       return {

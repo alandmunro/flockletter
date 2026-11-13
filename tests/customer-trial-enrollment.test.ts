@@ -10,6 +10,7 @@ import { OperatorStore } from '../src/server/platform/store.js';
 import { simulatedTrialProvider as provider } from './helpers/trial-provider.js';
 import type { CustomerBillingStatus, TrialReview } from '../src/shared/customer-billing.js';
 import type {BillingTaxMode} from '../src/shared/billing-tax.js';
+import { UnsupportedTrialPaymentMethod } from '../src/server/customer-billing/provider.js';
 let f: Awaited<ReturnType<typeof startBillingFixture>>, admin: pg.Client;
 beforeAll(async () => {
   f = await startBillingFixture();
@@ -85,6 +86,33 @@ async function review(s: Awaited<ReturnType<typeof shop>>) {
     }
   ).review;
 }
+it('recovers only an authenticated unsupported method and preserves the original trial reservation', async () => {
+  const p = provider(), s = await shop(p), checkoutKey = randomUUID();
+  await s.call('customerBilling.checkout', { plan: 'starter', operationKey: checkoutKey });
+  const status = await s.call('customerBilling.status') as CustomerBillingStatus;
+  const id = status.trialSetup!.id, inspect = p.g.inspectSetup!;
+  p.g.inspectSetup = async () => { throw Error('Provider unavailable'); };
+  await expect(s.call('customerBilling.trialReview', { setupId: id })).rejects.toThrow('Provider unavailable');
+  expect(await s.call('customerBilling.status')).toMatchObject({trialSetup: {id, state: 'pending'}});
+  p.g.inspectSetup = async () => { throw new UnsupportedTrialPaymentMethod(); };
+  const first = await s.call('customerBilling.trialReview', {setupId: id}) as {state: string; retryAt: string};
+  expect(first.state).toBe('trial_card_required');
+  expect(await s.call('customerBilling.trialReview', {setupId: id})).toEqual(first);
+  expect(await s.call('customerBilling.checkout', {plan:'starter', operationKey: checkoutKey})).toEqual(first);
+  expect(await s.call('customerBilling.checkout', {plan:'starter'})).toEqual(first);
+  expect(p.posts()).toBe(1);
+  expect(p.trialPosts()).toBe(0);
+  expect(await s.call('customerBilling.status')).toMatchObject({eligible:false, trialSetup:{id, state:'expired', cardRetryAt:first.retryAt}});
+  // Advance both the application clock and the isolated registry's reservation.
+  s.setNow(new Date(Date.parse(first.retryAt) + 1000));
+  await admin.query("UPDATE flockletter_customer_jobs.trial_claims SET expires_at=now()-interval '1 second' WHERE intent_id=$1", [id]);
+  await admin.query("UPDATE flockletter_customer_jobs.trial_attempts SET expires_at=now()-interval '1 second' WHERE intent_id=$1", [id]);
+  p.g.inspectSetup = inspect;
+  const next = await review(s);
+  expect(next.setupId).not.toBe(id);
+  expect(p.posts()).toBe(2);
+  expect(p.trialPosts()).toBe(0);
+});
 it('card-only setup and review never create a recurring agreement; exact explicit approval does', async () => {
   const p = provider(),
     s = await shop(p),
