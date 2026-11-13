@@ -980,6 +980,13 @@
                   "policyVersion": {
                     "type": "string",
                     "maxLength": 100
+                  },
+                  "taxMode": {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "stripe-automatic"
+                    ]
                   }
                 },
                 "required": [
@@ -1135,6 +1142,13 @@
                   "policyVersion": {
                     "type": "string",
                     "maxLength": 100
+                  },
+                  "taxMode": {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "stripe-automatic"
+                    ]
                   }
                 },
                 "required": [
@@ -1221,6 +1235,13 @@
                   "policyVersion": {
                     "type": "string",
                     "maxLength": 100
+                  },
+                  "taxMode": {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "stripe-automatic"
+                    ]
                   }
                 },
                 "required": [

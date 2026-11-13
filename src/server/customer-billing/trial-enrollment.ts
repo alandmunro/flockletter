@@ -317,6 +317,7 @@ export class TrialEnrollment {
       const base = {
         version: 1 as const,
         policyVersion:hostedPolicies.version,
+        ...(proof.taxMode?{taxMode:proof.taxMode}:{}),
         limits: trialAllowance,
         ...(proof.locationDigest?{locationDigest:proof.locationDigest,tax:'exclusive' as const}:{}),
         setupId: s.id,
@@ -407,6 +408,7 @@ export class TrialEnrollment {
             proof.customer === s.customer_id &&
             proof.paymentMethod === s.payment_method_id &&
             proof.setupIntent === s.setup_intent_id &&
+            proof.taxMode===s.review.taxMode &&
             registry.card(proof.fingerprint) === s.card_digest && (!s.review.locationDigest || proof.locationDigest===s.review.locationDigest),
           409,
           'card_setup_changed',
@@ -450,7 +452,7 @@ export class TrialEnrollment {
             input.operationKey,
             digest(JSON.stringify(input)),
             g.account,
-            JSON.stringify({ plan: s.plan, trialDays: 14, setupId: s.id, reviewHash: s.review_hash,policyVersion:hostedPolicies.version }),
+            JSON.stringify({ plan: s.plan, trialDays: 14, setupId: s.id, reviewHash: s.review_hash,policyVersion:hostedPolicies.version,...(s.review.taxMode?{taxMode:s.review.taxMode}:{}) }),
           ],
         );
         s.activation_key = input.operationKey;
@@ -476,6 +478,7 @@ export class TrialEnrollment {
       paymentMethod: s.payment_method_id,
       activationKey: s.activation_key,
       trialEnd: s.trial_end_at,
+      ...(s.review?.taxMode?{taxMode:s.review.taxMode}:{}),
       ...(s.review?.locationDigest?{locationDigest:s.review.locationDigest}:{}),
     };
     // Saved approval/claim is already committed. New agreement creation and hold

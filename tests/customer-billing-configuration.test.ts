@@ -327,3 +327,15 @@ it('the executable refuses incomplete input with structured output and exit one'
  expect(result.status).toBe(1);expect(result.stderr).toBe('');
  expect(JSON.parse(result.stdout)).toEqual({verified:false,live:true,checks:[{name:'configuration',status:'fail'}]});
 });
+
+it('inspects explicit off policy against the same exclusive SaaS catalogue using only reads',async()=>{
+ const f=buildFixture((path,data)=>{
+  if(path.includes('/prices/')){data.tax_behavior='exclusive';object(data.product).tax_code='txcd_10103001';}
+ });
+ const result=await inspectCustomerBillingEnvironment({...environment,FLOCKLETTER_BILLING_TAX:'off'},()=>f.stripe);
+ expect(result.verified).toBe(true);expect(f.calls.every(call=>call.method==='GET')).toBe(true);
+});
+it.each(['false','', 'none'])('refuses unsupported tax policy %s before a provider read',async value=>{
+ let called=false;const result=await inspectCustomerBillingEnvironment({...environment,FLOCKLETTER_BILLING_TAX:value},()=>{called=true;throw Error('No client permitted');});
+ expect(called).toBe(false);expect(result).toMatchObject({verified:false,checks:[{name:'configuration',status:'fail'}]});
+});
