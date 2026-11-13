@@ -18,6 +18,9 @@ import { senderProfile,senderFingerprint,senderEligible,legalFooter } from './se
 import { deliveryOutcomes } from './outcomes.js';
 import {deliveryPurposeAllowed} from './policy.js';
 
+// Bound the row-level guard and foreign-key work per statement on hosted Postgres.
+const RECIPIENTS_PER_INSERT=100;
+
 export class CustomerDelivery {
   readonly worker:CustomerDeliveryWorker;
   constructor(readonly db:Database,readonly options:DeliveryOptions) {
@@ -217,12 +220,19 @@ export class CustomerDelivery {
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
       [actor.workspaceId,input.brandId,id,draft.id,draft.version,actor.actorId,actor.userId,selectedProvider.mode,JSON.stringify(snapshot.content),
         rendered.html,rendered.text,JSON.stringify(ordered),senderFingerprint(provider,profile),due,selected.length,(population[0]?.total??0)-selected.length,profile?JSON.stringify(profile):null,purpose,selectedProvider.revision]);
-    const people=selected.map(person=>{const operation=randomUUID();return {operation,subscriber:person.id,
-      email:digest(person.email_normalized),reference:listmonkReference(actor.workspaceId,input.brandId,operation)};});
-    await sql.query(`INSERT INTO customer_delivery_recipients(workspace_id,brand_id,delivery_id,id,subscriber_id,email_digest,engine_reference,state)
-      SELECT $1,$2,$3,p.operation,p.subscriber,p.email,p.reference,'pending'
-      FROM unnest($4::uuid[],$5::uuid[],$6::text[],$7::text[]) p(operation,subscriber,email,reference)`,
-      [actor.workspaceId,input.brandId,id,people.map(p=>p.operation),people.map(p=>p.subscriber),people.map(p=>p.email),people.map(p=>p.reference)]);
+    // Freeze only the already selected audience. All batches, the review and its replay record
+    // share the workspace transaction: a failed batch cannot expose a partial review to approval.
+    for(let offset=0;offset<selected.length;offset+=RECIPIENTS_PER_INSERT) {
+      const people=selected.slice(offset,offset+RECIPIENTS_PER_INSERT).map(person=>{
+        const operation=randomUUID();
+        return {operation,subscriber:person.id,email:digest(person.email_normalized),reference:listmonkReference(actor.workspaceId,input.brandId,operation)};
+      });
+      const written=await sql.query(`INSERT INTO customer_delivery_recipients(workspace_id,brand_id,delivery_id,id,subscriber_id,email_digest,engine_reference,state)
+        SELECT $1,$2,$3,p.operation,p.subscriber,p.email,p.reference,'pending'
+        FROM unnest($4::uuid[],$5::uuid[],$6::text[],$7::text[]) p(operation,subscriber,email,reference)`,
+        [actor.workspaceId,input.brandId,id,people.map(p=>p.operation),people.map(p=>p.subscriber),people.map(p=>p.email),people.map(p=>p.reference)]);
+      requireCondition(written.rowCount===people.length,503,'audience_freeze_incomplete','The audience review could not be saved. Retry with the same operation key.');
+    }
     const result=await deliveryView(sql,await deliveryRow(sql,id,input.brandId));
     return testSubscriberId?{...result,purpose:'test' as const,testSubscriberId} satisfies TestDeliveryReview:result;
   }
