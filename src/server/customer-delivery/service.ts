@@ -1,4 +1,4 @@
-import {selectedDelivery,deliveryProviders,selectDeliveryProvider} from './selection.js';
+import {eligibleBroadcastContacts,selectedDelivery,deliveryProviders,selectDeliveryProvider} from './selection.js';
 import {externalDelivery} from '../../shared/customer-delivery.js';
 import {admitTest,testRecipient} from './test-send.js';
 import type {TestDeliveryReview,TestDeliveryDetails} from '../../shared/customer-test-send.js';
@@ -201,12 +201,10 @@ export class CustomerDelivery {
       SELECT *, (SELECT count(*)::int FROM population) total FROM population
       WHERE state='confirmed' ORDER BY id LIMIT 10001`,[input.segmentId??null,testSubscriberId??null])).rows;
     requireCondition(population.length<=10000,422,'audience_limit','Choose a group with at most 10,000 confirmed contacts.');
-    const selected=[];
-    for(const person of population)if(person.state==='confirmed'&&
-      (this.options.mode==='capture'||await this.options.liveConsent?.(sql,person.id)))selected.push(person);
+    const selectedProvider=await selectedDelivery(sql,this.options,actor.workspaceId,input.brandId),provider=selectedProvider.provider;
+    const selected=await eligibleBroadcastContacts(sql,this.options,selectedProvider.mode,population);
     if(purpose==='test')requireCondition(selected.length===1,422,'test_recipient_ineligible','Select one existing confirmed and consent-eligible contact in this brand.');
     requireCondition(selected.length>0&&selected.length<=10000,422,'audience_empty','Choose between one and 10,000 confirmed eligible contacts.');
-    const selectedProvider=await selectedDelivery(sql,this.options,actor.workspaceId,input.brandId),provider=selectedProvider.provider;
     const profile=await senderProfile(sql,input.brandId);
     if(externalDelivery(selectedProvider.mode))requireCondition(await senderEligible(sql,input.brandId,provider),503,'provider_unavailable','Complete the legal sender profile, current domain verification and provider verification for this brand.');
     const assets=(await sql.query<{id:string;name:string;sha256:string}>('SELECT id,name,sha256 FROM assets WHERE brand_id=$1 AND id=ANY($2::uuid[])',[input.brandId,draft.content.assetIds])).rows;

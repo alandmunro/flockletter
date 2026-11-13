@@ -30,7 +30,7 @@ export function resendSenderSetupPort(key:string,send:typeof fetch=fetch):Sender
  };
 }
 type Row={captured:boolean;workspace_id:string;brand_id:string;operation_id:string;actor_id:string;creator_id:string;domain:string;from_email:string;sender_revision:number;state:SenderSetupState;domain_id:string|null;dns:{name:string;type:string;value:string;priority?:number}[];reason:string|null};
-type Options={enabled:boolean;captured?:boolean;port?:SenderSetupPort;webhookId?:string;isOwner:(user:string,workspace:string)=>Promise<boolean>;eligible:(workspace:string)=>Promise<{eligible:boolean}>;configured?:(workspace:string,brand:string,from:string|undefined)=>boolean;register?:(route:ResendRoute)=>void};
+type Options={enabled:boolean;captured?:boolean;port?:SenderSetupPort;webhookId?:string;isOwner:(user:string,workspace:string)=>Promise<boolean>;eligible:(workspace:string,sql:Sql)=>Promise<{eligible:boolean}>;configured?:(workspace:string,brand:string,from:string|undefined)=>boolean;register?:(route:ResendRoute)=>void};
 export class ResendSenderSetup {
  constructor(private db:Database,readonly options:Options){}
  private async owner(actor:Actor){requireCondition(actor.owner&&await this.options.isOwner(actor.userId,actor.workspaceId),403,'owner_required','Current workspace ownership is required.');}
@@ -45,7 +45,7 @@ export class ResendSenderSetup {
   await brandScope(sql,actor,brand);const profile=await senderProfile(sql,brand),row=(await sql.query<Row>('SELECT * FROM customer_resend_senders WHERE brand_id=$1',[brand])).rows[0];
   const ownership=profile&&(this.options.captured||Boolean((await sql.query("SELECT FROM sender_domains WHERE domain=$1 AND verified_at>clock_timestamp()-interval '24 hours'",[profile.fromEmail.split('@')[1]])).rowCount));
   const gaps:string[]=[];if(!this.options.enabled||!this.options.port)gaps.push('Self-service sender setup is not configured. Contact support; no provider resource or mailing was created.');
-  if(!profile)gaps.push('Save the legal sender profile on Delivery first.');else if(!ownership)gaps.push('Add and verify the Flockletter domain ownership TXT record in Workspace first.');
+  if(!profile)gaps.push('Save the legal sender profile on Delivery first.');else if(!ownership)gaps.push('Save your sending domain and check its ownership TXT record on Delivery.');
   if(row?.state==='uncertain')gaps.push('The domain-creation outcome is unknown. Support must reconcile the original request; do not create a replacement.');
   if(row?.reason)gaps.push(({provider_domain_capacity:'The current provider domain allowance is full. Contact support; this setup will not buy an add-on or upgrade.',provider_request_rejected:'The provider rejected this setup. Check the saved domain and ask support to inspect the existing request before retrying.',provider_outcome_unknown:'The provider response was uncertain. Support must reconcile the existing setup before any replacement.',provider_facts_invalid:'Provider domain facts do not match the approved sender, region or disabled-tracking policy. Contact support.',sender_or_service_changed:'The approving owner, sender, ownership proof or subscription changed. Refresh those checks and review the sender again.',provider_setup_unavailable:'Sender setup could not complete. Refresh this saved setup; contact support if it stays held.',domain_creation_unknown:'Support must reconcile the original domain creation. Do not create another domain.'} as Record<string,string>)[row.reason]??'Sender setup needs support review of the existing request.');
   return {enabled:this.options.enabled&&!!this.options.port,captured:this.options.captured??false,alreadyConfigured:this.options.configured?.(actor.workspaceId,brand,profile?.fromEmail)??false,brandId:brand,ownershipVerified:!!ownership,senderRevision:profile?.revision??null,
@@ -72,7 +72,7 @@ export class ResendSenderSetup {
     requireCondition(row&&row.operation_id===input.setupId,409,'sender_setup_changed','Use this brand’s current exact setup.');await this.current(sql,row);
     if(name==='senderSetup.approve'){
      requireCondition(row.state==='reviewed'&&row.sender_revision===input.senderRevision,409,'sender_setup_changed','Review the exact current sender setup.');
-     requireCondition((await this.options.eligible(actor.workspaceId)).eligible,403,'service_activation_required','Activate eligible service before provider provisioning.');
+     requireCondition((await this.options.eligible(actor.workspaceId,sql)).eligible,403,'service_activation_required','Activate eligible service before provider provisioning.');
      requireCondition((await sql.query<{allowed:boolean}>('SELECT flockletter_customer_jobs.claim_resend_domain($1,$2,$3,$4) allowed',[actor.workspaceId,input.brandId,row.operation_id,row.domain])).rows[0]?.allowed,409,'sender_domain_claimed','This domain has another setup in progress or belongs to another workspace.');
      await sql.query("UPDATE customer_resend_senders SET state='queued',updated_at=now() WHERE brand_id=$1",[input.brandId]);
     }
@@ -90,7 +90,7 @@ export class ResendSenderSetup {
    await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[brand]);
    const row=(await sql.query<Row>("SELECT * FROM customer_resend_senders WHERE ($1::uuid IS NULL OR brand_id=$1) AND state IN('queued','creating','configuring','awaiting_dns','verified') AND (state='queued' OR updated_at<clock_timestamp()-interval '60 seconds') ORDER BY updated_at LIMIT 1 FOR UPDATE",[brand??null])).rows[0];if(!row)return null;
    await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[row.brand_id]);
-   try{requireCondition(row.captured===(this.options.captured??false),409,'sender_setup_mode_changed','Review this setup in the correct environment.');await this.current(sql,row);requireCondition((await this.options.eligible(workspace)).eligible,403,'service_activation_required','Service is not eligible.');}catch{await sql.query("UPDATE customer_resend_senders SET state='held',reason='sender_or_service_changed',updated_at=now() WHERE brand_id=$1",[row.brand_id]);return null;}
+   try{requireCondition(row.captured===(this.options.captured??false),409,'sender_setup_mode_changed','Review this setup in the correct environment.');await this.current(sql,row);requireCondition((await this.options.eligible(workspace,sql)).eligible,403,'service_activation_required','Service is not eligible.');}catch{await sql.query("UPDATE customer_resend_senders SET state='held',reason='sender_or_service_changed',updated_at=now() WHERE brand_id=$1",[row.brand_id]);return null;}
    if(row.state==='creating'&&!row.domain_id){await sql.query("UPDATE customer_resend_senders SET state='uncertain',reason='domain_creation_unknown',updated_at=now() WHERE brand_id=$1",[row.brand_id]);return null;}
    await sql.query("UPDATE customer_resend_senders SET state=CASE WHEN domain_id IS NULL THEN 'creating' ELSE 'configuring' END,updated_at=now() WHERE brand_id=$1",[row.brand_id]);
    return row;

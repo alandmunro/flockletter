@@ -362,6 +362,11 @@ it("does not let existing write grants confirm contacts or promote imports, incl
       { ...old.actor, scopes: ["audience:write", "audience:confirm"] },
     ),
   ).rejects.toMatchObject({ code: "scope_required" });
+  const importer = await makeAudienceConnection(db, a.owner, [a.brand], ["audience:write", "audience:confirm"]);
+  await a.audience.execute("audienceOnboarding.import", input, importer.actor);
+  await db.tenant(a.w, sql => sql.query("UPDATE connections SET scopes=ARRAY['audience:write'] WHERE id=$1", [importer.id]));
+  await expect(a.audience.execute("audienceOnboarding.import", input, importer.actor))
+    .rejects.toMatchObject({ code: "scope_required" });
   const grant = await makeAudienceConnection(
     db,
     a.owner,
@@ -483,4 +488,41 @@ it("serializes concurrent confirmation so consent is recorded once and bounds ba
       policyVersion: "v1",
     }).success,
   ).toBe(false);
+});
+
+it("certifies a first newsletter list of 2,500 with one receipt and one permission history per contact", async () => {
+  const count = 2500;
+  const a = await setup("live", count);
+  const emails = Array.from({ length: count }, (_, i) => `row_${i}@import.test`);
+  const csv = ["email,details", ...emails.map(email => email + "," + "x".repeat(160))].join("\n");
+
+  const input = {
+    confirmWithoutEmail: true,
+    consentPolicyVersion: "v1",
+    operationKey: randomUUID(),
+  };
+
+  const first = await a.importContacts(csv, input);
+
+  expect(first.rows).toHaveLength(count);
+  expect(new Set(first.rows.map(row => row.outcome))).toEqual(new Set(["subscribed_added"]));
+
+  const retry = await a.importContacts(csv, input);
+  expect(retry).toEqual(first);
+
+  const contacts = await a.contacts();
+  expect(contacts).toHaveLength(count);
+  expect(new Set(contacts.map(contact => contact.state))).toEqual(new Set(["confirmed"]));
+
+  const audit = await db.brand(a.w, a.brand, async sql => (await sql.query(
+    `SELECT event,source,evidence_source,recorded_by,policy_version,count(*)::int n,count(DISTINCT subscriber_id)::int people
+       FROM subscriber_consent_events GROUP BY event,source,evidence_source,recorded_by,policy_version ORDER BY event`
+  )).rows);
+  const evidence = { n: count, people: count, evidence_source: "In-store permission", recorded_by: "user:owner", policy_version: "v1" };
+  expect(audit).toEqual([
+    { ...evidence, event: "confirmed", source: "customer-live-owner-attestation" },
+    { ...evidence, event: "signup_requested", source: "customer-live-import" },
+  ]);
+  expect((await a.importContacts("email\nover-cap@import.test", { ...input, operationKey: randomUUID() })).rows[0]?.outcome).toBe("contact_limit");
+  expect((await a.status()).messages).toEqual([]);
 });

@@ -163,8 +163,8 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
     ).rows;
     expect(schedulerFunctions.map(row=>row.name)).toEqual(expect.arrayContaining(['wake','due_scopes','snooze','record_pass',
       'scope_status','claim_provisioning_budget','trial_claim','trial_retention_inventory','trial_expire_claims',
-      'register_support_reply_route','resolve_support_reply_route','register_confirmation_route','resolve_confirmation_route','worker_heartbeat','worker_stop','worker_liveness','sending_usage','sending_status','sending_admit','sending_outcome','claim_resend_domain','bind_resend_domain','owned_resend_domain','register_resend_route','resend_routes','resolve_resend_route']));
-    expect(schedulerFunctions).toHaveLength(26);
+      'register_support_reply_route','resolve_support_reply_route','register_confirmation_route','resolve_confirmation_route','worker_heartbeat','worker_stop','worker_liveness','sending_usage','sending_status','sending_admit','sending_cooldown','sending_outcome','claim_resend_domain','bind_resend_domain','owned_resend_domain','register_resend_route','resend_routes','resolve_resend_route']));
+    expect(schedulerFunctions).toHaveLength(27);
     expect(schedulerFunctions.every((row) => row.owner === 'flockletter_staging_migrator')).toBe(true);
     await control.query('ALTER SCHEMA flockletter_customer_jobs OWNER TO flockletter_staging_migrator');
     const alreadyMigratorOwned = prepareSchemas(ownerUrl.href);

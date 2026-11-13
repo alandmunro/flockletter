@@ -27,13 +27,13 @@ export function supportAnswer(topic: SupportTopic) {
       return {
         title: 'When does a trial start?',
         text:
-          'The planned hosted trial requires a card and lasts ' +
+          'Verify a card with Stripe, then review and accept the price and first-charge date in Subscription. The trial lasts ' +
           hostedTrial.days +
           ' days, with ' +
-          hostedTrial.activeContacts +
+          hostedTrial.activeContacts.toLocaleString('en-US') +
           ' active contacts and ' +
-          hostedTrial.totalEmails +
-          ' total recipient emails. Creating a staging workspace does not start a paid trial.',
+          hostedTrial.totalEmails.toLocaleString('en-US') +
+          ' recipient emails across the whole trial, with up to two campaigns. Test emails count toward the same allowance.',
       };
     case 'audience':
       return {

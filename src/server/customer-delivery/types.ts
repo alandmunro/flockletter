@@ -24,7 +24,7 @@ export type CustomerProvider = {
   fingerprint:string;
   ready?:()=>Promise<boolean>;
   from?:string;
-  submit(message:DeliveryEnvelope):Promise<{outcome:DeliveryOutcome;messageId?:string}>;
+  submit(message:DeliveryEnvelope):Promise<{outcome:DeliveryOutcome;messageId?:string;retryAfterSeconds?:number}>;
   lookup(operation:string,messageId?:string|null):Promise<{outcome:DeliveryOutcome;messageId?:string}>;
 };
 export type DeliveryOptions = {

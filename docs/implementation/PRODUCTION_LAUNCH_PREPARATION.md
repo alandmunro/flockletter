@@ -39,7 +39,7 @@ On November 9 the owner accepted D-048/049/050. The table distinguishes that pol
 | Topic | Policy and remaining condition |
 | --- | --- |
 | Plans | Existing accepted USD $15/$25/$39 monthly catalogue and pooled limits remain. No annual product, discount or overage charge is activated by this update. |
-| Trial | D-049 accepts one company, brand and user, two campaigns, 250 active contacts and 500 total recipient emails across the complete 14-day trial. Card setup and the customer’s exact recurring price/date acceptance remain required. |
+| Trial | The current trial permits one company, brand and user, two campaigns, 2,500 active contacts and 2,500 total recipient emails across the complete 14-day trial. Card setup and the customer’s exact recurring price/date acceptance remain required. |
 | Changes | D-049 accepts immediate prorated upgrades only after selected provider/portal behavior is verified; downgrade/cancellation apply at renewal/current service end. Paid allowances use UTC calendar months without resetting consumed usage on plan changes or retries. |
 | Failed payment | D-049 accepts suspension on day six and closure on day thirty from the first failure, retaining essential billing, suppression and approved data access. Repeated failures do not reset the clock. |
 | Refunds | D-049 accepts manual review; no automatic refund promise or authorization of an individual refund. |

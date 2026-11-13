@@ -1,4 +1,4 @@
-import {selectedDelivery} from './selection.js';
+import {eligibleBroadcastContacts,selectedDelivery} from './selection.js';
 import {externalDelivery} from '../../shared/customer-delivery.js';
 import {testBudget} from './test-send.js';
 import type { Campaign,Gap } from '../../shared/contracts.js';
@@ -66,8 +66,7 @@ export async function customerCampaignPreflight(sql:Sql,actor:Actor,campaign:Cam
    audience={visibility:'over_limit',confirmed:population[0]?.confirmed??0};
    add('audience_limit','Narrow the audience','Choose at most 10,000 confirmed contacts. Exact eligible/excluded counts are unavailable until the audience is narrowed.','audience');
   } else {
-   const eligible=!externalDelivery(selected.mode)?population.map(p=>p.id):options.liveConsentBatch?await options.liveConsentBatch(sql,population.map(p=>p.id)):
-     (await Promise.all(population.map(async person=>await options.liveConsent?.(sql,person.id)?person.id:null))).filter((id):id is string=>id!==null);
+   const eligible=await eligibleBroadcastContacts(sql,options,selected.mode,population);
    audience={visibility:'available',confirmed:population[0]?.confirmed??0,selected:eligible.length,excluded:total-eligible.length};
    if(!eligible.length)add('confirmed_audience_required','Confirm subscribers','No confirmed, consent-eligible recipient is available for this review.','audience');
   }

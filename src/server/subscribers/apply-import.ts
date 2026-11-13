@@ -1,7 +1,7 @@
 import { plans } from '../../shared/contracts.js';
 import { practiceImportRows, type ApplyImportInput, type ApplyImportResult, type ApplyOutcome } from '../../shared/import-preview.js';
 import type { SubscriberState } from '../../shared/audience.js';
-import { hostedTrial } from '../../shared/trial.js';
+import { preparationContactLimit } from '../../shared/trial.js';
 import { workspaceAccess } from '../campaign/access.js';
 import type { Sql } from '../db.js';
 import { requireCondition } from '../errors.js';
@@ -13,7 +13,7 @@ type StoredAddress = { email_normalized: string; state: SubscriberState };
 // across its brands, under each brand's existing RLS policy, without reading addresses.
 async function remainingPracticeStorage(sql: Sql, selectedBrand: string) {
   const access = await workspaceAccess(sql);
-  const maximum = plans.find((plan) => plan.id === access.plan)?.contacts ?? hostedTrial.activeContacts;
+  const maximum = plans.find((plan) => plan.id === access.plan)?.contacts ?? preparationContactLimit;
   const brands = (await sql.query<{ id: string }>('SELECT id FROM brands ORDER BY id')).rows;
   let remaining: number = maximum;
   for (const brand of brands) {

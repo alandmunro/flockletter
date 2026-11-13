@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS flockletter_customer_jobs.sending_admissions (
 CREATE INDEX IF NOT EXISTS sending_admissions_period ON flockletter_customer_jobs.sending_admissions(provider,created_at);
 CREATE TABLE IF NOT EXISTS flockletter_customer_jobs.sending_account (
  singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),exercise boolean NOT NULL DEFAULT false,next_at timestamptz,
- observed_at timestamptz, snapshot_started_at timestamptz,monthly_used integer,monthly_limit integer,monthly_reset timestamptz,
+ resend_retry_at timestamptz,observed_at timestamptz, snapshot_started_at timestamptz,monthly_used integer,monthly_limit integer,monthly_reset timestamptz,
  daily_used integer,daily_limit integer,daily_reset timestamptz
 );
 INSERT INTO flockletter_customer_jobs.sending_account(singleton) VALUES(true) ON CONFLICT DO NOTHING;
@@ -39,7 +39,7 @@ CREATE OR REPLACE FUNCTION flockletter_customer_jobs.sending_status(target text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE
  s flockletter_customer_jobs.sending_state; a flockletter_customer_jobs.sending_account; approval jsonb;
- phase text:='new'; daily integer:=100; used integer; delivered integer; age_days integer:=0; blocked boolean:=false;
+ phase text:='new'; daily integer:=2500; used integer; delivered integer; age_days integer:=0; blocked boolean:=false;
  warned boolean:=false; reason text[]:='{}'; count_window integer; bounce_window integer; window_hours integer; extra integer; account_used integer;
 BEGIN
  IF target IS DISTINCT FROM current_setting('app.workspace_id',true) OR target !~ '^org_[A-Za-z0-9_-]{1,120}$' THEN RAISE EXCEPTION 'Invalid sending scope'; END IF;
@@ -50,8 +50,8 @@ BEGIN
  IF s.first_sent_at IS NOT NULL THEN age_days:=greatest(0,floor(extract(epoch FROM clock_timestamp()-s.first_sent_at)/86400)::integer); END IF;
  SELECT body INTO approval FROM flockletter_retention_control.platform_records WHERE workspace_id=target AND kind='approval' AND id='sending-trust';
  IF approval IS NULL AND a.exercise THEN SELECT body INTO approval FROM public.platform_exercise_records WHERE workspace_id=target AND kind='approval' AND id='sending-trust'; END IF;
- IF approval->>'phase'='limited' THEN phase:='limited';
- ELSIF approval->>'phase'='established' AND age_days>=7 AND delivered>=100 THEN phase:='established';daily:=500;
+ IF approval->>'phase'='limited' THEN phase:='limited';daily:=100;
+ ELSIF approval->>'phase'='established' AND age_days>=7 AND delivered>=100 THEN phase:='established';daily:=5000;
  ELSIF approval->>'phase'='full' AND age_days>=14 AND delivered>=500 THEN phase:='full';daily:=NULL; END IF;
  blocked:=coalesce(s.held,false) AND NOT(coalesce(approval->>'resume','false')='true' AND approval->>'incidentRevision'=s.incident_revision::text);
  IF blocked THEN reason:=array_append(reason,'sending_reputation_hold'); END IF;
@@ -62,6 +62,7 @@ BEGIN
  END LOOP;
  IF daily IS NOT NULL AND used>=daily THEN reason:=array_append(reason,'sending_daily_limit'); END IF;
  SELECT * INTO a FROM flockletter_customer_jobs.sending_account WHERE singleton;
+ IF a.resend_retry_at>clock_timestamp() THEN reason:=array_append(reason,'sending_provider_backoff'); END IF;
  IF a.observed_at IS NULL OR a.observed_at<clock_timestamp()-interval '120 seconds' OR a.monthly_reset<=clock_timestamp() OR a.daily_reset<=clock_timestamp() THEN
   reason:=array_append(reason,'sending_provider_usage_unavailable');
  ELSE
@@ -89,6 +90,9 @@ BEGIN
  DELETE FROM flockletter_customer_jobs.sending_state WHERE NOT held AND last_activity_at<clock_timestamp()-interval '90 days';
  s:=flockletter_customer_jobs.sending_status(target);
  IF (s->>'held')::boolean THEN RETURN jsonb_build_object('allowed',false,'reason','sending_reputation_hold','retryAt',NULL); END IF;
+ IF mode='resend' AND (s->'codes') ? 'sending_provider_backoff' THEN
+  RETURN jsonb_build_object('allowed',false,'reason','sending_provider_backoff','retryAt',(SELECT resend_retry_at FROM flockletter_customer_jobs.sending_account WHERE singleton));
+ END IF;
  IF mode='resend' AND (s->'codes') ?| ARRAY['sending_provider_usage_unavailable','sending_provider_capacity'] THEN
   RETURN jsonb_build_object('allowed',false,'reason',CASE WHEN (s->'codes') ? 'sending_provider_usage_unavailable' THEN 'sending_provider_usage_unavailable' ELSE 'sending_provider_capacity' END,'retryAt',now_at+interval '60 seconds'); END IF;
  -- Every prior unknown stays admitted, but is never submitted by this routine or the worker again.
@@ -98,11 +102,22 @@ BEGIN
  FROM flockletter_customer_jobs.sending_account a CROSS JOIN flockletter_customer_jobs.sending_state w WHERE a.singleton AND w.workspace_id=target;
  IF available>now_at THEN RETURN jsonb_build_object('allowed',false,'reason','sending_rate_wait','retryAt',available); END IF;
  INSERT INTO flockletter_customer_jobs.sending_admissions(workspace_id,recipient_id,provider) VALUES(target,recipient,mode) ON CONFLICT DO NOTHING;
- UPDATE flockletter_customer_jobs.sending_state SET next_at=now_at+interval '1 second',last_activity_at=now_at WHERE workspace_id=target;
- UPDATE flockletter_customer_jobs.sending_account SET next_at=now_at+interval '500 milliseconds' WHERE singleton;
+ UPDATE flockletter_customer_jobs.sending_state SET next_at=now_at+CASE WHEN mode='resend' THEN interval '250 milliseconds' ELSE interval '1 second' END,last_activity_at=now_at WHERE workspace_id=target;
+ UPDATE flockletter_customer_jobs.sending_account SET next_at=now_at+CASE WHEN mode='resend' THEN interval '250 milliseconds' ELSE interval '500 milliseconds' END WHERE singleton;
  RETURN jsonb_build_object('allowed',true,'reason',NULL,'retryAt',NULL);
 END $$;
 
+-- A definitive throttling response applies to the Resend account, including its other workspaces.
+CREATE OR REPLACE FUNCTION flockletter_customer_jobs.sending_cooldown(target text,recipient uuid,seconds integer)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+BEGIN
+ IF target IS DISTINCT FROM current_setting('app.workspace_id',true) OR seconds IS NULL OR seconds NOT BETWEEN 1 AND 86400 OR NOT EXISTS(
+  SELECT FROM public.customer_delivery_recipients p JOIN flockletter_customer_jobs.sending_admissions a ON a.workspace_id=p.workspace_id AND a.recipient_id=p.id
+  WHERE p.workspace_id=target AND p.id=recipient AND p.state='submitting' AND p.attempts>0 AND a.provider='resend'
+ ) THEN RAISE EXCEPTION 'Backoff requires an admitted Resend submission'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('flockletter:sending-global',0));
+ UPDATE flockletter_customer_jobs.sending_account SET resend_retry_at=greatest(resend_retry_at,clock_timestamp()+make_interval(secs=>seconds)) WHERE singleton;
+END $$;
 CREATE OR REPLACE FUNCTION flockletter_customer_jobs.sending_outcome(target text,recipient uuid,outcome text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE fresh boolean;total integer;bounces integer;hours integer;incident boolean:=false;
@@ -131,7 +146,7 @@ BEGIN
   IF incident THEN UPDATE flockletter_customer_jobs.sending_state SET held=true,incident_revision=incident_revision+1,last_activity_at=clock_timestamp() WHERE workspace_id=target; END IF;
  END IF;
 END $$;
-REVOKE ALL ON FUNCTION flockletter_customer_jobs.sending_usage(integer,integer,timestamptz,integer,integer,timestamptz,timestamptz),flockletter_customer_jobs.sending_status(text),flockletter_customer_jobs.sending_admit(text,uuid),flockletter_customer_jobs.sending_outcome(text,uuid,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION flockletter_customer_jobs.sending_cooldown(text,uuid,integer),flockletter_customer_jobs.sending_usage(integer,integer,timestamptz,integer,integer,timestamptz,timestamptz),flockletter_customer_jobs.sending_status(text),flockletter_customer_jobs.sending_admit(text,uuid),flockletter_customer_jobs.sending_outcome(text,uuid,text) FROM PUBLIC;
 DO $$ DECLARE table_name text; BEGIN
  FOREACH table_name IN ARRAY ARRAY['sending_state','sending_admissions'] LOOP
  EXECUTE format('CREATE OR REPLACE TRIGGER flockletter_retention_insert_guard BEFORE INSERT ON flockletter_customer_jobs.%I FOR EACH ROW EXECUTE FUNCTION public.flockletter_retention_insert_guard()',table_name);

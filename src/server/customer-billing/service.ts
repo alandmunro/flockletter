@@ -1,3 +1,4 @@
+import {preparationContactLimit} from '../../shared/trial.js';
 import {hostedPolicies} from '../../shared/hosted-policies.js';
 import {publicSubscriptionOffers,proEnrollmentNotice} from '../../shared/subscription-offers.js';
 import { lockWorkspace } from '../workspace-lock.js';
@@ -244,10 +245,26 @@ export async function customerCapacity(sql: Sql) {
     (await sql.query<{ brand: string }>("SELECT current_setting('app.intake_brand_id',true) brand"))
       .rows[0]?.brand ?? '';
   const brands = (await sql.query<{ id: string }>('SELECT id FROM brands')).rows;
-  const contacts = new Set<string>();
+  const companies = (await sql.query<{ count: number }>('SELECT count(*)::int count FROM companies')).rows[0]!.count;
+  let scopedBrand = selected;
   try {
+    // Trial and Starter have one brand, where the per-brand email uniqueness constraint
+    // lets PostgreSQL count contacts without transferring every address on each send check.
+    if (brands.length === 1) {
+      const brand = brands[0]!.id;
+      if (scopedBrand !== brand) {
+        await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand]);
+        scopedBrand = brand;
+      }
+      const count = await sql.query<{ contacts: number }>(
+        "SELECT count(*)::int contacts FROM subscribers WHERE state='confirmed'",
+      );
+      return { brands: 1, companies, contacts: count.rows[0]!.contacts };
+    }
+    const contacts = new Set<string>();
     for (const brand of brands) {
       await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand.id]);
+      scopedBrand = brand.id;
       for (const row of (
         await sql.query<{ email_normalized: string }>(
           "SELECT email_normalized FROM subscribers WHERE state='confirmed'",
@@ -255,15 +272,10 @@ export async function customerCapacity(sql: Sql) {
       ).rows)
         contacts.add(row.email_normalized);
     }
+    return { brands: brands.length, companies, contacts: contacts.size };
   } finally {
-    await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [selected]);
+    if (scopedBrand !== selected) await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [selected]);
   }
-  return {
-    brands: brands.length,
-    companies: (await sql.query<{ count: number }>('SELECT count(*)::int count FROM companies')).rows[0]!
-      .count,
-    contacts: contacts.size,
-  };
 }
 export async function customerContactLimit(
   sql: Sql,
@@ -271,7 +283,7 @@ export async function customerContactLimit(
   options?: Partial<BillingOptions>,
 ) {
   const status = await customerEligibility(sql, workspace, options);
-  return status.eligible ? status.limits!.contacts : trialAllowance.contacts;
+  return status.eligible ? status.limits!.contacts : preparationContactLimit;
 }
 export async function customerSeatLimit(sql: Sql, workspace: string, options?: Partial<BillingOptions>) {
   const status = await customerEligibility(sql, workspace, options);

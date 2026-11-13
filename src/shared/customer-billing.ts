@@ -167,6 +167,7 @@ export type CustomerBillingStatus = {
   legacyCheckout?: boolean;
 };
 export type TrialReview = {
+  limits?: CustomerAllowance;
   policyVersion?:string;
   locationDigest?:string;
   tax?:'exclusive';

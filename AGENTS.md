@@ -2,6 +2,8 @@
 
 ## Current authorization
 
+D-061 supersedes the original trial contact/email quota and initial sending pace for the first-session newsletter journey. Verify an exact 2,500-recipient trial queue using disposable contacts and report queue, provider acceptance and inbox delivery separately. See the current SRD and launch runbook.
+
 D-058/059 authorize the accepted permission-based sending safeguards, customer sender onboarding, public subscription completion, merge and staging-first production deployment. They supersede earlier blanket instructions to keep billing/broadcasts off only after actual provider, tax, credential, webhook and staging checks pass. Never send a campaign merely by enabling transport. D-060 explicitly keeps existing Resend spending, disables add-ons/overages, and holds new Pro enrollment across UI/API/MCP/Stripe entry points without changing the original Pro catalogue. Preserve FFA’s complimentary Growth and other applications. See [public launch controls](docs/implementation/PUBLIC_SUBSCRIPTION_LAUNCH.md). Unverified local taxability and action-specific access approvals remain gates; do not mark them complete from code tests.
 
 D-055 authorizes selectable AWS SES and Resend newsletter delivery, with per-brand dashboard/API/MCP choice, separately granted `delivery:configure` access, local-model drafts and primary validation. Read [the delivery runbook](docs/implementation/SELECTABLE_DELIVERY.md). Never auto-failover uncertain sends or change old reviewed routing. Preserve test-only/broadcast gates and keep live billing and general sending off.

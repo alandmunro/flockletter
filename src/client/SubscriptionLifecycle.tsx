@@ -15,8 +15,9 @@ type BillingApi = {
 };
 const date = (value: string | null) => (value ? new Date(value).toLocaleString() : '—');
 
-export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=false, onPlanChange }: {
+export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=false, onPlanChange, onContinueSetup }: {
   api: BillingApi;
+  onContinueSetup?: () => void;
   initialPlan?: CustomerPlan;
   returnedFromStripe?: boolean;
   onPlanChange?: (plan:CustomerPlan)=>void;
@@ -242,6 +243,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
               ? 'Subscription eligibility is satisfied. Sender, audience and campaign checks still apply.'
               : status.reasons.join(' ')}
           </p>
+          {status.eligible && onContinueSetup && <button className="btn" onClick={onContinueSetup}>Continue to sender setup</button>}
           {status.source !== 'complimentary' && (
             <>
               <label>
@@ -450,6 +452,7 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
                               date: {review.firstChargeAt.slice(0, 10)} (UTC). Applicable tax is additional and is calculated from your billing address. Cancel before that date to
                               avoid renewal charges. This review expires at {date(review.expiresAt)}.
                             </p>
+                            {review.limits && <p>Your trial includes up to {review.limits.contacts.toLocaleString('en-US')} active contacts and {review.limits.emails.toLocaleString('en-US')} recipient emails across {review.limits.campaigns} campaigns. Test emails also use this allowance.</p>}
                             <p>Read how lifetime trial-eligibility history is retained in the <a href="/privacy">privacy notice</a>.</p>
                             <label>
                               <input

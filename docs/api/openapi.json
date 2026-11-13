@@ -1988,7 +1988,7 @@
     "/api/v1/commands/audienceOnboarding.import": {
       "post": {
         "operationId": "audienceOnboarding_import",
-        "summary": "Import contacts with permission. Immediate subscription additionally requires audience:confirm and the current consent policy. Existing suppression is preserved.",
+        "summary": "Import up to 2,500 CSV rows (1 MiB) for one brand with permission. Immediate subscription additionally requires audience:confirm and the current consent policy. Existing suppression is preserved.",
         "security": [
           {
             "bearerAuth": []
@@ -2012,7 +2012,7 @@
                   "csvBase64": {
                     "type": "string",
                     "minLength": 4,
-                    "maxLength": 349528
+                    "maxLength": 1398104
                   },
                   "emailColumn": {
                     "type": "integer",
@@ -9631,7 +9631,7 @@
                   "csvBase64": {
                     "type": "string",
                     "minLength": 4,
-                    "maxLength": 349528
+                    "maxLength": 1398104
                   },
                   "emailColumn": {
                     "type": "integer",
@@ -9707,7 +9707,7 @@
                   "csvBase64": {
                     "type": "string",
                     "minLength": 4,
-                    "maxLength": 349528
+                    "maxLength": 1398104
                   },
                   "emailColumn": {
                     "type": "integer",

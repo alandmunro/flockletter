@@ -36,8 +36,8 @@ describe('public hosted pricing and staging setup', () => {
     expect(page.match(/<h1\b/g)).toHaveLength(1);
     for (const phrase of [
       /14.day/i,
-      /250 active contacts/i,
-      /500 total recipient emails/i,
+      /2,500 active contacts/i,
+      /2,500 total recipient emails/i,
       /card/i,
       /staging/i,
       /does not charge|no payment|without a charge|no charge/i,

@@ -1,3 +1,4 @@
+import {SenderDomain} from './SenderDomain.js';
 import {SenderSetupPanel} from './SenderSetupPanel.js';
 import {SendingTrustNotice} from './SendingTrustNotice.js';
 import type {SendingTrustStatus} from '../shared/sending-safeguards.js';
@@ -28,11 +29,21 @@ function captureHtml(message:Captured) {
 }
 export function CustomerDeliveryPanel({api,brands,canChooseProvider=false}:{api:Api;brands:Brand[];canChooseProvider?:boolean}) {
   const [id,setId]=useState(brands[0]?.id??''),[providerRevision,setProviderRevision]=useState(0);
+  const [senderRevision,setSenderRevision]=useState(0);
+  const senderChanged=()=>setSenderRevision(value=>value+1);
   const brand=brands.find(item=>item.id===id);
   return <><h1 className="page-heading">Delivery</h1><p className="page-intro">Review your saved message and audience, then approve that exact version.</p>
     <div className="field"><label htmlFor="delivery-brand">Sending brand</label><select id="delivery-brand" value={id} onChange={event=>setId(event.target.value)}>
       {brands.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
-    {brand&&<>{canChooseProvider&&<DeliveryProviderPanel key={'provider-'+brand.id} api={api} brandId={brand.id} onChanged={()=>setProviderRevision(v=>v+1)}/>}<DeliveryBrand key={brand.id+'-'+providerRevision} api={api} brand={brand}/><SenderProfilePanel key={'sender-'+brand.id+'-'+providerRevision} api={api} brandId={brand.id}/>{canChooseProvider&&<SenderSetupPanel key={'setup-'+brand.id} api={api} brandId={brand.id}/>}</>}
+    {brand&&<>
+      <SenderProfilePanel key={'sender-'+brand.id} api={api} brandId={brand.id} onSaved={senderChanged}/>
+      {canChooseProvider&&<>
+        <SenderDomain key={'domain-'+brand.id} api={api} brand={brand} onChanged={senderChanged} showSimulator={false}/>
+        <SenderSetupPanel key={'setup-'+brand.id} api={api} brandId={brand.id} refreshRevision={senderRevision}/>
+        <DeliveryProviderPanel key={'provider-'+brand.id} api={api} brandId={brand.id} onChanged={()=>setProviderRevision(v=>v+1)}/>
+      </>}
+      <DeliveryBrand key={brand.id+'-'+providerRevision} api={api} brand={brand}/>
+    </>}
   </>;
 }
 function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
@@ -114,7 +125,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
       {status?.trust&&<SendingTrustNotice status={status.trust}/>}
       {status?.mode==='capture'&&<p className="help">These messages stay in your staging workspace. Captured outcomes exercise the workflow and cannot prove inbox delivery.</p>}
       {!!status?.gaps.length&&<ul>{status.gaps.map(gap=><li key={gap}>{gap}</li>)}</ul>}
-      {!status?.eligible&&<div className="notice"><strong>Service activation needed</strong><ul>{status?.eligibility.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul><p>Open Subscription to review your plan or start a captured trial.</p></div>}
+      {!status?.eligible&&<div className="notice"><strong>Service activation needed</strong><ul>{status?.eligibility.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul><p>Open Subscription to check your plan and available trial options.</p></div>}
       <fieldset disabled={!!busy}>
         <div className="field"><label htmlFor="delivery-campaign">Saved campaign</label><select id="delivery-campaign" value={campaignId} onChange={event=>{setCampaignId(event.target.value);setReview(null);setChecks(null);}}>
           {campaigns.map(item=><option key={item.id} value={item.id}>{item.content.subject||item.content.title||'Untitled'} · version {item.version}</option>)}</select></div>

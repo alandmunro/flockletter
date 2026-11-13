@@ -170,6 +170,18 @@ it('preparation status through CommandService is ineligible and operations shows
   expect(deliveryStatus.eligible).toBe(false);
 });
 
+it('drains due campaign work beyond eight transitions and returns its actual pacing deadline',async()=>{
+  const f=await factory();
+  const tick=vi.spyOn(f.runtime.delivery.worker,'tick');
+  for(let i=0;i<12;i++)tick.mockResolvedValueOnce({processed:true});
+  tick.mockImplementation(async()=>({processed:false,retryAt:new Date(Date.now()+250).toISOString()}));
+  const maintenance=vi.spyOn(f.runtime.senderSetup,'tick');
+  const delay=await f.runtime.processWorkspace(f.workspaceId,false);
+  expect(tick).toHaveBeenCalledTimes(13);
+  expect(delay).toBeGreaterThan(0);
+  expect(delay).toBeLessThanOrEqual(251);
+  expect(maintenance).not.toHaveBeenCalled();
+});
 it('shares activated Growth company and brand limits through the ordinary command dispatcher', async () => {
   const f = await factory();
 

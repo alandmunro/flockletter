@@ -32,7 +32,7 @@ afterAll(async () => {
   await fixture?.stop();
 });
 
-async function factory(optionsOverride: Partial<DeliveryOptions> = {}) {
+async function factory(optionsOverride: Partial<DeliveryOptions> = {}, paid=true) {
   const workspaceId = 'org_' + randomUUID().replaceAll('-', ''),
     userId = 'user_' + randomUUID(),
     actor: Actor = {
@@ -77,7 +77,7 @@ async function factory(optionsOverride: Partial<DeliveryOptions> = {}) {
     { operationKey: randomUUID(), plan: 'starter', simulatedCardConfirmed: true },
     actor,
   );
-  await billing.execute(
+  if(paid)await billing.execute(
     'customerBilling.exercisePayment',
     { operationKey: randomUUID(), result: 'succeeded' },
     actor,
@@ -129,6 +129,28 @@ async function reviewAndApprove(f: Awaited<ReturnType<typeof factory>>) {
   return reviewed;
 }
 
+it('freezes and queues 2,500 confirmed first-newsletter recipients with one approval and no duplicate reservation', async () => {
+  const f = await factory({},false);
+  expect((await billing.status(f.workspaceId)).state).toBe('trialing');
+  await db.brand(f.workspaceId, f.brandId, sql => sql.query(`
+    INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+    SELECT $1,$2,gen_random_uuid(),'reader-'||n||'@example.test','confirmed' FROM generate_series(1,2499) n
+  `, [f.workspaceId, f.brandId]));
+  const started = performance.now();
+  const review = await reviewAndApprove(f);
+  const repeat = await f.delivery.execute('delivery.approve', {
+    operationKey: randomUUID(), brandId:f.brandId, id:review.id
+  }, f.actor) as DeliveryView;
+  expect(repeat).toMatchObject({id:review.id,selected:2500,state:'queued'});
+  const queue=await db.brand(f.workspaceId,f.brandId,sql=>sql.query(`
+    SELECT count(*)::int AS queued,count(DISTINCT subscriber_id)::int AS unique_contacts,
+      count(DISTINCT id)::int AS unique_operations FROM customer_delivery_recipients
+    WHERE delivery_id=$1 AND state='pending'
+  `,[review.id]));
+  expect(queue.rows[0]).toEqual({queued:2500,unique_contacts:2500,unique_operations:2500});
+  expect(performance.now()-started).toBeLessThan(30_000);
+}, 45_000);
+
 it('renders to reserved address, captures message with unsubscribe and settles delivery', async () => {
   const f = await factory();
   const id = (await reviewAndApprove(f)).id;
@@ -152,6 +174,23 @@ it('renders to reserved address, captures message with unsubscribe and settles d
     f.actor,
   )) as { html: string };
   expect(message.html).toContain('Unsubscribe from this newsletter');
+});
+
+it('rechecks an unavailable Clerk membership before retrying an unsubmitted recipient',async()=>{
+  const f=await factory();
+  const id=(await reviewAndApprove(f)).id;
+  await f.delivery.worker.tick(f.workspaceId,id);
+  f.options.isOwner=async()=>{throw Error('temporary Clerk failure');};
+  await f.delivery.worker.tick(f.workspaceId,id);
+  const read=()=>db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query(
+    'SELECT id,state,reason,attempts,next_check_at FROM customer_delivery_recipients WHERE delivery_id=$1',[id])).rows[0]!);
+  const saved=await read();
+  expect(saved).toMatchObject({state:'prepared',reason:'authority_verification_unavailable',attempts:0});
+  expect(await f.delivery.worker.tick(f.workspaceId,id)).toEqual({processed:false});
+  f.options.now=()=>new Date(saved.next_check_at.getTime()+1);
+  f.options.isOwner=async()=>true;
+  await f.delivery.worker.tick(f.workspaceId,id);
+  expect(await read()).toMatchObject({id:saved.id,state:'accepted',attempts:1});
 });
 
 it('excludes subscriber who unsubscribes after render', async () => {

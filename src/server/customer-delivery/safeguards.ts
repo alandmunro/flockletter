@@ -31,5 +31,6 @@ export class SendingSafeguards {
  async admit(sql:Sql,workspace:string,recipient:string):Promise<{allowed:boolean;reason:string|null;retryAt:string|null}>{
   return (await sql.query('SELECT flockletter_customer_jobs.sending_admit($1,$2) admission',[workspace,recipient])).rows[0]!.admission;
  }
+ async cooldown(sql:Sql,workspace:string,recipient:string,seconds:number){await sql.query('SELECT flockletter_customer_jobs.sending_cooldown($1,$2,$3)',[workspace,recipient,seconds]);}
  async outcome(sql:Sql,workspace:string,recipient:string,kind:string){await sql.query('SELECT flockletter_customer_jobs.sending_outcome($1,$2,$3)',[workspace,recipient,kind]);}
 }

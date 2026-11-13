@@ -1,3 +1,4 @@
+import {trialAllowance} from './policy.js';
 import {hostedPolicies} from '../../shared/hosted-policies.js';
 import {lockWorkspace} from '../workspace-lock.js';
 import { randomUUID } from 'node:crypto';
@@ -316,6 +317,7 @@ export class TrialEnrollment {
       const base = {
         version: 1 as const,
         policyVersion:hostedPolicies.version,
+        limits: trialAllowance,
         ...(proof.locationDigest?{locationDigest:proof.locationDigest,tax:'exclusive' as const}:{}),
         setupId: s.id,
         revision,

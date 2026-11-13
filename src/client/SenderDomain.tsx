@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { operationKey, type Api } from './api.js';
 import type { Brand } from '../shared/contracts.js';
 import type { DeliveryReadiness, SenderStatus } from '../shared/sender.js';
-export function SenderDomain({ api, brand }: { api: Api; brand: Brand }) {
+export function SenderDomain({ api, brand, onChanged, showSimulator = true }: { api: Api; brand: Brand; onChanged?: () => void; showSimulator?: boolean }) {
   const [value, setValue] = useState(''),
     [status, setStatus] = useState<SenderStatus>(),
     [busy, setBusy] = useState(false),
@@ -43,6 +43,7 @@ export function SenderDomain({ api, brand }: { api: Api; brand: Brand }) {
       );
       key.current = operationKey();
       setStatus(next);
+      onChanged?.();
       setReport(undefined);
       setValue(next.domain ?? '');
       if (next.lookupUnavailable) setError('The DNS lookup was unavailable. Retry in one minute.');
@@ -117,7 +118,7 @@ export function SenderDomain({ api, brand }: { api: Api; brand: Brand }) {
           </button>
         </>
       )}
-      <h3>Delivery readiness</h3>
+      {showSimulator && <><h3>Delivery readiness</h3>
       <button type="button" className="btn secondary" disabled={busy} onClick={() => void checkProvider()}>
         Check delivery setup
       </button>
@@ -147,6 +148,7 @@ export function SenderDomain({ api, brand }: { api: Api; brand: Brand }) {
           </ul>
         </div>
       )}
+      </>}
       {error && <p role="alert">{error}</p>}
     </section>
   );

@@ -1,3 +1,4 @@
+import {parseResendRoute} from '../src/server/customer-delivery/resend-route.js';
 import {randomUUID} from 'node:crypto';
 import {expect,it,vi} from 'vitest';
 import {customerResendRuntime,resendEvents} from '../src/server/customer-delivery/resend.js';
@@ -40,4 +41,15 @@ it('can coexist with SES and preserves read-only reconciliation configuration wh
  const read=mock(),runtime=customerResendRuntime(origin,{...env,FLOCKLETTER_CUSTOMER_DELIVERY:'off',FLOCKLETTER_TEST_MAILING_APPROVED:'false'},read)!;
  expect(runtime.entries).toHaveLength(1);expect(await runtime.entries[0]!.provider.ready!()).toBe(false);expect(read).not.toHaveBeenCalled();
  expect(customerResendRuntime(origin,{FLOCKLETTER_CUSTOMER_DELIVERY:'off'})).toBeUndefined();
+});
+
+it('retires an ineligible managed sender while keeping its receipt route and the configured pilot',()=>{
+ const runtime=customerResendRuntime(origin,env,mock())!;
+ const managed=parseResendRoute({...route,workspaceId:'org_new',brandId:randomUUID(),domainId:randomUUID(),from:'letters@new.example.com'});
+ runtime.register(managed);
+ expect(runtime.provider(managed.workspaceId,managed.brandId)?.from).toBe(managed.from);
+ runtime.restoreConfiguredRoute(managed.workspaceId,managed.brandId);
+ expect(runtime.provider(managed.workspaceId,managed.brandId)).toBeUndefined();
+ expect(runtime.entries.some(entry=>entry.route.fingerprint===managed.fingerprint)).toBe(true);
+ expect(runtime.provider(route.workspaceId,route.brandId)?.from).toBe(route.from);
 });

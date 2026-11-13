@@ -161,14 +161,17 @@ it('starts one captured card-confirmed trial, replays a lost reply and cannot re
       plan: 'starter',
       simulatedCardConfirmed: true,
     };
+  const contactCapacity = () => db.tenant(s.workspaceId, sql => customerContactLimit(sql, s.workspaceId, options));
+  expect(await contactCapacity()).toBe(250);
   const first = await billing.execute('customerBilling.startTrial', input, s.actor);
   expect(await billing.execute('customerBilling.startTrial', input, s.actor)).toEqual(first);
   expect(first).toMatchObject({
     source: 'exercise',
     state: 'trialing',
     eligible: true,
-    limits: { contacts: 250, emails: 500, campaigns: 2, users: 1 },
+    limits: { contacts: 2500, recipients: 2500, emails: 2500, campaigns: 2, companies: 1, brands: 1, users: 1 },
   });
+  expect(await contactCapacity()).toBe(2500);
   await expect(start(s)).rejects.toMatchObject({ code: 'trial_already_used' });
   await expect(
     billing.execute(
@@ -210,6 +213,30 @@ it('keeps failed-payment time stable, suspends on day six, closes on day thirty 
     eligible: true,
   });
   expect((await billing.retentionServiceEnd(s.workspaceId)).effectiveEnd).toBeNull();
+});
+
+it('admits a full first newsletter and preserves the complete-trial ceiling on replay', async () => {
+  const s = await shop();
+  await start(s);
+  const reserve = (operationKey: string, recipients: number) =>
+    db.tenant(s.workspaceId, sql => billing.reserve(sql, s.workspaceId, {
+      operationKey, recipients, campaignId: s.campaign.id, brandId: s.brandId,
+    }));
+  await expect(reserve(randomUUID(), 2501)).rejects.toMatchObject({ code: 'allowance_exceeded' });
+
+  const key = randomUUID();
+  await expect(reserve(key, 2500)).resolves.toMatchObject({ recipients: 2500 });
+  await expect(reserve(key, 2500)).resolves.toMatchObject({ recipients: 2500 });
+  await expect(reserve(randomUUID(), 1)).rejects.toMatchObject({ code: 'allowance_exceeded' });
+
+  const settle = () => db.tenant(s.workspaceId, sql =>
+    billing.settle(sql, s.workspaceId, key, { accepted: 2500, excluded: 0 }));
+  await settle();
+  await expect(settle()).resolves.toMatchObject({ state: 'settled' });
+  expect((await billing.status(s.workspaceId)).usage).toMatchObject({
+    emails: 2500, reservedEmails: 0, campaigns: 1, reservedCampaigns: 0,
+  });
+  await expect(reserve(randomUUID(), 1)).rejects.toMatchObject({ code: 'allowance_exceeded' });
 });
 
 it('reserves concurrent campaigns across the subscription once and retains unknown recipients', async () => {
