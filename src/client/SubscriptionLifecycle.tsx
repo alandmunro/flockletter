@@ -100,6 +100,9 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
         setNotice(
           'A free trial is unavailable for this setup. No paid subscription was created. You may explicitly choose the normal paid plan below, or contact support.',
         );
+      } else if (result.state === 'trial_card_required') {
+        keys.current.delete(signature);
+        keys.current.delete(JSON.stringify(['customerBilling.checkout', {plan}]));
       } else if (result.state === 'trial_setup_expired') {
         keys.current.delete(signature);
         setNotice(
@@ -380,6 +383,9 @@ export function SubscriptionLifecycle({ api, initialPlan, returnedFromStripe=fal
               ) : (
                 status.mode === 'stripe' && (
                   <>
+                    {status.source === 'preparation' && status.trialSetup?.cardRetryAt && (
+                      <p className="notice" role="status">Stripe saved a payment method that cannot verify a trial card. From {date(status.trialSetup.cardRetryAt)}, choose “Verify card with Stripe” and enter a credit or debit card. Your trial starts after you accept the terms.</p>
+                    )}
                     {status.source==='preparation'&&checkoutExpired&&<label><input type="checkbox" checked={paidAccepted} disabled={busy} onChange={e=>setPaidAccepted(e.target.checked)}/>I represent a US business and accept the linked policies and selected monthly price{status.taxMode==='off'?', with no tax collected': ' plus applicable tax'}, with no new free trial.</label>}
                     <button
                       className="btn"

@@ -160,6 +160,7 @@ export type CustomerBillingStatus = {
   exerciseEnabled: boolean;
   trialSetup?: {
     id: string;
+    cardRetryAt?: string;
     state: string;
     plan: CustomerPlan;
     revision: number;
