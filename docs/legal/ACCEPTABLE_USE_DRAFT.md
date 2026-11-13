@@ -23,6 +23,16 @@ If sending is blocked or held, follow the displayed remediation or contact `supp
 
 These paragraphs are proposed wording, not acceptance of a complete AUP. Additional prohibited content/use categories and their review process require owner approval; none is silently inherited from another application or provider.
 
+## Additional proposed prohibited-use wording — owner and counsel review
+
+Do not use Flockletter to send deceptive or materially misleading messages; conceal or falsify the sending brand, origin, subject or reply path; impersonate another person or organization; distribute malware or phishing content; or collect credentials through a deceptive message. Do not use the service to harass or threaten recipients, or to distribute content that violates applicable law or another person's rights.
+
+Do not upload or send to a purchased, rented, scraped or third-party list merely because you possess the addresses. For each brand and purpose, retain a defensible permission basis and respect applicable opt-outs. The final policy should state the permitted import evidence, any exceptions and the human review path; the product's own permission standard may be stricter than the minimum law requires. Do not reimport, change brands or use a different provider to bypass a recipient's applicable suppression.
+
+Commercial messages must use truthful routing and subject information, a functioning opt-out method and the sender disclosures required by applicable law. The FTC's [CAN-SPAM business guide](https://www.ftc.gov/business-guidance/resources/can-spam-act-compliance-guide-business) explains federal commercial-email requirements; it does not establish that every Flockletter subscriber has consented or that a particular campaign meets state or international law. [COUNSEL: confirm customer geography, marketing-consent standard, postal-address presentation and any sector-specific restrictions.]
+
+Flockletter may investigate credible abuse signals and apply the actual sending holds needed to protect recipients, other customers and provider access. [OWNER/COUNSEL: define evidence, notice, urgent action, appeal and reinstatement; do not publish a discretionary termination promise that exceeds the implemented controls.]
+
 ## Unresolved trust policy
 
 | Decision needed | Review must specify |

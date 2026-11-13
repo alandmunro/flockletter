@@ -6,6 +6,8 @@
 
 Contact `support@frostyflamingosoftware.com` to request review of a Flockletter subscription charge. A person reviews refund and billing-dispute requests. Contacting support does not by itself authorize a refund, promise a particular outcome or change the subscription's cancellation state.
 
+This review process does not limit any refund, cancellation or dispute right that applicable law cannot waive. [COUNSEL: determine required state/customer-specific notices and whether a separate notice is needed for automatic renewal.]
+
 Do not email full card numbers, security codes, passwords or other secrets. Account-specific requests require verification of your authority. An incoming email address alone does not establish authority to change billing. Support automation cannot issue refunds or change subscriptions.
 
 Cancellation stops future renewals at the accepted effective service end; paid access continues through the paid period and timely trial cancellation preserves access through trial end without the first charge. A cancellation request is separate from review of a past charge. Review the current authoritative status in Subscription and use verified support if it is unclear.

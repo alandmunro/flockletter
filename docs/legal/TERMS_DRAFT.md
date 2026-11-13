@@ -36,6 +36,22 @@ Email support uses the accepted support address, `support@frostyflamingosoftware
 
 Flockletter's original source is AGPL-3.0-only, with third-party notices preserved. These hosted service draft terms do not amend that software license or require self-hosters to purchase a hosted subscription.
 
+## Additional proposed clauses — counsel to settle before publication
+
+The following is candidate customer-facing language, not an accepted allocation of legal risk. Bracketed items require a business decision and counsel approval. It is intentionally separate from the accepted commercial terms above.
+
+**Account authority.** You must provide accurate account information and keep your sign-in credentials and authorized member access secure. A workspace owner may manage members and brand access only within permissions the service actually provides. You are responsible for activity by people you authorize, subject to any non-waivable legal rights and Flockletter's own obligations.
+
+**Customer content and subscriber data.** You retain your rights in the content and contact information you submit. You grant Flockletter and its service providers a limited right to process that material to provide, secure, support and operate the hosted service under these terms and the final privacy and data-processing documents. You must have the rights and permissions needed to submit the material and send each message. Flockletter does not acquire ownership of your mailing lists. [COUNSEL: determine controller/processor roles, data-processing terms, subprocessor notice and whether an additional DPA is required for intended customers.]
+
+**Sending and review.** You remain responsible for the accuracy, legality and audience selection of messages you approve. A verified domain or paid subscription is not proof of recipient permission. Flockletter may block or pause sending when its actual consent, suppression, provider, account-integrity or abuse controls require it; a disputed hold should have a human review path. Provider acceptance does not guarantee delivery, opening, inbox placement or recall of a submitted message. [COUNSEL/OWNER: settle final AUP, notice, review and reinstatement process before adopting this clause.]
+
+**Changes and discontinuation.** Flockletter may change features or plans only under a published change process that explains notice, effective date and treatment of an existing paid period. [COUNSEL/OWNER: specify material-change notice, customer termination/refund rights and service-discontinuation/export period; none is approved by this draft.]
+
+**Termination and data access.** A customer may cancel using the verified subscription controls. Flockletter may suspend or terminate for a material breach, security risk, unlawful use or provider restriction only under a final process that distinguishes urgent protective action from ordinary notice and opportunity to cure. After service end, authorized access, export and deletion are governed by the final retention notice and applicable law. [COUNSEL: specify cure periods, appeal, outstanding fees and survival; do not promise immediate destruction or indefinite export.]
+
+**Legal allocation still required.** [COUNSEL: draft and approve any warranties/disclaimers, liability cap and exclusions, indemnities, governing law/venue, dispute resolution, order of precedence, assignment, force majeure, notices and severability. No such clause is effective merely because it appears as a placeholder here. Avoid treating a broad customer indemnity or liability waiver as already accepted.]
+
 ## Missing facts and owner review
 
 - Verified contracting/contact details, including any required publishable postal address, and actual tax determination/configuration.
@@ -43,5 +59,6 @@ Flockletter's original source is AGPL-3.0-only, with third-party notices preserv
 - Final AUP, privacy/lifecycle disclosures and remaining counting definitions; accurate provider/subprocessor and AI-support disclosures based on actual enabled services.
 - Exact customer acceptance/publication/version record and cancellation/billing recovery instructions verified against the actual provider.
 - Any additional contractual provisions the owner elects to include, including rights in customer content, service changes, termination, responsibility allocation, dispute process and applicable law. No governing law, liability cap, waiver or other legal clause is supplied by default here.
+- Counsel should reconcile the proposed clauses above with the final privacy/DPA structure, the AUP and refund language, and actual customer acceptance evidence before they are offered to customers.
 
 No annual plan, discount program, refund deadline or guaranteed delivery/service level is created by this draft. Counsel review has not been claimed. Final owner approval and factual/provider verification remain required before customer publication or paid activation.
