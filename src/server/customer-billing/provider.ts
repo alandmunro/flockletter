@@ -80,6 +80,8 @@ export type CustomerBillingProvider = {
   }>;
   close(): void;
 };
+/** Receipt/reconciliation capability; deliberately contains no external mutation methods. */
+export type CustomerBillingEvents = Pick<CustomerBillingProvider, 'account' | 'live' | 'verify' | 'resolve' | 'lookupCheckout' | 'close'>;
 export type ProviderCheckout = {
   id: string;
   url: string | null;
@@ -137,11 +139,39 @@ export function stripeCustomerProvider(
   env: NodeJS.ProcessEnv,
   clientFactory?: (key: string) => Stripe,
 ): CustomerBillingProvider | undefined {
+  return buildStripeCustomerProvider(origin, env, clientFactory, false);
+}
+
+/** Preserve signed provider facts while new billing is disabled, using the installed event credentials. */
+export function stripeCustomerEventProvider(
+  origin: string,
+  env: NodeJS.ProcessEnv,
+  clientFactory?: (key: string) => Stripe,
+): CustomerBillingEvents | undefined {
   const mode = env.FLOCKLETTER_CUSTOMER_BILLING ?? 'off';
+  if (mode === 'exercise') return;
+  if (mode === 'off' && !env.FLOCKLETTER_CUSTOMER_STRIPE_KEY && !env.FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK) return;
+  const provider = buildStripeCustomerProvider(origin, env, clientFactory, true);
+  if (!provider) return;
+  const { account, live, verify, resolve, lookupCheckout, close } = provider;
+  return { account, live, verify, resolve, lookupCheckout, close };
+}
+
+function buildStripeCustomerProvider(
+  origin: string,
+  env: NodeJS.ProcessEnv,
+  clientFactory: ((key: string) => Stripe) | undefined,
+  eventsOnly: boolean,
+): CustomerBillingProvider | undefined {
+  const selectedMode = env.FLOCKLETTER_CUSTOMER_BILLING ?? 'off';
+  if (eventsOnly && !['local', 'test', 'staging', 'production'].includes(env.APP_ENV ?? '')) throw invalid();
+  const mode = eventsOnly && selectedMode === 'off'
+    ? env.APP_ENV === 'production' ? 'stripe_live' : 'stripe_test'
+    : selectedMode;
   if (['off', 'exercise'].includes(mode)) return;
   const taxEnabled=env.FLOCKLETTER_BILLING_TAX==='stripe-automatic';
   if(env.FLOCKLETTER_BILLING_TAX!==undefined&&!taxEnabled)throw invalid();
-  if(mode==='stripe_live'&&!taxEnabled)throw Error('Live subscriptions require the verified registered-jurisdiction tax configuration.');
+  if(!eventsOnly&&mode==='stripe_live'&&!taxEnabled)throw Error('Live subscriptions require the verified registered-jurisdiction tax configuration.');
   const live = mode === 'stripe_live',
     account = env.FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT ?? '',
     key = env.FLOCKLETTER_CUSTOMER_STRIPE_KEY ?? '',
@@ -163,15 +193,15 @@ export function stripeCustomerProvider(
     !/^acct_[A-Za-z0-9]+$/.test(account) ||
     !new RegExp('^(sk|rk)_' + (live ? 'live' : 'test') + '_[A-Za-z0-9]+$').test(key) ||
     !webhook.startsWith('whsec_') ||
-    !/^pmc_[A-Za-z0-9]+$/.test(card) ||
-    !/^bpc_[A-Za-z0-9]+$/.test(portalConfiguration) ||
-    !Object.values(planPortalConfigurations).every(id => /^bpc_[A-Za-z0-9]+$/.test(id)) ||
-    new Set([portalConfiguration, ...Object.values(planPortalConfigurations)]).size !== 4 ||
+    (!eventsOnly && (!/^pmc_[A-Za-z0-9]+$/.test(card) ||
+      !/^bpc_[A-Za-z0-9]+$/.test(portalConfiguration) ||
+      !Object.values(planPortalConfigurations).every(id => /^bpc_[A-Za-z0-9]+$/.test(id)) ||
+      new Set([portalConfiguration, ...Object.values(planPortalConfigurations)]).size !== 4)) ||
     !Object.values(prices).every((v) => /^price_[A-Za-z0-9]+$/.test(v)) ||
     new Set(Object.values(prices)).size !== 3 ||
     new URL(origin).origin !== origin ||
     !origin.startsWith('https://') ||
-    (live && (env.APP_ENV !== 'production' || env.FLOCKLETTER_LIVE_BILLING_APPROVED !== 'true'))
+    (live && (env.APP_ENV !== 'production' || (!eventsOnly && env.FLOCKLETTER_LIVE_BILLING_APPROVED !== 'true')))
   )
     throw invalid();
   const stripe = clientFactory
@@ -200,10 +230,13 @@ export function stripeCustomerProvider(
       throw invalid();
     return plan.id;
   }
-  async function snapshot(id: string): Promise<ProviderSubscription> {
-    const s = await stripe.subscriptions.retrieve(id, {
+  async function readSubscription(id: string) {
+    return stripe.subscriptions.retrieve(id, {
       expand: ['default_payment_method', 'latest_invoice'],
     });
+  }
+  async function snapshot(id: string, observed?: Stripe.Subscription): Promise<ProviderSubscription> {
+    const s = observed ?? await readSubscription(id);
     if (
       taxEnabled&&s.automatic_tax?.enabled!==true ||
       s.livemode !== live ||
@@ -264,6 +297,15 @@ export function stripeCustomerProvider(
       previousRevision: s.metadata.fl_rejoin_revision ?? null,
       pendingPlan,
     };
+  }
+  async function eventSnapshot(id: string) {
+    const observed = await readSubscription(id);
+    if (observed.livemode !== live) throw invalid();
+    // Shared merchants emit other applications' events. These hints only filter/route;
+    // exact catalogue facts and durable local bindings still establish authority.
+    if (!observed.metadata.fl_workspace && !observed.metadata.fl_intent) return null;
+    if (!observed.metadata.fl_workspace || !observed.metadata.fl_intent) throw invalid();
+    return snapshot(id, observed);
   }
   async function checkoutProjection(
     s: Stripe.Checkout.Session,
@@ -607,6 +649,9 @@ export function stripeCustomerProvider(
       if (notice.checkout) {
         const s = await stripe.checkout.sessions.retrieve(notice.checkout);
         if (s.livemode !== live) throw invalid();
+        if (!s.metadata?.fl_workspace && !s.metadata?.fl_intent)
+          return { subscription: null, checkoutId: null, intentId: null, workspace: null };
+        if (!s.metadata?.fl_workspace || !s.metadata?.fl_intent) throw invalid();
         if (s.mode === 'setup')
           return {
             subscription: null,
@@ -616,7 +661,7 @@ export function stripeCustomerProvider(
           };
         if (s.mode !== 'subscription') throw invalid();
         const subscription = reference(s.subscription),
-          observed = subscription ? await snapshot(subscription) : null;
+          observed = subscription ? await eventSnapshot(subscription) : null;
         if (
           observed &&
           (observed.customer !== reference(s.customer) ||
@@ -680,14 +725,15 @@ export function stripeCustomerProvider(
           const schedule = await stripe.subscriptionSchedules.retrieve(id);
           if (schedule.id !== id || schedule.livemode !== live) throw invalid();
           subscription = reference(schedule.subscription) ?? reference(schedule.released_subscription);
-          if (!subscription) throw invalid();
-          const observed = await snapshot(subscription);
+          if (!subscription) return { subscription: null, checkoutId: null, intentId: null, workspace: null };
+          const observed = await eventSnapshot(subscription);
+          if (!observed) return { subscription: null, checkoutId: null, intentId: null, workspace: null };
           if (observed.customer !== reference(schedule.customer)) throw invalid();
           return { subscription: observed, checkoutId: null, intentId: null, workspace: null };
         }
       }
       return {
-        subscription: subscription ? await snapshot(subscription) : null,
+        subscription: subscription ? await eventSnapshot(subscription) : null,
         checkoutId: null,
         intentId: null,
         workspace: null,

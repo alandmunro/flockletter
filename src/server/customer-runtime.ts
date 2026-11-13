@@ -19,7 +19,7 @@ import { commands,type CommandName,type Capability } from '../shared/contracts.j
 import type { CustomerOperationsStatus } from '../shared/customer-operations.js';
 import { customerSettings } from './customer-settings.js';
 import { CustomerBilling,customerEligibility,customerContactLimit,customerSeatLimit,retentionServiceEndSql,retentionClockSql } from './customer-billing/service.js';
-import { customerBillingConfiguration,stripeCustomerProvider } from './customer-billing/provider.js';
+import { customerBillingConfiguration,stripeCustomerProvider,stripeCustomerEventProvider } from './customer-billing/provider.js';
 import { CustomerAudience,createCustomerOptOut,productionConsentEligible,productionConsentEligibleBatch } from './customer-audience/service.js';
 import { CustomerConfirmationFeedback } from './customer-audience/feedback.js';
 import { CustomerConfirmationProvider } from './customer-audience/resend.js';
@@ -66,8 +66,9 @@ export class CustomerWorkflows {
   constructor(readonly db:Database,readonly config:Config,readonly identity:IdentityProvider,readonly env:NodeJS.ProcessEnv=process.env) {
     const settings=this.settings=customerSettings(config,env);
     const gateway=stripeCustomerProvider(config.origin,env);
+    const eventGateway=gateway??stripeCustomerEventProvider(config.origin,env);
     this.billing=new CustomerBilling(db,{environment:config.environment,exerciseEnabled:settings.billing==='exercise',
-      gateway,trialRegistry:trialRegistryFromEnvironment(env,settings.billing==='exercise'?'exercise':gateway?.live?'stripe_live':'stripe_test',settings.billing==='exercise'?'captured':gateway?.account??'unconfigured'),checkOwner:identity.isOwner});
+      gateway,eventGateway,trialRegistry:trialRegistryFromEnvironment(env,settings.billing==='exercise'?'exercise':eventGateway?.live?'stripe_live':'stripe_test',settings.billing==='exercise'?'captured':eventGateway?.account??'unconfigured'),checkOwner:identity.isOwner});
     const confirmationFeedback=settings.audience==='live'?new CustomerConfirmationFeedback(db,{
       sendingKey:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_KEY??'',retrieveKey:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_RETRIEVE_KEY??'',
       sender:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_FROM??'',webhookSecret:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_WEBHOOK_SECRET??'',

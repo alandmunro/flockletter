@@ -22,7 +22,7 @@ import {
   trialAllowance,
   utcMonth,
 } from './policy.js';
-import type { CustomerBillingProvider, ProviderIntent } from './provider.js';
+import type { CustomerBillingEvents, CustomerBillingProvider, ProviderIntent } from './provider.js';
 import { TrialEnrollment, trialSetupStatus, trialEligibility } from './trial-enrollment.js';
 import type { TrialRegistry } from '../customer-abuse/registry.js';
 import { plans } from '../../shared/contracts.js';
@@ -32,6 +32,7 @@ export type BillingOptions = {
   exerciseEnabled: boolean;
   now?: () => Date;
   gateway?: CustomerBillingProvider;
+  eventGateway?: CustomerBillingEvents;
   trialRegistry?: TrialRegistry;
   checkOwner?: (userId: string, workspace: string) => Promise<boolean>;
 };
@@ -1240,7 +1241,7 @@ export class CustomerBilling {
     return { url };
   }
   async webhook(raw: Buffer, signature: string) {
-    const gateway = this.provider();
+    const gateway = this.options.eventGateway ?? this.provider();
     let notice;
     try {
       notice = gateway.verify(raw, signature);

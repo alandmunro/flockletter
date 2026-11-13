@@ -921,3 +921,41 @@ it('requires the current terms acceptance for new live paid and rejoin agreement
  }
  expect((await db.read(s.actor.workspaceId,sql=>sql.query('SELECT * FROM customer_billing_intents'))).rowCount).toBe(0);
 });
+
+it('reconciles retained mapped billing facts with new billing disabled without granting access or creating intents', async () => {
+  const s = await shop();
+  await db.tenant(s.workspaceId,sql=>sql.query(`INSERT INTO customer_subscriptions
+    (workspace_id,id,source,state,plan,provider_account,provider_customer,provider_subscription,observed_at)
+    VALUES($1,$2,'stripe','active','growth','acct_receipts','cus_receipts','sub_receipts',now())`,[s.workspaceId,randomUUID()]));
+  const observed: ProviderSubscription = {
+    id:'sub_receipts',customer:'cus_receipts',workspaceHint:s.workspaceId,intentHint:null,
+    state:'past_due',plan:'growth',cardVerified:true,trialStart:null,trialEnd:null,
+    periodStart:base,periodEnd:new Date(base.getTime()+30*86400000),cancelAt:null,endedAt:null,failedSince:base,
+  };
+  const receiver = new CustomerBilling(db,{
+    ...options,exerciseEnabled:false,eventGateway:{
+      account:'acct_receipts',live:false,close(){},async lookupCheckout(){return null;},
+      verify(raw,signature){
+        if(signature!=='valid')throw Error('Invalid synthetic signature');
+        return {id:raw.toString(),kind:'invoice.payment_failed',subscription:observed.id,checkout:null,risk:false};
+      },
+      async resolve(){return {subscription:observed,checkoutId:null,intentId:null,workspace:null};},
+    },
+  });
+  await expect(receiver.webhook(Buffer.from('evt_bad'),'invalid')).rejects.toMatchObject({code:'invalid_signature'});
+  await receiver.webhook(Buffer.from('evt_receipts'),'valid');
+  const after = await receiver.status(s.workspaceId);
+  expect(after).toMatchObject({state:'past_due',eligible:false,failedSince:base.toISOString()});
+  expect(after.reasons).toContain('This environment’s dedicated billing provider is disabled.');
+  await receiver.webhook(Buffer.from('evt_receipts'),'valid');
+  expect((await receiver.status(s.workspaceId)).revision).toBe(after.revision);
+  const events = await db.read(s.workspaceId,sql=>sql.query('SELECT event_id,finished FROM customer_billing_events'));
+  expect(events.rows).toEqual([{event_id:'evt_receipts',finished:true}]);
+  for(const [command,input] of [
+    ['customerBilling.portal',{operationKey:randomUUID()}],
+    ['customerBilling.trialReview',{operationKey:randomUUID(),setupId:randomUUID()}],
+    ['customerBilling.activateTrial',{operationKey:randomUUID(),setupId:randomUUID(),expectedRevision:1,reviewHash:'a'.repeat(64),accepted:true}],
+  ] as const)
+    await expect(receiver.execute(command,input,s.actor)).rejects.toMatchObject({code:'billing_provider_unavailable'});
+  expect((await db.read(s.workspaceId,sql=>sql.query('SELECT FROM customer_billing_intents'))).rowCount).toBe(0);
+});

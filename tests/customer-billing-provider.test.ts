@@ -2,7 +2,7 @@ import {locationDigest} from '../src/server/customer-billing/tax-policy.js';
 import { randomUUID } from 'node:crypto';
 import Stripe from 'stripe';
 import { expect, it } from 'vitest';
-import { stripeCustomerProvider, type ProviderNotice } from '../src/server/customer-billing/provider.js';
+import { stripeCustomerProvider, stripeCustomerEventProvider, type ProviderNotice } from '../src/server/customer-billing/provider.js';
 import type { CustomerPlan } from '../src/shared/customer-billing.js';
 
 const environment = {
@@ -21,6 +21,16 @@ const environment = {
   FLOCKLETTER_CUSTOMER_PRO_PRICE: 'price_pro',
 };
 const base = 1804777200;
+const receiptEnvironment = {
+  APP_ENV: 'staging',
+  FLOCKLETTER_CUSTOMER_BILLING: 'off',
+  FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT: 'acct_fixture',
+  FLOCKLETTER_CUSTOMER_STRIPE_KEY: 'rk_test_SYNTHETIC',
+  FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK: 'whsec_fixture',
+  FLOCKLETTER_CUSTOMER_STARTER_PRICE: 'price_starter',
+  FLOCKLETTER_CUSTOMER_GROWTH_PRICE: 'price_growth',
+  FLOCKLETTER_CUSTOMER_PRO_PRICE: 'price_pro',
+};
 function billingPrice(plan: CustomerPlan) {
   const amounts = { starter: 1500, growth: 2500, pro: 3900 };
   return {
@@ -96,13 +106,13 @@ function subscription(price = 'price_growth', quantity = 1) {
   };
 }
 function fixture(respond: (url: URL, body: URLSearchParams) => object, extra:NodeJS.ProcessEnv={}) {
-  const calls: { url: URL; body: URLSearchParams }[] = [];
+  const calls: { url: URL; body: URLSearchParams; method: string }[] = [];
   const stripe = new Stripe('sk_test_SYNTHETIC', {
     maxNetworkRetries: 0,
     httpClient: Stripe.createFetchHttpClient(async (input, init) => {
       const url = new URL(String(input)),
         body = new URLSearchParams(String(init?.body ?? ''));
-      calls.push({ url, body });
+      calls.push({ url, body, method: init?.method ?? 'GET' });
       return new Response(JSON.stringify(respond(url, body)), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -116,6 +126,71 @@ function fixture(respond: (url: URL, body: URLSearchParams) => object, extra:Nod
   )!;
   return { stripe, provider, calls };
 }
+it('receives and reconciles signed events with billing off through a GET-only capability', async () => {
+  const site = fixture((url) => {
+    if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
+    if (url.pathname === '/v1/subscriptions/sub_fixture') return subscription();
+    throw Error('Unexpected request');
+  });
+  let selectedKey = '';
+  const receiver = stripeCustomerEventProvider('https://flockletter.example.test', receiptEnvironment, (key) => {
+    selectedKey = key;
+    return site.stripe;
+  })!;
+  expect(selectedKey).toBe(receiptEnvironment.FLOCKLETTER_CUSTOMER_STRIPE_KEY);
+  expect(stripeCustomerProvider('https://flockletter.example.test', receiptEnvironment)).toBeUndefined();
+  expect(Object.keys(receiver).sort()).toEqual(['account','close','live','lookupCheckout','resolve','verify']);
+  const raw = Buffer.from(JSON.stringify({
+    id: 'evt_receipt', object: 'event', livemode: false, type: 'customer.subscription.updated',
+    data: { object: { id: 'sub_fixture' } },
+  }));
+  const signature = site.stripe.webhooks.generateTestHeaderString({ payload: raw.toString(), secret: 'whsec_fixture' });
+  const notice = receiver.verify(raw, signature)!;
+  expect(await receiver.resolve(notice)).toMatchObject({ subscription: { id:'sub_fixture', plan:'growth' } });
+  expect(site.calls.every(call => call.method === 'GET')).toBe(true);
+  expect(() => receiver.verify(raw, 'invalid')).toThrow();
+});
+
+it('requires matching event mode and complete credentials without requiring live outbound approval or mutation settings', () => {
+  expect(stripeCustomerEventProvider('https://flockletter.example.test', { APP_ENV:'production' })).toBeUndefined();
+  for (const invalid of [
+    { ...receiptEnvironment, APP_ENV:'production' },
+    { ...receiptEnvironment, FLOCKLETTER_CUSTOMER_STRIPE_KEY:'rk_live_SYNTHETIC' },
+    { ...receiptEnvironment, FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK:'' },
+    { ...receiptEnvironment, FLOCKLETTER_CUSTOMER_GROWTH_PRICE:'' },
+    { ...receiptEnvironment, APP_ENV:'unknown' },
+  ]) expect(() => stripeCustomerEventProvider('https://flockletter.example.test', invalid)).toThrow('could not be verified');
+  const live = stripeCustomerEventProvider('https://flockletter.example.test', {
+    ...receiptEnvironment, APP_ENV:'production', FLOCKLETTER_CUSTOMER_STRIPE_KEY:'rk_live_SYNTHETIC',
+  });
+  expect(live?.live).toBe(true);
+  expect(live).not.toHaveProperty('checkout');
+  expect(live).not.toHaveProperty('createTrial');
+  expect(live).not.toHaveProperty('portal');
+});
+
+it('ignores clearly unrelated shared-merchant subscriptions and payment Checkout while rejecting partial Flockletter facts', async () => {
+  let partial = false;
+  const site = fixture((url) => {
+    if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
+    if (url.pathname === '/v1/subscriptions/sub_other') return {
+      ...subscription('price_other_application'), metadata: partial ? {fl_workspace:'org_fixture'} : {},
+    };
+    if (url.pathname === '/v1/checkout/sessions/cs_other') return {
+      id:'cs_other',livemode:false,mode:'payment',metadata:{},
+    };
+    throw Error('Unexpected request');
+  });
+  const receiver = stripeCustomerEventProvider('https://flockletter.example.test',receiptEnvironment,()=>site.stripe)!;
+  const notice = { id:'evt_other',kind:'customer.subscription.updated',checkout:null,subscription:'sub_other',risk:false };
+  expect(await receiver.resolve(notice)).toMatchObject({subscription:null});
+  expect(await receiver.resolve({...notice,kind:'checkout.session.completed',subscription:null,checkout:'cs_other'})).toEqual({
+    subscription:null,checkoutId:null,intentId:null,workspace:null,
+  });
+  partial = true;
+  await expect(receiver.resolve(notice)).rejects.toThrow('The Flockletter billing provider could not be verified.');
+  expect(site.calls.every(call=>call.method==='GET')).toBe(true);
+});
 it('requires complete isolated settings and explicit production activation for live billing', () => {
   expect(stripeCustomerProvider('https://mail.example.test', {})).toBeUndefined();
   expect(() =>
