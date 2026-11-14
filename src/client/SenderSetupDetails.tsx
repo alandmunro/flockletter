@@ -38,7 +38,9 @@ export function SenderSetupDetails({ view, busy, onReview, onApprove, onRefresh,
 
           {view.setup.dns.length > 0 && (
             <>
-              <h4>DNS records</h4>
+              <h4>DNS records for {view.setup.domain}</h4>
+              {!view.captured && <p>In Cloudflare, open DNS → Records for {view.setup.domain} and add each row below.
+                Use Auto for TTL. For CNAME records, choose DNS only.</p>}
               <div className="sender-dns-table"><table className="data-table">
                 <thead>
                   <tr>
@@ -53,8 +55,8 @@ export function SenderSetupDetails({ view, busy, onReview, onApprove, onRefresh,
                     <tr key={i}>
                       <td>{d.name}</td>
                       <td>{d.type}</td>
-                      <td>{d.value}</td>
-                      <td>{typeof d.priority === 'number' ? String(d.priority) : ''}</td>
+                      <td><code>{d.value}</code></td>
+                      <td>{typeof d.priority === 'number' ? String(d.priority) : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -63,9 +65,8 @@ export function SenderSetupDetails({ view, busy, onReview, onApprove, onRefresh,
           )}
 
           {view.setup.dns.length>0&&<p className="help">
-            Add the exact provider records listed above to your DNS provider. Do not replace or remove
-            existing mail records (MX, SPF, DKIM or DMARC). If the same hostname already has a conflicting record, contact support before editing it.
-            Flockletter ownership proof and provider verification are separate checks. Status checks run at most once per minute.
+            Match the name and type on each row. The MX priority applies to the sending subdomain. Keep your existing inbox routing.
+            After publishing the records, choose Refresh existing setup. Verification checks run at most once per minute.
           </p>}
 
           {view.setup.state === 'uncertain' && (
