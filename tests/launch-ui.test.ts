@@ -120,7 +120,7 @@ describe('launch-ui SSR', () => {
     };
 
     const html = renderToStaticMarkup(
-      createElement(SenderSetupDetails, {
+      createElement(SenderSetupDetails, {onRecover:vi.fn(),
         view,
         busy: false,
         onReview: vi.fn(),
@@ -154,7 +154,7 @@ describe('launch-ui SSR', () => {
     };
 
     const html = renderToStaticMarkup(
-      createElement(SenderSetupDetails, {
+      createElement(SenderSetupDetails, {onRecover:vi.fn(),
         view,
         busy: false,
         onReview: vi.fn(),
@@ -165,7 +165,7 @@ describe('launch-ui SSR', () => {
 
     expect(html).toContain('role="alert"');
     expect(html).toContain(
-      'This setup is in an uncertain state. Do not create another domain or submit a new review.',
+      'Reconnect existing domain',
     );
 
     expect(html).not.toContain('Review sender setup');
@@ -190,7 +190,7 @@ describe('launch-ui SSR', () => {
     };
 
     const htmlNoOwnership = renderToStaticMarkup(
-      createElement(SenderSetupDetails, {
+      createElement(SenderSetupDetails, {onRecover:vi.fn(),
         view: reviewedNoOwnership,
         busy: false,
         onReview: vi.fn(),
@@ -210,7 +210,7 @@ describe('launch-ui SSR', () => {
     };
 
     const htmlWithOwnership = renderToStaticMarkup(
-      createElement(SenderSetupDetails, {
+      createElement(SenderSetupDetails, {onRecover:vi.fn(),
         view: reviewedWithOwnership,
         busy: false,
         onReview: vi.fn(),
@@ -248,7 +248,7 @@ describe('launch-ui SSR', () => {
       createElement(OperatorSendingTrust, {status, busy: false, onRefresh, onReview}),
     );
     renderToStaticMarkup(
-      createElement(SenderSetupDetails, {view, busy: false, onReview, onApprove, onRefresh}),
+      createElement(SenderSetupDetails, {onRecover:vi.fn(),view, busy: false, onReview, onApprove, onRefresh}),
     );
 
     expect(onRefresh).not.toHaveBeenCalled();
