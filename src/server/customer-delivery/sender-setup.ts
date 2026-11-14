@@ -87,14 +87,14 @@ export class ResendSenderSetup {
    await sql.query('INSERT INTO operations(workspace_id,actor_id,operation_key,request_hash,result) VALUES($1,$2,$3,$4,$5)',[actor.workspaceId,actor.actorId,input.operationKey,hash,JSON.stringify({brandId:input.brandId})]);
    await audit(sql,actor,name,input.setupId??null);
   });
-  if(name!=='senderSetup.review')await this.tick(actor.workspaceId,input.brandId);
+  if(name!=='senderSetup.review')await this.tick(actor.workspaceId,input.brandId,name==='senderSetup.process');
   return this.status(actor,input.brandId);
  }
  private async bindDomain(sql:Sql,row:Row,id:string,state:'queued'|'configuring'){
   await sql.query("UPDATE customer_resend_senders SET domain_id=$2,state=$3,reason=NULL,updated_at=now() WHERE brand_id=$1 AND operation_id=$4",[row.brand_id,id,state,row.operation_id]);
   await sql.query('SELECT flockletter_customer_jobs.bind_resend_domain($1,$2,$3,$4)',[row.workspace_id,row.brand_id,row.operation_id,id]);
  }
- async tick(workspace:string,brand?:string){
+ async tick(workspace:string,brand?:string,retryFailed=false){
   if(!this.options.enabled||!this.options.port)return;
   if(!brand){const brands=(await this.db.read(workspace,sql=>sql.query<{id:string}>('SELECT id FROM brands ORDER BY id LIMIT 5'))).rows;for(const item of brands)await this.tick(workspace,item.id);return;}
   const work=await locked(this.db,workspace,async sql=>{
@@ -125,7 +125,11 @@ export class ResendSenderSetup {
    if(facts.open_tracking||facts.click_tracking){await this.options.port.configure(facts.id);facts=await this.options.port.inspect(facts.id,work.domain);}
    requireCondition(facts.open_tracking===false&&facts.click_tracking===false&&facts.capabilities.sending==='enabled',503,'provider_facts_invalid','Disable tracking and enable this sender at the provider.');
    const verified=facts.status==='verified';
-   if(!verified)await this.options.port.verify(facts.id);
+   // Resend starts a new asynchronous verification cycle on every POST.
+   // Poll active checks with GET and retry a failed check on an explicit refresh.
+   if(facts.status==='not_started' || (facts.status==='failed' && retryFailed)){
+    await this.options.port.verify(facts.id);
+   }
    await locked(this.db,workspace,async sql=>{
     await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[work.brand_id]);
     const current=(await sql.query<Row>('SELECT * FROM customer_resend_senders WHERE brand_id=$1',[work.brand_id])).rows[0];
