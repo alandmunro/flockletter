@@ -18,12 +18,12 @@ async function runReleaseChild(plan,input){
  return await new Promise(resolve=>{
   let finished=false;
   const child=spawn(process.execPath,args,{cwd:releaseRoot,shell:false,env:{APP_ENV:selected.environment},stdio:['pipe','ignore','ignore']});
-  const timer=setTimeout(()=>{child.kill('SIGTERM');finish(false);},180000);
-  function finish(ok){if(finished)return;finished=true;clearTimeout(timer);resolve(ok);}
-  child.once('error',()=>finish(false));
-  child.once('close',code=>finish(code===0));
+  const timer=setTimeout(()=>{child.kill('SIGTERM');finish(null);},180000);
+  function finish(code){if(finished)return;finished=true;clearTimeout(timer);resolve(code);}
+  child.once('error',()=>finish(null));
+  child.once('close',code=>finish(code));
   child.stdin.on('error',()=>{});
-  child.stdin.end(JSON.stringify(input)+'\n');
+  child.stdin.end(JSON.stringify(selected.mode==='migrate'?{...input,compatibility:plan.compatibility}:input)+'\n');
  });
 }
 
@@ -39,16 +39,19 @@ export async function executeReleaseFiles(planFile,privateInputFile){
   const codes=[...privateEnvelopeGaps(envelope,plan),...releaseInputPreflight(plan.operation,envelope?.input,plan.environment)];
   if(codes.length)return failure('preflight',[...new Set(codes)]);
   if(plan.sourceFingerprint!==await releaseSourceFingerprint())return failure('plan',['source_fingerprint_mismatch']);
-  const ok=await runReleaseChild(plan,envelope.input);
-  return ok?{ok:true,stage:'completed',operation:plan.operation,sourceFingerprint:plan.sourceFingerprint,targetFingerprint:plan.targetFingerprint}:
+  const code=await runReleaseChild(plan,envelope.input);
+  if(code===78)return failure('preflight',['release_preflight_refused','recheck_serving_revisions_and_rehearse']);
+  return code===0?{ok:true,stage:'completed',operation:plan.operation,sourceFingerprint:plan.sourceFingerprint,targetFingerprint:plan.targetFingerprint}:
    failure('child',['release_child_failed','reconciliation_required']);
  }catch(error){return failure('input',[safeFileErrors.has(error?.message)?error.message:'protected_input_unavailable']);}
 }
 
 async function main(){
  const [mode,...args]=process.argv.slice(2);
- if(mode==='plan'&&args.length===1){
-  const spec=parsePrivateJson(await readProtectedReleaseFile(args[0],16384)),result=await createReleasePlan(spec);
+ if(mode==='plan'&&(args.length===1||args.length===2)){
+  const spec=parsePrivateJson(await readProtectedReleaseFile(args[0],16384));
+  const compatibility=args[1]?parsePrivateJson(await readProtectedReleaseFile(args[1],4096)):undefined;
+  const result=await createReleasePlan(spec,new Date(),compatibility);
   return result.codes?failure('plan',result.codes):{ok:true,plan:result.plan,planDigest:releasePlanDigest(result.plan)};
  }
  if(mode==='execute'&&args.length===2)return await executeReleaseFiles(args[0],args[1]);

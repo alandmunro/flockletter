@@ -22,6 +22,8 @@ For later releases, `APP_ENV=production node scripts/migrate-production.mjs <ope
 
 ## Promotion checklist
 
+Before the protected migration, rehearse the **actual serving web and worker commits** against the proposed schema. The migration plan requires fresh compatibility evidence. Both deployed and candidate checks must pass as the restricted runtime. A direct paired-URI child also requires that evidence as `compatibility` in its input. [Preflight and recovery procedure](RELEASE_RUNNER.md#before-migrating-an-existing-installation)
+
 - Compare all active development work and remote branches; preserve unrelated uncommitted work. Review the exact release tree and its migration changes.
 - Require lint, type checks, tests, production build, API regeneration, dependency audit, private Listmonk integration, browser journeys and the restore drill to pass for the promoted tree.
 - Merge the staging-tested release into `main` with an expected-head check. Use manual deployment and inspect the actual running commit; a successful build alone is insufficient.

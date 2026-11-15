@@ -1,12 +1,14 @@
 export type ReleaseTarget={version:1;operation:string;host:string;port:number;database:string;migrationRole:string;runtimeRole:string;sourceDatabase?:string;administratorRole?:string};
-export type ReleasePlan={version:1;operation:string;environment:string;target:ReleaseTarget;targetFingerprint:string;sourceFingerprint:string;createdAt:string;operationId:string};
+export type MigrationEvidence={ok:true;version:1;environment:string;webRevision:string;workerRevision:string;candidateRevision:string;sourceFingerprint:string;checked:string[];checkedAt:string};
+export type ReleasePlan={version:1;operation:string;environment:string;target:ReleaseTarget;targetFingerprint:string;sourceFingerprint:string;createdAt:string;operationId:string;compatibility?:MigrationEvidence};
 export const releaseRoot:string;
 export function targetSpecGaps(value:unknown):string[];
 export function targetFingerprint(spec:ReleaseTarget):string;
 export const releaseBoundaryFiles:readonly string[];
-export function releaseSourceFingerprint():Promise<string>;
+export function releaseSourceFingerprint(root?:string):Promise<string>;
 export function verifyReleaseSourceFile(file:string):Promise<void>;
-export function createReleasePlan(spec:unknown,now?:Date):Promise<{codes?:string[];plan?:ReleasePlan}>;
+export function migrationEvidenceGaps(evidence:unknown,environment:string,source:string,now?:Date):string[];
+export function createReleasePlan(spec:unknown,now?:Date,compatibility?:unknown):Promise<{codes?:string[];plan?:ReleasePlan}>;
 export function releasePlanGaps(plan:unknown,sourceFingerprint:string,now?:Date):string[];
 export function releasePlanDigest(plan:ReleasePlan):string;
 export function privateEnvelopeGaps(envelope:unknown,plan:ReleasePlan):string[];

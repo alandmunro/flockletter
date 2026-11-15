@@ -3,6 +3,7 @@ import {randomBytes} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import pg from 'pg';
 import {startDatabase} from '../scripts/database-fixture.js';
+import {fixtureMigrationEvidence} from './helpers/migration-evidence.js';
 
 let fixture:Awaited<ReturnType<typeof startDatabase>>,root:pg.Client;
 beforeAll(async()=>{fixture=await startDatabase();root=new pg.Client({connectionString:fixture.adminUrl});await root.connect();});
@@ -17,9 +18,10 @@ for(const environment of ['production','staging'] as const)it(`validates both ${
  await root.query(`CREATE DATABASE ${database} OWNER ${migrationRole}`);
  migration.pathname='/'+database;migration.username=migrationRole;migration.password=passwords[0];migration.searchParams.set('sslmode','disable');
  runtime.pathname='/'+database;runtime.username=runtimeRole;runtime.password=passwords[1];runtime.searchParams.set('sslmode','disable');
- const command=(migrationUrl=migration.href,runtimeUrl=runtime.href,single=false)=>spawnSync(process.execPath,
-  [`scripts/migrate-${environment}.mjs`,'fixture-release',single?'--uri-stdin':'--pair-stdin'],{
-   input:single?migrationUrl+'\n':JSON.stringify({migrationUrl,runtimeUrl})+'\n',encoding:'utf8',timeout:15000,
+ const compatibility=await fixtureMigrationEvidence(environment);
+ const command=(migrationUrl=migration.href,runtimeUrl=runtime.href,single=false,proof:unknown=compatibility)=>spawnSync(process.execPath,
+  ['--import','./tests/helpers/migration-readiness.mjs',`scripts/migrate-${environment}.mjs`,'fixture-release',single?'--uri-stdin':'--pair-stdin'],{
+   input:single?migrationUrl+'\n':JSON.stringify({migrationUrl,runtimeUrl,compatibility:proof})+'\n',encoding:'utf8',timeout:15000,
    env:{...process.env,APP_ENV:environment,DATABASE_URL:runtimeUrl},
   });
  const initial=command();expect(initial.status,initial.stderr).toBe(0);
@@ -28,6 +30,16 @@ for(const environment of ['production','staging'] as const)it(`validates both ${
   // This disposable column ACL is a sentinel: real migrations revoke it. Invalid
   // runtime URLs must be refused before even the valid migration connection runs.
   await owner.query('GRANT SELECT(workspace_id) ON public.workspaces TO PUBLIC');
+  for(const [proof,code] of [
+    [null,'compatibility_evidence_required'],
+    [{...compatibility,sourceFingerprint:'0'.repeat(64)},'compatibility_source_mismatch'],
+    [{...compatibility,webRevision:'e'.repeat(40),workerRevision:'e'.repeat(40),checked:['e'.repeat(40)]},'serving_revision_or_readiness_changed'],
+  ] as const){
+   const refused=command(migration.href,runtime.href,false,proof);
+   expect(refused.status).not.toBe(0);
+   expect(refused.stderr).toContain(code);
+   expect((await owner.query("SELECT EXISTS(SELECT FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) acl WHERE a.attrelid='public.workspaces'::regclass AND acl.grantee=0) AS unchanged")).rows[0].unchanged).toBe(true);
+  }
   for(const target of ['migration','runtime'] as const){
    for(const option of ['host=invalid.example','user=invalid_role','password=private-query-marker','credential-percent','credential-control',
     'database=unrelated','port=1','sslmode=disable&sslmode=disable','sslmode=unsupported',

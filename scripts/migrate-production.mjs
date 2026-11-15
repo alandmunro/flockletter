@@ -8,6 +8,8 @@ import pg from 'pg';
 import { applyMigrations } from './apply-migrations.mjs';
 import { verifyRuntimeBoundary } from '../src/server/runtime-boundary.mjs';
 import {releaseInputPreflight,refuseReleaseInput} from './release-input.mjs';
+import {migrationEvidenceGaps,releaseSourceFingerprint} from './release-plan.mjs';
+import {checkMigrationIdentity} from './check-migration-identity.mjs';
 
 async function run() {
   const tag = process.argv[2];
@@ -23,8 +25,14 @@ async function run() {
     if(process.argv[3]!=='--pair-stdin')throw Error('Invalid input.');
     data=JSON.parse(line.value);
   } catch { refuseReleaseInput(['private_input_invalid']); }
+  const compatibility=data?.compatibility;
+  if(data&&typeof data==='object')delete data.compatibility;
   const gaps=releaseInputPreflight('production.migrate',data,process.env.APP_ENV);
   if(gaps.length)refuseReleaseInput(gaps);
+  const proof=migrationEvidenceGaps(compatibility,'production',await releaseSourceFingerprint());
+  if(proof.length)refuseReleaseInput(proof);
+  const identityGaps=await checkMigrationIdentity('production',compatibility.webRevision);
+  if(identityGaps.length)refuseReleaseInput(identityGaps);
   const migration=new URL(data.migrationUrl),runtime=new URL(data.runtimeUrl);
   const client = new pg.Client({
     connectionString: migration.href,

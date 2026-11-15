@@ -36,6 +36,8 @@ Apply `npm run db:migrate` using `MIGRATION_DATABASE_URL` and `RUNTIME_DATABASE_
 
 ## Acceptance after configuration
 
+For an existing staging release, run the compatibility rehearsal and bind its evidence to the protected migration plan **before** any database write. The direct paired-URI helper requires the same evidence object alongside its URLs. Record both the web and worker revisions, including the web revision twice if its worker is embedded. [Migration rehearsal and recovery](RELEASE_RUNNER.md#before-migrating-an-existing-installation)
+
 1. Deploy the exact reviewed commit; wait for that deploy to become live. Require `/readyz` to return 200 with no gaps and sending disabled.
 2. Verify the four real Clerk login methods, organization selection and owner authorization; a token from another Clerk application must fail. Remove a test membership and confirm that both its session and delegated connection lose access.
 3. In two synthetic organizations, create a first brand/draft, upload original test images with a deliberately bad file, preview a saved version, then reload and confirm persistence. Try foreign IDs and stale updates.
