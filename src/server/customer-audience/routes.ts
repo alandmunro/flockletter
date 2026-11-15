@@ -54,6 +54,14 @@ export function customerAudienceRoutes(service: CustomerAudience) {
       message: { error: { message: 'Too many requests. Try again shortly.' } },
     }),
   );
+  router.use(async (req, _res, next) => {
+    if (req.baseUrl.toLowerCase() === '/signup') {
+      const match = /^\/([a-zA-Z0-9-]+)\/?$/.exec(req.path);
+      if (!match) throw new AppError(404,'signup_unavailable','Signup page unavailable.');
+      req.url = '/' + await service.resolveSignupSlug(match[1]!);
+    }
+    next();
+  });
   router.use(express.urlencoded({ extended: false, limit: '8kb' }));
   router.get('/opt-out', (req, res) => {
     const token = typeof req.query.t === 'string' && req.query.t.length < 1000 ? req.query.t : '';

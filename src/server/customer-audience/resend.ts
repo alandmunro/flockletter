@@ -1,3 +1,4 @@
+import { confirmationContent } from './verification-email.js';
 import { z } from 'zod';
 import type { ConfirmationEnvelope,CustomerConfirmationPort } from './service.js';
 
@@ -11,11 +12,11 @@ export class CustomerConfirmationProvider implements CustomerConfirmationPort {
       try{const u=new URL(value);return u.origin===this.origin && !u.username && !u.password;}catch{return false;}
     }))return {state:'rejected'};
     try {
+      const {mail,attachment}=await confirmationContent(message);
       const response=await this.send('https://api.resend.com/emails',{
         method:'POST',redirect:'error',signal:AbortSignal.timeout(8000),
         headers:{authorization:'Bearer '+this.key,'content-type':'application/json','Idempotency-Key':'flockletter-confirmation/'+message.operationKey},
-        body:JSON.stringify({from:this.sender,to:[message.to],subject:'Confirm your newsletter subscription',
-          text:`You requested ${message.brandName} emails. Confirm your subscription:\n\n${message.confirmUrl}\n\nIf you did not request this, ignore this message or opt out:\n\n${message.unsubscribeUrl}`,
+        body:JSON.stringify({from:this.sender,to:[message.to],subject:mail.subject,html:mail.html,text:mail.text,attachments:[attachment],
           tags:[{name:'fl_confirmation',value:message.operationKey},{name:'fl_confirmation_route',value:message.routeToken}]}),
       });
       if(!response.ok){await response.body?.cancel();return {state:response.status>=500||[408,409,429].includes(response.status)?'unknown':'rejected'};}

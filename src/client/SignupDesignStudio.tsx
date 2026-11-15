@@ -107,7 +107,7 @@ export function SignupDesignStudio({
               </select>
             </label>
             <p className="help">
-              The selected logo is visible on your public signup page.
+              Your display name, logo, accent color and typeface appear on your signup page and confirmation email. Your signup address stays the same when you edit them.
             </p>
             <BrandImageUpload
               api={api}
