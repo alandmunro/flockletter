@@ -1,3 +1,5 @@
+import { studioFixtureImage } from '../scripts/studio-fixture-image.js';
+import { defaultDesign, type SignupDesign } from '../src/shared/signup-design.js';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { startDatabase } from '../scripts/database-fixture.js';
@@ -75,6 +77,37 @@ async function setup(limit = 250) {
       ) as Promise<AudienceSettingsView>,
   };
 }
+it('uses only the selected brand’s saved image in an imported subscriber’s confirmation', async () => {
+  const a = await setup();
+  const otherBrand = randomUUID();
+  await db.tenant(a.workspace, sql => sql.query('INSERT INTO brands(workspace_id,id,name) VALUES($1,$2,$3)',
+    [a.workspace, otherBrand, 'Another brand']));
+  const core = new CommandService(db);
+  const bytes = (await studioFixtureImage('#773344')).toString('base64');
+  const upload = async (brandId:string) => (await core.execute('asset.uploadBatch', {operationKey:randomUUID(), brandId,
+    files:[{itemKey:randomUUID(),name:'hero.png',base64:bytes}]}, a.owner) as {results:{asset:{id:string}}[]}).results[0]!.asset.id;
+  const save = (design:SignupDesign, expectedRevision:number) => a.customer.execute('audienceOnboarding.saveDesign',
+    {operationKey:randomUUID(), brandId:a.brand, design, expectedRevision}, a.owner);
+  const other = await upload(otherBrand), photoId = await upload(a.brand);
+  await expect(save({...defaultDesign,confirmation:{photoId:other}},0)).rejects.toMatchObject({code:'confirmation_photo_unavailable'});
+  const confirmation = {subject:'Confirm your Alpine news', heading:'Welcome to Alpine', photoId};
+  await save({...defaultDesign,confirmation},0);
+  await save({...defaultDesign,displayName:'Alpine Studio'},1);
+  expect((await a.settings()).design?.confirmation).toEqual(confirmation);
+  const token = (await a.settings()).publicUrl!.split('/newsletter/')[1]!;
+  expect((await a.customer.publicConfirmationPhoto(token)).bytes.toString('base64')).toBe(bytes);
+  const imported = await a.customer.execute('audienceOnboarding.import',delegatedImport(a.brand),a.owner) as {rows:{subscriberId:string}[]};
+  const {id} = await a.customer.execute('audienceOnboarding.requestConfirmation',{brandId:a.brand,operationKey:randomUUID(),
+    subscriberId:imported.rows[0]!.subscriberId},a.owner) as {id:string};
+  const captured = await a.customer.execute('audienceOnboarding.confirmation',{brandId:a.brand,id},a.owner) as {subject:string;html:string;text:string};
+  expect(captured.subject).toBe(confirmation.subject);
+  expect(captured.html).toContain('Welcome to Alpine');
+  expect(captured.html).toContain('src="data:image/png;base64,' + bytes + '"');
+  expect(captured.html).not.toContain('src="cid:');
+  expect(captured.text).toContain('/confirm?t=');
+  await save({...defaultDesign,confirmation:{}},2);
+  await expect(a.customer.publicConfirmationPhoto(token)).rejects.toMatchObject({code:'link_unavailable'});
+});
 it('imports real-domain addresses as pending, reports all rows, preserves suppression and replays exactly', async () => {
   const a = await setup();
   const existing = randomUUID();

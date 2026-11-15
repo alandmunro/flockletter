@@ -114,6 +114,28 @@ it('requires distinct credentials and includes the registered route in outbound 
  for(const value of ['cid:verification-brand','#123456',a.message().unsubscribeUrl]) expect(payload).toMatchObject({html:expect.stringContaining(value)});
  expect(await provider.submit({...a.message(),routeToken:undefined})).toEqual({state:'rejected'});
 });
+it('renders a custom confirmation identity with photo and preserves both actions',async()=>{
+ const a=await setup();let payload:unknown;
+ const provider=new CustomerConfirmationProvider('send-only',sender,'https://mail.example.test',async(_url,options)=>{payload=JSON.parse(String(options?.body));return Response.json({id:a.providerId});});
+ const logo={mime:'image/png',width:220,height:100,bytes:Buffer.from('brand logo fixture')};
+ const photo={mime:'image/png',width:800,height:600,bytes:Buffer.from('confirmation photo fixture')};
+ const envelope:ConfirmationEnvelope={...a.message(),brandName:'Alpine',identity:{logo,accent:'#123456',font:'sans',photo,confirmation:{subject:'Welcome to Alpine',heading:'You are almost in',message:'Tap below to confirm your subscription.',button:'Confirm now'}}};
+ expect(await provider.submit(envelope)).toMatchObject({state:'accepted',providerId:a.providerId});
+ const body=payload as {subject:string;html:string;text:string;attachments:{content_id:string;content_type?:string;content?:string}[]};
+ expect(body.subject).toBe('Welcome to Alpine');
+ expect(body.html).toContain('You are almost in');
+ expect(body.html).toContain('Tap below to confirm your subscription.');
+ expect(body.html).toContain('Confirm now');
+ expect(body.text).toContain(a.message().confirmUrl);
+ expect(body.text).toContain(a.message().unsubscribeUrl);
+ expect(body.attachments).toHaveLength(2);
+ const logoAtt=body.attachments.find(att=>att.content_id==='verification-brand')!;
+ const photoAtt=body.attachments.find(att=>att.content_id==='verification-photo')!;
+ expect(logoAtt).toMatchObject({content_type:'image/png',content:logo.bytes.toString('base64')});
+ expect(photoAtt).toMatchObject({content_type:'image/png',content:photo.bytes.toString('base64')});
+ expect(body.html).toContain('cid:verification-brand');
+ expect(body.html).toContain('cid:verification-photo');
+});
 it('does not bind one provider message to a second confirmation even across workspaces',async()=>{
  const a=await setup(),b=await setup(),first=signed(a.event());await a.feedback.receive(first.body,first.headers);
  const foreign=new CustomerConfirmationFeedback(db,{webhookSecret:secret,retrieveKey:'retrieve-only',sendingKey:'send-only',routeKey,sender,send:async()=>Response.json({...b.sent(),id:a.providerId})});

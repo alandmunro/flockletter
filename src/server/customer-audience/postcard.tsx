@@ -7,7 +7,7 @@ import { buttonInk, type SignupDesign } from "../../shared/signup-design.js";
 
 export function sendPostcard(
   res: Response,
-  formId: string,
+  formId: string | null,
   form: { brandName: string; design: SignupDesign },
   title: string,
   footer: string,
@@ -21,6 +21,9 @@ export function sendPostcard(
       "style-src 'self' 'nonce-" + nonce + "'",
     ),
   );
+  // Legacy first-party links keep their confirmation token in a browser fragment.
+  const fragmentAction = formId === null;
+  const logoPath = formId === null ? "/subscriptions/confirmation-media/logo" : "/newsletter/" + encodeURIComponent(formId) + "/logo";
   const accent = form.design.accent;
   res.type("html").send(
     "<!doctype html>" +
@@ -36,6 +39,7 @@ export function sendPostcard(
               {title + ' | ' + (form.design.displayName || form.brandName)}
             </title>
             <link rel="stylesheet" href="/signup-postcard.css" />
+            {fragmentAction && <script src="/subscriber-action.js" defer />}
             <style nonce={nonce}>
               {".signup-postcard{--postcard-accent:" +
                 accent +
@@ -53,11 +57,13 @@ export function sendPostcard(
                 footer={footer}
                 logo={
                   form.design.logoId
-                    ? "/newsletter/" + encodeURIComponent(formId) + "/logo"
+                    ? logoPath
                     : undefined
                 }
               >
                 {body}
+                {fragmentAction && <p id="status" role="status" />}
+                {fragmentAction && <noscript>Enable JavaScript to use this confirmation form.</noscript>}
               </SignupPostcard>
             </main>
           </body>

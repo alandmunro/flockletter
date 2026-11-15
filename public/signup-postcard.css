@@ -19,3 +19,4 @@
 .signup-postcard :focus-visible { outline:3px solid #226868; outline-offset:3px }
 .signup-postcard .postcard-foot { border-top:1px solid #eadbdf; color:#69515d; font-size:14px }
 .design-studio .studio-columns { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:24px; margin-block:18px }
+.signup-postcard .confirmation-photo { display:block; max-width:100%; max-height:240px; height:auto; object-fit:contain }

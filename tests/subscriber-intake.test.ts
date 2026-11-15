@@ -12,7 +12,8 @@ import { Database } from '../src/server/db.js';
 import { CommandService, type Actor } from '../src/server/service.js';
 import { SubscriberIntake, suppress } from '../src/server/subscribers/intake.js';
 import { loadIntakeBinding, type IntakeBinding } from '../src/server/subscribers/config.js';
-import { actionUrl } from '../src/server/subscribers/tokens.js';
+import { defaultDesign } from '../src/shared/signup-design.js';
+import { actionUrl, hash } from '../src/server/subscribers/tokens.js';
 import { buildMarketingMessageLinks, loadMarketingLinks, redeemMarketingLink } from '../src/server/subscribers/marketing-links.js';
 import {
   CapturedConfirmation,
@@ -379,6 +380,30 @@ describe('FFA first-party subscriber intake', () => {
       expect(await rows('SELECT * FROM ' + table)).toEqual([]);
     expect((await post(form(), key)).status).toBe(202);
   });
+  it('renders the storefront signup confirmation with the bound brand’s saved design', async () => {
+    const design = {...defaultDesign,displayName:'Trail Shop',confirmation:{subject:'Welcome to our trail letters'}};
+    await db.tenant(owner.workspaceId,sql=>sql.query('UPDATE brands SET signup_design=$2 WHERE id=$1',[binding.brandId,design]));
+    await post();
+    await delivered();
+    const message = [...capture.messages.values()][0]!;
+    expect(message.content?.subject).toBe('Welcome to our trail letters');
+    expect(message.content?.html).toContain('Trail Shop');
+    expect(message.content?.html).toContain(message.confirm);
+    expect(message.content?.attachments[0]?.content_id).toBe('verification-postage');
+    const adapter = new ResendConfirmation('test',async (_url, options) => {
+      expect(JSON.parse(String(options?.body))).toMatchObject({...message.content,to:[email]});
+      return Response.json({id:id()});
+    });
+    expect((await adapter.deliver(id(),message)).kind).toBe('accepted');
+  });
+  it('preserves the exact payload for storefront retries that started before branded confirmations', async () => {
+    await post();
+    const job = (await rows('SELECT token_id,unsubscribe_id FROM subscriber_outbox'))[0]!;
+    const legacy = {to:email,from:binding.sender,confirm:actionUrl(binding,'confirm',job.token_id),unsubscribe:actionUrl(binding,'unsubscribe',job.unsubscribe_id)};
+    await db.brand(owner.workspaceId,binding.brandId,sql=>sql.query('UPDATE subscriber_outbox SET attempts=1,uncertain=true,payload_digest=$1',[hash(JSON.stringify(legacy))]));
+    await delivered();
+    expect([...capture.messages.values()][0]).toEqual(legacy);
+  });
   it('FI-008: ambiguous acceptance reconciles with the same provider operation and unchanged payload', async () => {
     await post();
     const effects = new Map<string, ConfirmationMessage>();
@@ -702,6 +727,34 @@ describe('FFA first-party subscriber intake', () => {
       expect((await rows('SELECT state FROM subscribers'))[0]?.state).toBe('pending');
     },
   );
+  it('uses only the bound first-party brand design for fragment confirmation links', async () => {
+    const photoId = id();
+    const settings = {...defaultDesign, displayName:'First-party brand', confirmation:{
+      heading:'Join our newsletter', message:'Confirm and join our crew.', button:'Count me in', photoId,
+    }};
+    await rows("INSERT INTO assets(workspace_id,brand_id,id,item_key,name,mime,bytes,sha256,width,height) VALUES($1,$2,$3,'photo','hero.png','image/png',$4,'fixture',1,1)",
+      [binding.workspaceId,binding.brandId,photoId,Buffer.from('synthetic')]);
+    await rows('UPDATE brands SET signup_design=$2,signup_design_revision=1 WHERE id=$1',[binding.brandId,settings]);
+    await post();
+    const { confirm } = await delivered();
+    const landing = await http('/subscriptions/confirm#' + confirm);
+    const html = await landing.text();
+    expect(landing.status).toBe(200);
+    expect(html).toContain('First-party brand');
+    expect(html).toContain('Join our newsletter');
+    expect(html).toContain('Count me in');
+    expect(html).toContain('type="submit" disabled');
+    expect(html).toContain('/subscriber-action.js');
+    expect(html).toContain('/subscriptions/confirmation-media/photo');
+    expect(html).not.toContain(confirm);
+    expect(landing.headers.get('content-security-policy')).toContain("script-src 'self'");
+    expect(await rows('SELECT state FROM subscribers')).toEqual([{state:'pending'}]);
+    const image = await http('/subscriptions/confirmation-media/photo');
+    expect(image.headers.get('content-type')).toBe('image/png');
+    expect(await image.text()).toBe('synthetic');
+    expect((await http('/subscriptions/confirmation-media/' + photoId)).status).toBe(404);
+    expect((await http('/subscriptions/confirmation-media/logo')).status).toBe(404);
+  });
   it('keeps private intake data and token material out of error responses and application diagnostics', async () => {
     const logs = [
       vi.spyOn(console, 'log'),

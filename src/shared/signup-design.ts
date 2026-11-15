@@ -1,5 +1,22 @@
 import { z } from "zod";
 
+const singleLine = (limit: number) =>
+  z
+    .string()
+    .trim()
+    .max(limit)
+    .regex(/^[^\r\n]*$/, "Use one line.");
+export const confirmationDesign = z
+  .object({
+    subject: singleLine(120).optional(),
+    heading: singleLine(120).optional(),
+    message: z.string().trim().max(800).optional(),
+    button: singleLine(60).optional(),
+    photoId: z.uuid().nullable().optional(),
+  })
+  .strict();
+export type ConfirmationDesign = z.infer<typeof confirmationDesign>;
+
 export const signupDesign = z
   .object({
     displayName: z.string().trim().max(100),
@@ -8,6 +25,7 @@ export const signupDesign = z
     accent: z.string().regex(/^#[0-9a-f]{6}$/i),
     font: z.enum(["serif", "sans"]),
     logoId: z.uuid().nullable(),
+    confirmation: confirmationDesign.optional(),
   })
   .strict();
 export type SignupDesign = z.infer<typeof signupDesign>;

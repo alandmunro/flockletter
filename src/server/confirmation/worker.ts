@@ -1,3 +1,5 @@
+import { confirmationContent } from '../customer-audience/verification-email.js';
+import { emailIdentity } from '../customer-audience/service.js';
 import {lockWorkspace} from '../workspace-lock.js';
 import { randomUUID, randomInt } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
@@ -57,7 +59,7 @@ export class ConfirmationWorker {
       clearTimeout(timer);
     }
   }
-  private envelope(job: Job): ConfirmationMessage | undefined {
+  private async envelope(sql: Sql, job: Job): Promise<ConfirmationMessage | undefined> {
     const b = this.binding;
     if (
       !job.grant_valid ||
@@ -69,12 +71,18 @@ export class ConfirmationWorker {
       job.unsubscribe_hash !== hash(actionToken(b, 'unsubscribe', job.unsubscribe_id))
     )
       return;
-    return {
+    const message = {
       to: job.email_normalized,
       from: b.sender,
       confirm: actionUrl(b, 'confirm', job.token_id),
       unsubscribe: actionUrl(b, 'unsubscribe', job.unsubscribe_id),
     };
+    // Jobs already attempted before confirmation design was available must replay their exact old payload.
+    if (job.payload_digest === hash(JSON.stringify(message))) return message;
+    const { mail, attachments } = await confirmationContent({
+      ...await emailIdentity(sql, b.brandId), confirmUrl:message.confirm, unsubscribeUrl:message.unsubscribe,
+    }, b.mode === 'capture');
+    return { ...message, content:{subject:mail.subject, text:mail.text, html:mail.html, attachments} };
   }
   private async finish(
     sql: Sql,
@@ -110,7 +118,7 @@ export class ConfirmationWorker {
       ).rows[0];
       if (!job) return;
       const uncertain = job.uncertain || job.state === 'leased';
-      const msg = this.envelope(job);
+      const msg = await this.envelope(sql, job);
       if (
         !msg ||
         job.outside_window ||
@@ -147,7 +155,7 @@ export class ConfirmationWorker {
         )
       ).rows[0];
       if (!job) return;
-      const msg = this.envelope(job);
+      const msg = await this.envelope(sql, job);
       if (
         !gate?.enabled ||
         gate.worker_fingerprint !== fingerprint(b) ||

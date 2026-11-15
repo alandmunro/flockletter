@@ -4,7 +4,7 @@ import { isIP } from 'node:net';
 import { limits, type Campaign, type Gap } from '../shared/contracts.js';
 import { AppError } from './errors.js';
 import {renderStudio,studioContentGaps} from './studio-render.js';
-import { renderAuthoringLayout } from './authoring-layout.js';
+import { renderAuthoringLayout } from '../shared/authoring-layout.js';
 import { staticSvg } from './svg-import.js';
 
 export const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');

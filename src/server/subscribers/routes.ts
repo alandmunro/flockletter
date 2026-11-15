@@ -1,3 +1,7 @@
+import { createElement as h } from 'react';
+import { sendPostcard } from '../customer-audience/postcard.js';
+import { brandImage, brandIdentity } from '../customer-audience/service.js';
+import { ConfirmationFormContent } from '../../shared/ConfirmationFormContent.js';
 import express, { type Express, type RequestHandler } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
@@ -88,10 +92,34 @@ export function subscriberRoutes(
     });
     next();
   });
-  app.get('/subscriptions/:action', (req, res) => {
+  app.get('/subscriptions/confirmation-media/:placement', async (req, res) => {
+    const placement = req.params.placement;
+    const binding = intake?.binding;
+    if (!intake || !binding || (placement !== 'logo' && placement !== 'photo'))
+      throw new AppError(404, 'image_unavailable', 'This image is unavailable.');
+    const image = await intake.db.brand(binding.workspaceId, binding.brandId, async sql => {
+      const { design } = await brandIdentity(sql, binding.brandId);
+      return brandImage(sql, binding.brandId, placement === 'logo' ? design.logoId : design.confirmation?.photoId);
+    });
+    if (!image) throw new AppError(404, 'image_unavailable', 'This image is unavailable.');
+    res.type(image.mime).send(image.bytes);
+  });
+  app.get('/subscriptions/:action', async (req, res) => {
     if (!actions.safeParse(req.params.action).success)
       throw new AppError(404, 'not_found', 'This link is unavailable.');
     const confirm = req.params.action === 'confirm';
+    if (confirm && intake?.binding) {
+      const { workspaceId, brandId } = intake.binding;
+      const form = await intake.db.brand(workspaceId, brandId, sql => brandIdentity(sql, brandId));
+      if (form.designRevision > 0) {
+        sendPostcard(res, null, form, form.design.confirmation?.heading || 'Confirm your subscription',
+          'You can unsubscribe from any newsletter.', h(ConfirmationFormContent, {
+            design:form.design, brandName:form.brandName, fragmentAction:true,
+            photoUrl:form.design.confirmation?.photoId ? '/subscriptions/confirmation-media/photo' : undefined,
+          }));
+        return;
+      }
+    }
     const title = confirm ? 'Confirm your subscription' : 'Unsubscribe from these emails';
     const body = confirm
       ? 'Choose Confirm to receive product news and occasional promotions from Frosty Flamingo Apparel.'

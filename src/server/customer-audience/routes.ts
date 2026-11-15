@@ -1,4 +1,5 @@
 import { createElement as h } from 'react';
+import { ConfirmationFormContent } from '../../shared/ConfirmationFormContent.js';
 import { SignupFields } from '../../shared/SignupPostcard.js';
 import { sendPostcard } from './postcard.js';
 import express, { type Response } from 'express';
@@ -98,9 +99,11 @@ export function customerAudienceRoutes(service: CustomerAudience) {
   router.get('/:form/confirm', async (req, res) => {
     const form = await service.publicForm(String(req.params.form));
     const token = typeof req.query.t === 'string' && req.query.t.length === 80 ? req.query.t : '';
-    sendPostcard(res, String(req.params.form), form, 'Confirm your subscription', 'You can unsubscribe from any newsletter.',
-      h('form', {method:'post'}, h('p', {}, 'Confirm that you want email from '+form.brandName+'.'),
-        h('input', {type:'hidden', name:'token', value:token}), h('button', {type:'submit'}, 'Confirm subscription')));
+    const photoUrl = form.design.confirmation?.photoId
+      ? '/newsletter/' + encodeURIComponent(String(req.params.form)) + '/confirmation-photo'
+      : undefined;
+    sendPostcard(res, String(req.params.form), form, form.design.confirmation?.heading || 'Confirm your subscription',
+      'You can unsubscribe from any newsletter.', h(ConfirmationFormContent, {design:form.design,brandName:form.brandName,photoUrl,token}));
   });
   router.get('/:form/unsubscribe', async (req, res) => {
     const token = typeof req.query.t === 'string' && req.query.t.length === 80 ? req.query.t : '';
@@ -131,6 +134,10 @@ export function customerAudienceRoutes(service: CustomerAudience) {
     await service.confirm(String(req.params.form), typeof req.body?.token === 'string' ? req.body.token : '');
     sendPostcard(res, String(req.params.form), form, 'Subscription confirmed', 'You can unsubscribe from any newsletter.',
       h('p', {}, 'Your newsletter subscription is confirmed.'));
+  });
+  router.get('/:form/confirmation-photo', async (req, res) => {
+    const photo = await service.publicConfirmationPhoto(String(req.params.form));
+    res.type(photo.mime).send(photo.bytes);
   });
   router.get('/:form/logo', async (req, res) => {
     const logo = await service.publicLogo(String(req.params.form));

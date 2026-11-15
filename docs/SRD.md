@@ -282,7 +282,7 @@ The [phase 1 review](PHASE_1.md) defines the documentation completion gate. Appr
 
 See [source references](SOURCES.md) for public upstream documentation and the limits of what it establishes. Existing private application designs inform only the reviewed-reuse process described in [reuse review](REUSE_REVIEW.md); their code and infrastructure details are not published here.
 
-**FL-BRD-001 — Subscriber signup design.** A workspace owner can define each brand’s public display name, logo from its image library, button color, heading typeface and signup copy in Audience’s Design studio. Preview and public signup use the same postcard layout. A saved design applies to the selected brand, including its confirmation page. Consent wording, confirmation mode and subscriber records are managed independently.
+**FL-BRD-001 — Subscriber signup design.** A workspace owner can define each brand’s public display name, logo from its image library, button color, heading typeface and signup copy in Audience’s Design studio. Preview and public signup use the same postcard layout. A saved design applies to the selected brand, including its confirmation page. Owners can customize the confirmation email subject, heading, welcome message, action label and optional featured image. The Audience editor previews both the email and the confirmation form with the selected brand’s identity. Previewing a design never sends mail or confirms a subscription. Consent wording, confirmation mode and subscriber records are managed independently.
 
 ### Public launch amendment
 

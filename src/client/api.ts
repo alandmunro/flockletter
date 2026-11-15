@@ -31,15 +31,26 @@ export function client(getToken: TokenGetter) {
       if (!response.ok) throw new ApiError(response.status,data.error?.code,[data.error?.message ?? 'Request failed.', ...data.error?.details?.map(d => `${d.path}: ${d.message}`) ?? []].join(' '));
       return data.result;
     },
-    async asset(id: string) {
+    async asset(id: string, format: 'blob' | 'data' = 'blob') {
       const response = await request(`/api/v1/assets/${id}`);
       if (!response.ok) throw new Error('This image is unavailable.');
-      return URL.createObjectURL(await response.blob());
+      const blob = await response.blob();
+      if (format === 'blob') return URL.createObjectURL(blob);
+      // A sandboxed email iframe has an opaque origin and cannot read app-owned blob URLs.
+      return imageDataUrl(blob);
     },
   };
 }
 export type Api = ReturnType<typeof client>;
 export const operationKey = () => crypto.randomUUID();
+export function imageDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('This image could not be previewed.'));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(blob);
+  });
+}
 export function base64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

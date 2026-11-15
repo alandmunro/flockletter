@@ -171,6 +171,65 @@ try {
   await page.screenshot({ path: root + "/images-desktop.png" });
   await nav.getByRole("button", { name: "Audience", exact: true }).click();
   const section = page.locator(".audience-onboarding");
+  const confirmation = section.locator("details.design-studio").filter({
+    has: page.getByText("Design studio · Confirmation email and form", { exact: true }),
+  });
+  await confirmation.locator("summary").click();
+  const stamp = confirmation.frameLocator('iframe[title="Confirmation email preview"]').locator('img[src^="data:"]');
+  await stamp.waitFor();
+  assert.ok(await stamp.evaluate(async image => {
+    await (image as HTMLImageElement).decode();
+    return (image as HTMLImageElement).naturalWidth > 0;
+  }));
+  await confirmation.locator("summary").click();
+  const identityEditor = section.locator("details.design-studio").filter({
+    has: page.getByText("Design studio · Signup page", { exact: true }),
+  });
+  await identityEditor.locator("summary").click();
+  await identityEditor.getByLabel("Brand logo").selectOption(upload.results[1]!.asset!.id);
+  await command(page, "audienceOnboarding.saveDesign", () =>
+    identityEditor.getByRole("button", { name: "Save design", exact: true }).click(),
+  );
+  await identityEditor.locator("summary").click();
+
+  await confirmation.locator("summary").click();
+  await confirmation.getByLabel("Email subject").fill("Join the Alpine Notes crew");
+  await confirmation.getByLabel("Confirmation heading").fill("Welcome to Alpine Notes");
+  await confirmation.getByLabel("Welcome message").fill("Confirm to receive stories from the trail.");
+  await confirmation.getByLabel("Confirmation button label").fill("Count me in");
+  await confirmation.getByLabel("Featured image").selectOption(upload.results[0]!.asset!.id);
+  const mailFrame = confirmation.frameLocator('iframe[title="Confirmation email preview"]');
+  await mailFrame.getByRole("heading", { name: "Welcome to Alpine Notes" }).waitFor();
+  const media = mailFrame.locator('img[src^="data:"]');
+  await media.nth(1).waitFor();
+  assert.deepEqual(await media.evaluateAll(async (images) =>
+    Promise.all((images as HTMLImageElement[]).map(async (image) => {
+      await image.decode();
+      return image.naturalWidth;
+    }))), [40, 4]);
+  await mailFrame.locator('a[aria-disabled="true"]').filter({hasText:"Count me in"}).waitFor();
+  assert.equal(await mailFrame.locator("a[href], form").count(), 0);
+  await page.screenshot({ path: root + "/confirmation-email-preview.png" });
+  await confirmation.getByLabel("Preview", { exact: true }).selectOption("form");
+  const formPreview = confirmation.locator(".signup-postcard form");
+  assert.ok(await formPreview.getByRole("button", { name: "Count me in" }).isDisabled());
+  assert.equal(await formPreview.locator('input[name="token"]').count(), 0);
+  await formPreview.getByText("Confirm to receive stories from the trail.").waitFor();
+  assert.equal(await formPreview.locator("img").evaluate(async image => {
+    await (image as HTMLImageElement).decode();
+    return (image as HTMLImageElement).naturalWidth;
+  }), 4);
+  await page.screenshot({ path: root + "/confirmation-form-preview.png" });
+  await command(page, "audienceOnboarding.saveDesign", () =>
+    confirmation.getByRole("button", { name: "Save confirmation design" }).click(),
+  );
+  await page.reload();
+  await nav.getByRole("button", { name: "Audience", exact: true }).click();
+  await confirmation.locator("summary").click();
+  assert.equal(await confirmation.getByLabel("Email subject").inputValue(), "Join the Alpine Notes crew");
+  assert.equal(await confirmation.getByLabel("Featured image").inputValue(), upload.results[0]!.asset!.id);
+  await mailFrame.getByRole("heading", { name: "Welcome to Alpine Notes" }).waitFor();
+  await confirmation.locator("summary").click();
   await section.getByLabel("Consent version", { exact: true }).fill("v2");
   const wording =
     "Send me Alpine Notes newsletters. I can unsubscribe at any time.";
