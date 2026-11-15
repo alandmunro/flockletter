@@ -63,7 +63,9 @@ Recipients can opt out without a login through `GET` and `POST /mail/unsubscribe
 ## MCP setup
 
 
-This release supplies a standard **stdio** MCP bridge, with token storage owned by the local MCP host. It does not advertise a remote OAuth endpoint or pretend that a static token is an OAuth consent flow. Remote Clerk OAuth MCP remains a later adapter workstream.
+For a hosted connection, choose **Streamable HTTP** and use `https://flockletter.frostyflamingosoftware.com/api/v1/mcp` in production. In **API & MCP**, create a connection with the brands and permissions your assistant needs. Set the client’s bearer token to the issued secret, or configure the header `Authorization: Bearer <connection token>`. The server checks the connection on each POST and lists the tools its grants allow. Hosted requests support up to 1 MiB of JSON. This endpoint uses bearer tokens and requires a client that can supply the header.
+
+For larger uploads or access to a local photo folder, use the stdio bridge.
 
 Build the repository, then configure the host to run:
 

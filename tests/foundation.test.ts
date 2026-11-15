@@ -6,6 +6,7 @@ import path from 'node:path';
 import { request as nodeRequest, type Server } from 'node:http';
 import sharp from 'sharp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { startDatabase } from '../scripts/database-fixture.js';
 import { Database } from '../src/server/db.js';
@@ -140,6 +141,28 @@ describe('HTTP authority, credentials and transport parity', () => {
     const workspace = await (await http('workspace.get', {}, issued.token)).json(); expect(workspace.result.brands.map((item: { id: string }) => item.id)).toEqual([brandA]);
     expect((await http('asset.list', { brandId: otherBrand }, issued.token)).status).toBe(404);
     await run('connection.revoke', keyed({ id: issued.connection.id }));
+  });
+  it('authenticates hosted MCP discovery and calls against the current connection grants', async () => {
+    const endpoint = new URL('/api/v1/mcp', origin);
+    expect((await fetch(endpoint, { method: 'POST' })).status).toBe(401);
+    expect((await fetch(endpoint, { method: 'POST', headers: { origin: 'https://foreign.example' } })).status).toBe(403);
+    const issued = await issue(['read']);
+    const client = new Client({ name: 'hosted-test', version: '1' });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(endpoint, {
+        requestInit: { headers: { Authorization: 'Bearer ' + issued.token } },
+      }));
+      const names = (await client.listTools()).tools.map(tool => tool.name);
+      expect(names).toContain('workspace_get');
+      expect(names).not.toContain('campaign_create');
+      expect(names).not.toContain('asset_upload_files');
+      const result = await client.callTool({ name: 'workspace_get', arguments: {} });
+      expect(result.isError).toBeFalsy();
+      expect(JSON.stringify(result.content)).toContain(brandA);
+      expect(JSON.stringify(result.content)).not.toContain(brandB);
+      await run('connection.revoke', keyed({ id: issued.connection.id }));
+      await expect(client.listTools()).rejects.toThrow(/invalid_connection/);
+    } finally { await client.close(); }
   });
   it('performs a real MCP initialize/list/call over the same HTTP API', async () => {
     const issued = await issue(); const bridge = createMcpServer(apiCaller(origin, issued.token)); const mcp = new Client({ name: 'foundation-contract', version: '1' }); const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

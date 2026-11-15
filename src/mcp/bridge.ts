@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { open, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
-import { commands, limits } from '../shared/contracts.js';
+import { commands, limits, type CommandName } from '../shared/contracts.js';
 
 export type ApiCaller = (name: string, input: unknown) => Promise<unknown>;
 export function apiCaller(origin: string, token: string): ApiCaller {
@@ -17,14 +17,15 @@ export function apiCaller(origin: string, token: string): ApiCaller {
     return body.result;
   };
 }
-export function createMcpServer(call: ApiCaller, assetRoot?: string) {
+export function createMcpServer(call: (name: CommandName, input: unknown) => Promise<unknown>, assetRoot?: string, visible?: (name: CommandName) => boolean) {
   const server = new McpServer({ name: 'flockletter', version: '0.1.0' });
-  const result = async (name: string, input: unknown) => {
+  const result = async (name: CommandName, input: unknown) => {
     try { return { content: [{ type: 'text' as const, text: JSON.stringify(await call(name, input)) }] }; }
     catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Request failed.' }] }; }
   };
-  for (const [name, definition] of Object.entries(commands)) {
-    if (definition.scope === 'owner') continue;
+  for (const name of Object.keys(commands) as CommandName[]) {
+    const definition = commands[name];
+    if (definition.scope === 'owner' || (visible && !visible(name))) continue;
     server.registerTool(name.replace('.', '_'), {
       description: definition.description,
       inputSchema: definition.schema.shape,
