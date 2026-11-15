@@ -9,7 +9,7 @@ import { mapDeliveryViews } from '../src/server/customer-delivery/report-mapping
 import { Database,type Sql } from '../src/server/db.js';
 import { CommandService, authorize, type Actor } from '../src/server/service.js';
 import { CustomerBilling, customerEligibility } from '../src/server/customer-billing/service.js';
-import { createCustomerOptOut } from '../src/server/customer-audience/service.js';
+import { CustomerAudience, createCustomerOptOut } from '../src/server/customer-audience/service.js';
 import type { DeliveryView,DeliveryOutcomesPage } from '../src/shared/customer-delivery.js';
 import { createMcpServer } from '../src/mcp/bridge.js';
 import { CustomerDelivery } from '../src/server/customer-delivery/service.js';
@@ -128,6 +128,43 @@ async function reviewAndApprove(f: Awaited<ReturnType<typeof factory>>) {
   );
   return reviewed;
 }
+
+it('links forwarded newsletters only to the sending brand’s enabled signup page', async () => {
+  const f = await factory({signupPagesEnabled:true});
+  await saveSenderProfile(f.delivery, f.actor, f.brandId);
+  const audience = new CustomerAudience(db, {mode:'exercise', origin:f.options.origin,
+    checkOwner:async () => true, contactLimit:async () => 250});
+  const configure = (brand:typeof f, enabled:boolean) => audience.execute('audienceOnboarding.configure', {
+    operationKey:randomUUID(), brandId:brand.brandId, enabled, purpose:'shop_news', policyVersion:'v1',
+    consentText:'Send me occasional news from this shop. I can unsubscribe anytime.', sourceDomain:'shop.example.test',
+  }, brand.actor) as Promise<{signupUrl:string}>;
+  const review = async (delivery = f.delivery) => {
+    const {id} = await delivery.execute('delivery.review', {operationKey:randomUUID(), brandId:f.brandId,
+      campaignId:f.campaign.id, expectedVersion:1}, f.actor) as DeliveryView;
+    return db.brand(f.workspaceId, f.brandId, async sql => (await sql.query<{rendered_html:string;rendered_text:string}>(
+      'SELECT rendered_html,rendered_text FROM customer_deliveries WHERE id=$1',[id])).rows[0]!);
+  };
+  const invite = 'If someone forwarded this to you, join the crew and ';
+  const other = await configure(await factory(), true);
+  const absent = await review();
+  expect(absent.rendered_html).not.toContain(invite);
+  expect(absent.rendered_text).not.toContain(other.signupUrl);
+  const {signupUrl} = await configure(f, true);
+  expect(signupUrl).not.toBe(other.signupUrl);
+  const token = await audience.resolveSignupSlug(new URL(signupUrl).pathname.split('/').pop()!);
+  await expect(audience.publicForm(token)).resolves.toMatchObject({mode:'exercise'});
+  const enabled = await review();
+  expect(enabled.rendered_html).toContain(invite + '<a href="' + signupUrl + '"');
+  expect(enabled.rendered_html).toContain('>subscribe</a>.');
+  expect(enabled.rendered_text).toContain(signupUrl);
+  expect(enabled.rendered_html).not.toContain('href="' + other.signupUrl + '"');
+  const off = await review(new CustomerDelivery(db,{...f.options, signupPagesEnabled:false}));
+  expect(off.rendered_html).not.toContain(invite);
+  await configure(f, false);
+  const disabled = await review();
+  expect(disabled.rendered_html).not.toContain(invite);
+  expect(disabled.rendered_text).not.toContain(signupUrl);
+});
 
 it('rolls back a partial 2,500-person freeze and replays the exact trial queue and allowance once', async () => {
   const f=await factory({},false);

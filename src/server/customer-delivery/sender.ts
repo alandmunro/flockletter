@@ -31,20 +31,36 @@ export async function refreshCustomerSender(db:Database,workspace:string,brand:s
   });
 }
 const escape=(value:string)=>value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
-export function legalFooter(html: string, text: string, profile: CustomerSenderProfile | null) {
+export function legalFooter(html: string, text: string, profile: CustomerSenderProfile | null, signupUrl: string | null) {
   const legacy = '<p style="font-size:12px;color:#69515d">Preview only. Verified sender details and unsubscribe controls are required before delivery.</p>';
   const body = html.replace(legacy, '');
-  if (!profile) return { html: body, text };
 
-  const trialUrl = 'https://flockletter.frostyflamingosoftware.com/';
-  const address = profile.organization + ' · ' + profile.postalAddress;
-  const consent = 'You are receiving this because you opted in to updates from ' + profile.organization + '.';
-  const invitation = (link: string) => 'Are you interested in sending your own newsletters? Visit ' + link + ' to start your free trial.';
-  const link = `<a href="${trialUrl}" style="color:#69515d;text-decoration:underline">Flockletter</a>`;
   const paragraph = (line: string) => `<p align="center" style="text-align:center;font-size:12px;color:#69515d">${line}</p>`;
-  const footer = [escape(address), escape(consent), invitation(link)].map(paragraph).join('');
+  let footerHtml = '';
+  const footerText: string[] = [];
+
+  if (profile) {
+    const trialUrl = 'https://flockletter.frostyflamingosoftware.com/';
+    const address = profile.organization + ' · ' + profile.postalAddress;
+    const consent = 'You are receiving this because you opted in to updates from ' + profile.organization + '.';
+    const invitation = (link: string) => 'Are you interested in sending your own newsletters? Visit ' + link + ' to start your free trial.';
+    const link = `<a href="${trialUrl}" style="color:#69515d;text-decoration:underline">Flockletter</a>`;
+
+    footerHtml += [escape(address), escape(consent), invitation(link)].map(paragraph).join('');
+    footerText.push([address, consent, invitation('Flockletter (' + trialUrl + ')')].join('\n'));
+  }
+
+  if (signupUrl) {
+    const escapedSignupUrl = escape(signupUrl);
+    const forwardLinkHtml = `<a href="${escapedSignupUrl}" style="color:#69515d;text-decoration:underline">subscribe</a>`;
+    const forwardLineHtml = `If someone forwarded this to you, join the crew and ${forwardLinkHtml}.`;
+
+    footerHtml += paragraph(forwardLineHtml);
+    footerText.push('If someone forwarded this to you, join the crew and subscribe (' + signupUrl + ').');
+  }
+
   return {
-    html: body.replace(/<\/body>/i, closing => footer + closing),
-    text: [text, [address, consent, invitation('Flockletter (' + trialUrl + ')')].join('\n')].join('\n\n'),
+    html: body.replace(/<\/body>/i, closing => footerHtml + closing),
+    text: [text, ...footerText].join('\n\n'),
   };
 }

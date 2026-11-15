@@ -98,7 +98,7 @@ export class CustomerWorkflows {
     this.resend=customerResendRuntime(config.origin,env);
     const provider=(w:string,b:string,mode:SendingProvider=settings.delivery==='resend'?'resend':'ses')=>mode==='ses'?this.ses?.provider(w,b):this.resend?.provider(w,b);
     const safeguards=env.FLOCKLETTER_SENDING_POLICY==='permission-v1'?new SendingSafeguards(db,env.FLOCKLETTER_CUSTOMER_RESEND_RETRIEVE_KEY,fetch,Number(env.FLOCKLETTER_RESEND_APPROVED_MONTHLY_LIMIT??'50000')):undefined;
-    this.delivery=new CustomerDelivery(db,{safeguards,mode:settings.delivery,scope:settings.deliveryScope,environment:config.environment,origin:config.origin,
+    this.delivery=new CustomerDelivery(db,{signupPagesEnabled:settings.audience!=='off',safeguards,mode:settings.delivery,scope:settings.deliveryScope,environment:config.environment,origin:config.origin,
       billing:this.billing,eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),isOwner:identity.isOwner,
       render:this.engine?message=>this.engine!.render(message):undefined,optOut:createCustomerOptOut,liveConsent:productionConsentEligible,liveConsentBatch:productionConsentEligibleBatch,
       provider});
