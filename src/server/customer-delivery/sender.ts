@@ -31,8 +31,20 @@ export async function refreshCustomerSender(db:Database,workspace:string,brand:s
   });
 }
 const escape=(value:string)=>value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
-export function legalFooter(html:string,text:string,profile:CustomerSenderProfile|null) {
-  const legacy='<p style="font-size:12px;color:#69515d">Preview only. Verified sender details and unsubscribe controls are required before delivery.</p>';
-  const footer=profile?'<p style="font-size:12px;color:#69515d">'+escape(profile.organization)+' · '+escape(profile.postalAddress)+'</p><p style="font-size:12px;color:#69515d">You are receiving this because you opted in to updates from '+escape(profile.organization)+'.</p>':'';
-  return {html:html.replace(legacy,'').replace(/<\/body>/i,footer+'</body>'),text:text+(profile?'\n\n'+profile.organization+' · '+profile.postalAddress+'\nYou are receiving this because you opted in to updates from '+profile.organization+'.':'')};
+export function legalFooter(html: string, text: string, profile: CustomerSenderProfile | null) {
+  const legacy = '<p style="font-size:12px;color:#69515d">Preview only. Verified sender details and unsubscribe controls are required before delivery.</p>';
+  const body = html.replace(legacy, '');
+  if (!profile) return { html: body, text };
+
+  const trialUrl = 'https://flockletter.frostyflamingosoftware.com/';
+  const address = profile.organization + ' · ' + profile.postalAddress;
+  const consent = 'You are receiving this because you opted in to updates from ' + profile.organization + '.';
+  const invitation = (link: string) => 'Are you interested in sending your own newsletters? Visit ' + link + ' to start your free trial.';
+  const link = `<a href="${trialUrl}" style="color:#69515d;text-decoration:underline">Flockletter</a>`;
+  const paragraph = (line: string) => `<p align="center" style="text-align:center;font-size:12px;color:#69515d">${line}</p>`;
+  const footer = [escape(address), escape(consent), invitation(link)].map(paragraph).join('');
+  return {
+    html: body.replace(/<\/body>/i, closing => footer + closing),
+    text: [text, [address, consent, invitation('Flockletter (' + trialUrl + ')')].join('\n')].join('\n\n'),
+  };
 }
