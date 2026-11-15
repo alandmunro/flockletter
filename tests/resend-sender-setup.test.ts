@@ -99,3 +99,16 @@ it('recovers only a matching domain for the uncertain operation and safely repla
  expect((await f.setup.status(f.a,f.brand)).setup?.state).toBe('verified');
  expect(f.port.create).toHaveBeenCalledTimes(1);
 });
+
+it('polls in-progress DNS checks without restarting the verification cycle',async()=>{
+ const f=await factory();
+ const domain=await f.port.inspect();
+ await f.approve(await f.review());
+ expect(f.port.verify).toHaveBeenCalledTimes(1);
+ for(const status of ['pending','partially_verified']){
+  f.port.inspect.mockResolvedValueOnce({...domain,status});
+  await f.age();await f.setup.tick(f.a.workspaceId);
+ }
+ expect(f.port.verify).toHaveBeenCalledTimes(1);
+ expect((await f.setup.status(f.a,f.brand)).setup?.state).toBe('awaiting_dns');
+});
