@@ -6,7 +6,7 @@ import process from 'node:process';
 import { fileURLToPath, URL } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const roots = ['@react-email/editor', '@tiptap/core', '@tiptap/extensions'];
+const roots = ['@react-email/editor', '@tiptap/core', '@tiptap/extensions', 'marked', 'parse5'];
 const reviewedLicenses = new Set([
   'MIT',
   'BSD-2-Clause',

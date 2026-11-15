@@ -38,6 +38,12 @@ function leafText(block: StudioLeaf): string {
     case 'heading':
     case 'paragraph':
       return block.runs.map(plainRun).join('');
+    case 'list':
+      return block.items
+        .map((item, i) => (block.ordered ? i + 1 + '. ' : '• ') + item.map(plainRun).join(''))
+        .join('\n');
+    case 'callout':
+      return [block.icon, block.runs.map(plainRun).join('')].filter(Boolean).join(' ');
     case 'button':
       return [block.label, block.href].filter(Boolean).join(' — ');
     case 'image':
@@ -74,6 +80,30 @@ function blockHtml(
         '>'
       );
     }
+    case 'list': {
+      const tag = block.ordered ? 'ol' : 'ul';
+      const items = block.items.map((item) => '<li>' + item.map(formattedRun).join('') + '</li>').join('');
+      return (
+        '<' +
+        tag +
+        ' style="margin:0;padding-left:28px;font:16px/1.6 Arial,sans-serif">' +
+        items +
+        '</' +
+        tag +
+        '>'
+      );
+    }
+    case 'callout':
+      return (
+        '<table ' +
+        table +
+        ' width="100%"><tr><td bgcolor="#faf2f4" style="padding:12px 16px;border-left:4px solid ' +
+        accent +
+        ';font:16px/1.6 Arial,sans-serif">' +
+        (block.icon ? html(block.icon) + ' ' : '') +
+        block.runs.map(formattedRun).join('') +
+        '</td></tr></table>'
+      );
     case 'paragraph':
       return (
         '<p style="margin:0;color:#302b2e;font:16px/1.6 Arial,sans-serif">' +

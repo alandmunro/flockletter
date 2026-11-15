@@ -53,6 +53,10 @@ export function relocateLeaf(document: StudioDocument, source: Position, target:
 
 export function makeBlock(kind: PaletteKind, image?: { id: string; name: string }): StudioBlock {
   switch (kind) {
+    case 'list':
+      return { type: kind, ordered: false, items: [[]] };
+    case 'callout':
+      return { type: kind, runs: [] };
     case 'paragraph':
       return { type: kind, runs: [] };
     case 'heading':

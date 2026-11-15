@@ -32,6 +32,8 @@ type Props = {
   onValidity: (message: string) => void;
 };
 const title: Record<StudioBlock['type'], string> = {
+  list: 'List',
+  callout: 'Callout',
   paragraph: 'Paragraph',
   heading: 'Heading',
   button: 'Button',
@@ -96,7 +98,9 @@ export default function StudioCanvas({ document, assets, api, disabled, onChange
     const list = listAt(document, column);
     if (column && kind === 'columns') return;
     const block = makeBlock(kind, assets[0]);
-    structure(column, [...list, block], { column, index: list.length });
+    const next = replaceList(document, column, [...list, block]);
+    if (kind === 'list' || kind === 'callout') next.version = 2;
+    acceptStructure(next, { column, index: list.length });
   }
   function move(position: Position, direction: -1 | 1) {
     const list = [...listAt(document, position.column)],

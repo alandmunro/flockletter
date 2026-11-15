@@ -2,7 +2,9 @@
   "roots": [
     "@react-email/editor",
     "@tiptap/core",
-    "@tiptap/extensions"
+    "@tiptap/extensions",
+    "marked",
+    "parse5"
   ],
   "packages": [
     {

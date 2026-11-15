@@ -109,6 +109,48 @@ describe('Newsletter Studio through HTTP, MCP and PostgreSQL', () => {
     expect(check).toMatchObject({ contentReady: true, canSend: false });
   });
 
+  it('upgrades v1 in place and preserves native list and callout edits through HTTP and MCP', async () => {
+    const original = await make();
+    const prior = original.content.studio!;
+    const studio: StudioDocument = {
+      ...prior,
+      version: 2,
+      blocks: [
+        ...prior.blocks,
+        { type: 'list', ordered: true, items: [[{ text: 'Mountain 🌄', bold: true }], [{ text: 'Pool' }]] },
+        { type: 'callout', icon: '📌', runs: [{ text: 'Book <today>', href: productUrl, italic: true }] },
+      ],
+    };
+    await expectRejected(
+      'campaign.update',
+      keyed({
+        id: original.id,
+        expectedVersion: original.version,
+        content: { ...original.content, studio: { ...studio, version: 1 } },
+      }),
+      422,
+    );
+    const saved = await tool<Campaign>(
+      'campaign_update',
+      keyed({ id: original.id, expectedVersion: original.version, content: { ...original.content, studio } }),
+    );
+    expect((await get(saved.id)).content.studio).toEqual(studio);
+    expect(saved.content.body).toContain('1. Mountain 🌄\n2. Pool\n\n📌 Book <today>');
+    const preview = await site.command<Preview>('campaign.preview', {
+      id: saved.id,
+      expectedVersion: saved.version,
+    });
+    expect(preview.html).toContain('<li><strong>Mountain 🌄</strong></li>');
+    expect(preview.html).toContain('Book &lt;today&gt;');
+    expect(preview.text).toContain('1. Mountain 🌄\n2. Pool\n\n📌 Book <today> (' + productUrl + ')');
+    await expectRejected(
+      'campaign.update',
+      keyed({ id: saved.id, expectedVersion: saved.version, content: original.content }),
+      409,
+    );
+    expect(await get(saved.id)).toEqual(saved);
+  });
+
   it('rejects malformed documents, removed Studio content, invalid asset indexes and foreign image references without overwriting the saved revision', async () => {
     const draft = await make();
     const base = { id: draft.id, expectedVersion: draft.version };

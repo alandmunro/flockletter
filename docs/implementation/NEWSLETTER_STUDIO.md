@@ -18,7 +18,9 @@ If another editor saved first, reload the current version and reapply the intend
 
 ## Draft representation and rendering
 
-Studio v1 stores Flockletter block data in the campaign’s existing versioned content. All authoring surfaces use the same commands and scoped brand asset references. The browser uses the headless React Email editor extensions for bounded text editing, with Flockletter controls for block layout and media. Opening an unknown format never converts it through Tiptap. The document is validated first. [API and MCP](API_MCP.md) · [Editor and redistribution](STUDIO_LICENSES.md)
+Studio v2 adds ordered and bulleted lists with editable inline text in each item, and a callout with editable inline text and an optional icon. All v1 blocks have identical representations in v2. To migrate a validated v1 document, retain its blocks and set `version` to 2. Studio makes this change when the author adds the first list or callout. Opening a v1 draft alone does not create a new revision. Clients that encounter an unknown version must preserve the document and refuse editing. The server rejects downgrading a saved Studio version.
+
+Studio stores Flockletter block data in the campaign’s existing versioned content. All authoring surfaces use the same commands and scoped brand asset references. The browser uses the headless React Email editor extensions for bounded text editing, with Flockletter controls for block layout and media. Opening an unknown format never converts it through Tiptap. The document is validated first. [API and MCP](API_MCP.md) · [Editor and redistribution](STUDIO_LICENSES.md)
 
 For a Studio revision, the blocks determine the order of headings, text, buttons, images and columns. Classic heading, body and CTA fields remain a compatibility projection for existing integrations. Clients updating a Studio draft must preserve the complete block document and collect its ordered, distinct image IDs. Classic drafts can continue through their existing commands. A customer’s product description, photos, catalog and commerce settings remain owned by the source system.
 

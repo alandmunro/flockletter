@@ -58,6 +58,20 @@ const key = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/, 'Use a stable operation 
 const id = z.uuid();
 const audienceId = id.toLowerCase();
 const descriptor = <T extends z.ZodRawShape>(description: string, scope: Capability | 'owner', mutation: boolean, shape: T) => ({ description, scope, mutation, schema: z.object(shape).strict() });
+const newsletterImportFields = {
+  brandId: id,
+  source: z.string().min(1).max(65536),
+  format: z.enum(['markdown', 'html']),
+  acceptMetadata: z.boolean(),
+  buttonLinks: z.array(z.string().max(2048)).max(60),
+  photoMapping: z.record(z.string().min(1).max(2048), id.nullable()),
+  title: contentSchema.shape.title,
+  subject: contentSchema.shape.subject,
+  preheader: contentSchema.shape.preheader,
+  fromName: contentSchema.shape.fromName,
+  replyTo: contentSchema.shape.replyTo,
+  replace: z.object({id, expectedVersion:z.number().int().positive()}).strict().optional(),
+};
 export const commands = {
   ...customerBillingCommands,
   ...customerAudienceCommands,
@@ -95,6 +109,8 @@ export const commands = {
   'sender.deliveryReadiness': descriptor('Inspect this brand’s staging worker and provider configuration. Returns setup gaps without submitting email.', 'campaign:simulate',false,{brandId:id}),
   'sender.register': descriptor('Create an ownership challenge for this brand domain.', 'owner',true,{operationKey:key,brandId:id,domain:senderDomain}),
   'sender.verify': descriptor('Check the public domain ownership TXT record. This never activates a provider.', 'owner',true,{operationKey:key,brandId:id}),
+  'campaign.previewImport': descriptor('Convert the reviewed newsletter and validate photo mappings within this brand. Returns editable content and its digest.', 'draft:write', false, newsletterImportFields),
+  'campaign.commitImport': descriptor('Create an editable draft from the exact reviewed import, or explicitly replace the specified revision. Retry an identical request with its original operation key.', 'draft:write', true, { ...newsletterImportFields, digest:z.string().regex(/^[a-f0-9]{64}$/), operationKey:key }),
   'campaign.fromTemplate': descriptor('Create a campaign draft from a newsletter layout.', 'draft:write', true, {operationKey:key,brandId:id,templateId:z.enum(templateIds)}),
   'campaign.fromProduct': descriptor('Prepare a draft from approved product details and existing brand images.', 'draft:write', true, {operationKey:key,brandId:id,...productFields,assetIds:contentSchema.shape.assetIds}),
   'rehearsal.methods': descriptor('List rehearsal methods available to this brand. Ordinary customer delivery is never enabled.', 'campaign:rehearse', false, {brandId:id}),
@@ -111,7 +127,7 @@ export const commands = {
   'audience.exportPage': descriptor('Read one bounded page for an explicitly requested owner export.', 'owner',false, exportPageInput.shape),
   'campaign.list': descriptor('List accessible draft campaigns, newest first.', 'read', false, {}),
   'campaign.get': descriptor('Read one authorized draft version.', 'read', false, { id }),
-  'campaign.create': descriptor('Prepare a draft in an authorized brand. Optional Studio v1 blocks own the visual content, and assetIds lists their distinct IDs in order.', 'draft:write', true, { operationKey: key, brandId: id, content: contentSchema }),
+  'campaign.create': descriptor('Prepare a draft in an authorized brand. Optional versioned Studio blocks own the visual content, and assetIds lists their distinct IDs in order.', 'draft:write', true, { operationKey: key, brandId: id, content: contentSchema }),
   'campaign.update': descriptor('Save the exact expected revision. Preserve the full document when editing a Studio draft. Reuse the operation key only for an identical retry.', 'draft:write', true, { operationKey: key, id, expectedVersion: z.number().int().positive(), content: contentSchema }),
   'campaign.preflight': descriptor('Report all preparation and delivery gaps together. Preview success does not establish send eligibility.', 'read', false, { id }),
   'campaign.preview': descriptor('Render escaped HTML and plain text for the exact saved draft version. Does not send.', 'read', false, { id, expectedVersion: z.number().int().positive() }),

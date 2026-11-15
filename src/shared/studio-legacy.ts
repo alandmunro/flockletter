@@ -6,6 +6,7 @@ import {
   type StudioBlock,
   type StudioDocument,
   type StudioLeaf,
+  type StudioRun,
 } from './studio.js';
 
 // PostgreSQL JSON rejects an unpaired surrogate. Do not split an emoji at a legacy field boundary.
@@ -48,8 +49,14 @@ export function withStudio(content: CampaignContent, studio: StudioDocument): Ca
   const heading = leaves.find((b) => b.type === 'heading');
   const button = leaves.find((b) => b.type === 'button');
   const body = leaves
-    .filter((b) => b.type === 'paragraph')
-    .map((b) => b.runs.map((r) => r.text).join(''))
+    .flatMap((b) => {
+      const inline = (runs: StudioRun[]) => runs.map((r) => r.text).join('');
+      if (b.type === 'paragraph') return [inline(b.runs)];
+      if (b.type === 'callout') return [[b.icon, inline(b.runs)].filter(Boolean).join(' ')];
+      if (b.type === 'list')
+        return [b.items.map((item, i) => (b.ordered ? i + 1 + '. ' : '• ') + inline(item)).join('\n')];
+      return [];
+    })
     .join('\n\n');
   return {
     ...content,

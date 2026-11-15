@@ -33,7 +33,7 @@ describe('Newsletter Studio redistribution', () => {
     expect(text).toContain('Cole Bemis');
   });
   it('retains additional authors and terms that package-level SPDX metadata cannot express', () => {
-    expect(inventory.roots).toEqual(['@react-email/editor', '@tiptap/core', '@tiptap/extensions']);
+    expect(inventory.roots).toEqual(['@react-email/editor', '@tiptap/core', '@tiptap/extensions', 'marked', 'parse5']);
     expect(record('prettier').notices.some((notice) => notice.source === 'THIRD-PARTY-NOTICES.md')).toBe(
       true,
     );

@@ -65,11 +65,24 @@ function ButtonFields({
   );
 }
 export function BlockInspector({ block, assets, api, disabled, onChange, onIssue }: Props) {
+  const [itemGeneration, resetItemEditors] = useState(0);
   switch (block.type) {
+    case 'callout':
     case 'paragraph':
     case 'heading':
       return (
         <>
+          {block.type === 'callout' && (
+            <label>
+              Callout icon (optional)
+              <input
+                value={block.icon ?? ''}
+                maxLength={32}
+                disabled={disabled}
+                onChange={(e) => onChange({ ...block, icon: e.target.value || undefined })}
+              />
+            </label>
+          )}
           {block.type === 'heading' && (
             <label className="studio-select">
               Heading level
@@ -87,13 +100,73 @@ export function BlockInspector({ block, assets, api, disabled, onChange, onIssue
           )}
           <InlineEditor
             runs={block.runs}
-            label={block.type === 'paragraph' ? 'Paragraph text' : 'Heading text'}
+            label={
+              { paragraph: 'Paragraph text', heading: 'Heading text', callout: 'Callout text' }[block.type]
+            }
             disabled={disabled}
             onIssue={onIssue}
             onRuns={(runs) => onChange({ ...block, runs })}
           />
         </>
       );
+    case 'list': {
+      const list = block;
+      const List = list.ordered ? 'ol' : 'ul';
+      return (
+        <>
+          <label className="studio-select">
+            List type
+            <select
+              aria-label="List type"
+              disabled={disabled}
+              value={list.ordered ? 'ordered' : 'unordered'}
+              onChange={(e) => onChange({ ...list, ordered: e.target.value === 'ordered' })}
+            >
+              <option value="unordered">Bulleted</option>
+              <option value="ordered">Numbered</option>
+            </select>
+          </label>
+          <List className="studio-list-items">
+            {list.items.map((runs, i) => (
+              <li key={itemGeneration + '-' + i} className="studio-list-item">
+                <InlineEditor
+                  runs={runs}
+                  label={`List item ${i + 1}`}
+                  disabled={disabled}
+                  onIssue={onIssue}
+                  onRuns={(next) => {
+                    const items = list.items.slice();
+                    items[i] = next;
+                    return onChange({ ...list, items });
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn secondary studio-remove-item"
+                  aria-label={`Remove list item ${i + 1}`}
+                  disabled={disabled || list.items.length <= 1}
+                  onClick={() => {
+                    const items = list.items.filter((_, j) => j !== i);
+                    if (onChange({ ...list, items })) resetItemEditors((generation) => generation + 1);
+                  }}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </List>
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={disabled || list.items.length >= 60}
+            onClick={() => onChange({ ...list, items: [...list.items, []] })}
+          >
+            Add item
+          </button>
+        </>
+      );
+    }
+
     case 'button':
       return <ButtonFields value={block} disabled={disabled} onChange={onChange} onIssue={onIssue} />;
     case 'image':

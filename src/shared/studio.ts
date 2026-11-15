@@ -15,6 +15,8 @@ export const studioRunSchema = z
   .strict();
 const runs = z.array(studioRunSchema).max(200);
 const leafTypes = [
+  z.object({ type: z.literal('list'), ordered: z.boolean(), items: z.array(runs).min(1).max(60) }).strict(),
+  z.object({ type: z.literal('callout'), icon: text(32).optional(), runs }).strict(),
   z.object({ type: z.literal('paragraph'), runs }).strict(),
   z
     .object({ type: z.literal('heading'), level: z.union([z.literal(1), z.literal(2), z.literal(3)]), runs })
@@ -33,7 +35,9 @@ const block = z.discriminatedUnion('type', [
 export type StudioRun = z.infer<typeof studioRunSchema>;
 export type StudioLeaf = z.infer<typeof leaf>;
 export type StudioBlock = z.infer<typeof block>;
-const document = z.object({ version: z.literal(1), blocks: z.array(block).max(60) }).strict();
+const document = z
+  .object({ version: z.union([z.literal(1), z.literal(2)]), blocks: z.array(block).max(60) })
+  .strict();
 export type StudioDocument = z.infer<typeof document>;
 
 export function studioLeaves(doc: StudioDocument): StudioLeaf[] {
@@ -51,8 +55,15 @@ export const studioSchema = document.superRefine((doc, ctx) => {
     add('Use at most 60 blocks including columns.');
   if (leaves.filter((b) => b.type === 'image').length > 6)
     add('Use at most six image placements in a newsletter.');
-  const spans = leaves.flatMap((b) => ('runs' in b ? b.runs : []));
-  if (spans.length > 300 || spans.reduce((n, r) => n + r.text.length, 0) > 24000)
+  if (doc.version === 1 && leaves.some((b) => b.type === 'list' || b.type === 'callout'))
+    add('Lists and callouts require Studio version 2.');
+  const spans = leaves.flatMap((b) => (b.type === 'list' ? b.items.flat() : 'runs' in b ? b.runs : []));
+  if (
+    spans.length > 300 ||
+    spans.reduce((n, r) => n + r.text.length, 0) +
+      leaves.reduce((n, b) => n + (b.type === 'callout' ? (b.icon?.length ?? 0) : 0), 0) >
+      24000
+  )
     add('Use at most 300 text runs and 24,000 characters.');
   if (new TextEncoder().encode(JSON.stringify(doc)).length > 65536)
     add('The Studio document must fit in 64 KiB.');

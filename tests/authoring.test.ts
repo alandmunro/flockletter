@@ -224,6 +224,73 @@ describe('authoring commands in a restricted workspace', () => {
     );
     expect(events).toEqual([{ action: 'campaign.fromProduct' }]);
   });
+  it('commits a preview import once, rejects drift and stale digests, and denies read-only commits', async () => {
+    const source = '# Welcome\nA short story.';
+    const base = {
+      brandId: brand,
+      source,
+      format: 'markdown' as const,
+      title: 'Welcome',
+      subject: 'Welcome to the field',
+      preheader: 'A short story.',
+      fromName: 'Field Notes',
+      replyTo: 'news@fieldnotes.example.com',
+      acceptMetadata: false,
+      buttonLinks: [] as string[],
+      photoMapping: {} as Record<string, string>,
+    };
+
+    const {digest} = await service.execute('campaign.previewImport', base, editor) as {digest:string};
+    const commit = (operationKey: string) =>
+      service.execute(
+        'campaign.commitImport',
+        { ...base, digest, operationKey },
+        editor,
+      ) as Promise<Campaign>;
+
+    const key = id();
+    const [first, second] = await Promise.all([commit(key), commit(key)]);
+    expect(first.id).toBe(second.id);
+    expect(first).toMatchObject({ status: 'draft', version: 1, brandId: brand });
+
+    await expect(
+      service.execute(
+        'campaign.commitImport',
+        { ...base, subject: 'Changed subject', digest, operationKey: key },
+        editor,
+      ),
+    ).rejects.toMatchObject({ code: 'operation_conflict' });
+
+    await expect(
+      service.execute(
+        'campaign.commitImport',
+        { ...base, digest: '0'.repeat(64), operationKey: id() },
+        editor,
+      ),
+    ).rejects.toMatchObject({ code: 'import_changed' });
+
+    await expect(
+      service.execute(
+        'campaign.commitImport',
+        { ...base, digest, operationKey: id() },
+        { ...editor, scopes: ['read'] },
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('refuses foreign photo mappings and binds replacement to the current draft', async () => {
+    const input = {brandId:brand, source:'![Porch](images/porch.png)', format:'markdown',
+      acceptMetadata:false,buttonLinks:[],title:'Photo issue',subject:'Weekend',preheader:'',fromName:'Shop',
+      replyTo:'',photoMapping:{'photo-1':otherPhoto}};
+    await expect(service.execute('campaign.previewImport',input,editor)).rejects.toMatchObject({code:'image_unavailable'});
+    input.photoMapping['photo-1']=photo;
+    const draft=await service.execute('campaign.fromTemplate',{operationKey:id(),brandId:brand,templateId:'announcement'},editor) as Campaign;
+    const replacing={...input,replace:{id:draft.id,expectedVersion:draft.version}};
+    const {digest}=await service.execute('campaign.previewImport',replacing,editor) as {digest:string};
+    const changed=await service.execute('campaign.commitImport',{...replacing,digest,operationKey:id()},editor) as Campaign;
+    expect(changed).toMatchObject({id:draft.id,version:draft.version+1,content:{assetIds:[photo]}});
+    await expect(service.execute('campaign.commitImport',{...replacing,digest,operationKey:id()},editor)).rejects.toMatchObject({code:'version_conflict'});
+  });
   it('lists templates and creates the exact selected layout over MCP', async () => {
     const server = createMcpServer((name, input) => {
       if (!isCommand(name)) throw Error('Unknown test command.');
