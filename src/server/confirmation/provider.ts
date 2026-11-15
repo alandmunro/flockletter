@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import type { IntakeBinding } from '../subscribers/config.js';
 
-export type ConfirmationMessage = { to: string; from: string; confirm: string; unsubscribe: string };
+import type { confirmationContent } from '../customer-audience/verification-email.js';
+
+type BrandedConfirmation = Pick<Awaited<ReturnType<typeof confirmationContent>>['mail'], 'subject' | 'text' | 'html'> & {
+  attachments: Awaited<ReturnType<typeof confirmationContent>>['attachments'];
+};
+export type ConfirmationMessage = { to: string; from: string; confirm: string; unsubscribe: string; content?:BrandedConfirmation };
 export type DispatchOutcome =
   { kind: 'accepted' | 'captured'; id: string } | { kind: 'retry' | 'ambiguous' | 'rejected' | 'conflict' };
 export interface ConfirmationProvider {
@@ -13,9 +18,19 @@ export interface ConfirmationProvider {
 export class CapturedConfirmation implements ConfirmationProvider {
   readonly mode = 'capture';
   readonly messages = new Map<string, ConfirmationMessage>();
+  private cachedBytes = 0;
+  private messageBytes(message: ConfirmationMessage) {
+    return (message.content?.attachments ?? []).reduce((total, asset) => total + asset.content.length, 0);
+  }
   async deliver(operation: string, message: ConfirmationMessage): Promise<DispatchOutcome> {
     if (!this.messages.has(operation)) {
-      if (this.messages.size >= 1000) this.messages.delete(this.messages.keys().next().value!);
+      const bytes = this.messageBytes(message);
+      while (this.messages.size && (this.messages.size >= 1000 || this.cachedBytes + bytes > 32 * 1024 * 1024)) {
+        const [key, previous] = this.messages.entries().next().value!;
+        this.cachedBytes -= this.messageBytes(previous);
+        this.messages.delete(key);
+      }
+      this.cachedBytes += bytes;
       this.messages.set(operation, message);
     }
     return { kind: 'captured', id: operation };
@@ -41,8 +56,10 @@ export class ResendConfirmation implements ConfirmationProvider {
         body: JSON.stringify({
           from: message.from,
           to: [message.to],
-          subject: 'Confirm your Frosty Flamingo Apparel newsletter subscription',
-          text: `Confirm your request for Frosty Flamingo Apparel product emails:\n\n${message.confirm}\n\nIf you did not request this, ignore this message or opt out:\n\n${message.unsubscribe}`,
+          ...(message.content ?? {
+            subject: 'Confirm your Frosty Flamingo Apparel newsletter subscription',
+            text: `Confirm your request for Frosty Flamingo Apparel product emails:\n\n${message.confirm}\n\nIf you did not request this, ignore this message or opt out:\n\n${message.unsubscribe}`,
+          }),
           tags: [{ name: 'flockletter_job', value: operation }],
         }),
       });

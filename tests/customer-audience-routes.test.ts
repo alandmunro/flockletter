@@ -94,7 +94,7 @@ it('handles public signup, confirmation, and durable opt-out', async () => {
   await db.tenant(workspace,sql=>sql.query("UPDATE brands SET name='New shop name' WHERE id=$1",[brand]));
 
   const designInput = { brandId:brand, operationKey:randomUUID(), expectedRevision:0,
-    design:{ ...defaultDesign, displayName:'Borealis Studio', heading:'Letters from the shop', introduction:'News & <updates>', accent:'#ffcc00' } };
+    design:{ ...defaultDesign, displayName:'Borealis Studio', heading:'Letters from the shop', introduction:'News & <updates>', accent:'#ffcc00', confirmation:{heading:'Welcome to Borealis',message:'Join our writers & readers.',button:'Confirm my place'} } };
   await customer.execute('audienceOnboarding.saveDesign',designInput,owner);
   await expect(customer.execute('audienceOnboarding.saveDesign',{...designInput,operationKey:randomUUID()},owner)).rejects.toMatchObject({code:'design_changed'});
   await expect(customer.execute('audienceOnboarding.saveDesign',{...designInput,expectedRevision:1,operationKey:randomUUID(),design:{...designInput.design,logoId:randomUUID()}},owner)).rejects.toMatchObject({code:'logo_unavailable'});
@@ -157,6 +157,11 @@ it('handles public signup, confirmation, and durable opt-out', async () => {
   const confirmUrl = new URL(captured.confirmationUrl);
   const confirmRes = await fetch(confirmUrl.toString());
   expect(confirmRes.status).toBe(200);
+  const confirmationPage = await confirmRes.text();
+  expect(confirmationPage).toContain('Welcome to Borealis');
+  expect(confirmationPage).toContain('Join our writers &amp; readers.');
+  expect(confirmationPage).toContain('Confirm my place');
+  expect(confirmationPage).toContain('name="token"');
 
   const stateAfterGet = await db.brand(
     workspace,

@@ -1713,7 +1713,7 @@
     "/api/v1/commands/audienceOnboarding.saveDesign": {
       "post": {
         "operationId": "audienceOnboarding_saveDesign",
-        "summary": "Publish the selected brand’s subscriber page design.",
+        "summary": "Publish the selected brand’s signup page and confirmation design.",
         "security": [
           {
             "bearerAuth": []
@@ -1781,6 +1781,43 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "confirmation": {
+                        "type": "object",
+                        "properties": {
+                          "subject": {
+                            "type": "string",
+                            "maxLength": 120,
+                            "pattern": "^[^\\r\\n]*$"
+                          },
+                          "heading": {
+                            "type": "string",
+                            "maxLength": 120,
+                            "pattern": "^[^\\r\\n]*$"
+                          },
+                          "message": {
+                            "type": "string",
+                            "maxLength": 800
+                          },
+                          "button": {
+                            "type": "string",
+                            "maxLength": 60,
+                            "pattern": "^[^\\r\\n]*$"
+                          },
+                          "photoId": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     },
                     "required": [

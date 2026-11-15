@@ -9,12 +9,12 @@ import { customerAudienceCommands, type AudienceSettingsView } from '../../share
 import { normalizedEmail } from '../../shared/subscriber.js';
 import { importRows } from '../subscribers/import-preview.js';
 import { preparationContactLimit } from '../../shared/trial.js';
-import { plans } from '../../shared/contracts.js';
+import { limits, plans } from '../../shared/contracts.js';
 import { workspaceAccess } from '../campaign/access.js';
 
 import { defaultDesign, type SignupDesign } from '../../shared/signup-design.js';
 
-async function brandIdentity(sql: Sql, brand: string) {
+export async function brandIdentity(sql: Sql, brand: string) {
   const row = (await sql.query<{name:string; signup_design:SignupDesign|null; signup_design_revision:number}>(
     'SELECT name, signup_design, signup_design_revision FROM brands WHERE id=$1', [brand],
   )).rows[0];
@@ -22,13 +22,28 @@ async function brandIdentity(sql: Sql, brand: string) {
   return { brandName: row.name, design: row.signup_design ?? defaultDesign, designRevision: row.signup_design_revision };
 }
 
-async function emailIdentity(sql:Sql,brand:string) {
-      const { brandName, design } = await brandIdentity(sql,brand);
-      const logo = design.logoId ? (await sql.query<{mime:string;width:number;height:number;bytes:Buffer}>(
-        'SELECT mime,width,height,bytes FROM assets WHERE id=$1 AND brand_id=$2',[design.logoId,brand])).rows[0] : undefined;
+type BrandImage = { mime: string; width: number; height: number; bytes: Buffer };
+const eligibleBrandImage = `brand_id=$1 AND id=$2 AND mime IN ('image/png','image/jpeg','image/webp','image/gif')
+  AND octet_length(bytes) BETWEEN 1 AND $3 AND width>0 AND height>0 AND width::bigint*height<=$4`;
+
+function imageParams(brand: string, id: string) {
+  return [brand, id, limits.fileBytes, limits.imagePixels];
+}
+
+export async function brandImage(sql: Sql, brand: string, id: string | null | undefined) {
+  if (!id) return undefined;
+  return (await sql.query<BrandImage>(
+    'SELECT mime,width,height,bytes FROM assets WHERE ' + eligibleBrandImage, imageParams(brand, id),
+  )).rows[0];
+}
+
+export async function emailIdentity(sql: Sql, brand: string) {
+  const { brandName, design } = await brandIdentity(sql,brand);
+  const logo = await brandImage(sql, brand, design.logoId);
+  const photo = await brandImage(sql, brand, design.confirmation?.photoId);
   return {
-          brandName: (design.displayName || brandName).replace(/[\r\n]+/g,' '),
-          identity: {accent:design.accent,font:design.font,logo},
+    brandName: (design.displayName || brandName).replace(/[\r\n]+/g,' '),
+    identity: { accent:design.accent, font:design.font, confirmation:design.confirmation, logo, photo },
   };
 }
 
@@ -59,7 +74,7 @@ type Confirmation = {
 };
 export type ConfirmationEnvelope = {
   operationKey: string;
-  identity?: { accent:string; font:SignupDesign['font']; logo?:{mime:string;width:number;height:number;bytes:Buffer} };
+  identity?: { accent:string; font:SignupDesign['font']; confirmation?:SignupDesign['confirmation']; logo?:BrandImage; photo?:BrandImage };
   routeToken?: string;
   to: string;
   brandName: string;
@@ -330,11 +345,17 @@ export class CustomerAudience {
       if (name === 'audienceOnboarding.configure') result = await this.configure(sql, actor, input);
       else if (name === 'audienceOnboarding.saveDesign') {
         const { design, expectedRevision } = customerAudienceCommands['audienceOnboarding.saveDesign'].schema.parse(raw);
-        if (design.logoId) {
-          const logo = await sql.query('SELECT id FROM assets WHERE brand_id=$1 AND id=$2', [input.brandId, design.logoId]);
-          requireCondition(logo.rowCount === 1, 422, 'logo_unavailable', 'Choose a logo from this brand’s image library.');
+        for (const [id, code, label] of [
+          [design.logoId, 'logo_unavailable', 'logo'],
+          [design.confirmation?.photoId, 'confirmation_photo_unavailable', 'confirmation photo'],
+        ] as const) {
+          if (!id) continue;
+          const image = await sql.query('SELECT id FROM assets WHERE ' + eligibleBrandImage, imageParams(input.brandId, id));
+          requireCondition(image.rowCount === 1, 422, code, 'Choose a ' + label + ' from this brand’s image library.');
         }
-        const saved = await sql.query('UPDATE brands SET signup_design=$2, signup_design_revision=signup_design_revision+1 WHERE id=$1 AND signup_design_revision=$3', [input.brandId, design, expectedRevision]);
+        // Older clients save the signup-page fields alone. Keep any saved confirmation design unless supplied.
+        const saved = await sql.query(`UPDATE brands SET signup_design=(coalesce(signup_design,'{}'::jsonb) || $2::jsonb),
+          signup_design_revision=signup_design_revision+1 WHERE id=$1 AND signup_design_revision=$3`, [input.brandId, design, expectedRevision]);
         requireCondition(saved.rowCount === 1, 409, 'design_changed', 'The brand design changed. Reload it before saving.');
         result = { revision: expectedRevision + 1 };
       }
@@ -699,10 +720,13 @@ export class CustomerAudience {
     const prefix=this.options.origin+'/newsletter/'+row.form_token;
     const confirmUrl=prefix+'/confirm?t='+this.token(row,'exercise',id);
     const unsubscribeUrl=prefix+'/unsubscribe?t='+this.token(row,'exercise',id,'unsubscribe');
-    const {mail,attachment}=await confirmationContent({...await emailIdentity(sql,brand),confirmUrl,unsubscribeUrl},true);
+    const {mail,attachments}=await confirmationContent({...await emailIdentity(sql,brand),confirmUrl,unsubscribeUrl},true);
+    const html = attachments.reduce((body, image) => body.replaceAll(
+      'src="cid:' + image.content_id + '"',
+      'src="data:' + image.content_type + ';base64,' + image.content + '"',
+    ), mail.html);
     return {id,to:message.email_normalized,state:message.state,mode:'exercise',confirmationUrl:confirmUrl,unsubscribeUrl,
-      subject:mail.subject,text:mail.text,
-      html:mail.html.replace('src="cid:'+attachment.content_id+'"','src="data:'+attachment.content_type+';base64,'+attachment.content+'"')};
+      subject:mail.subject,text:mail.text,html};
   }
   private async confirmInTransaction(
     sql: Sql,
@@ -770,16 +794,21 @@ export class CustomerAudience {
       return { ...(await brandIdentity(sql, brand)), ...policy(row), mode: this.options.mode, confirmationMode: row.confirmation_mode };
     });
   }
-  async publicLogo(form: string) {
+  publicLogo(form: string) {
+    return this.publicBrandImage(form, 'logo');
+  }
+  publicConfirmationPhoto(form: string) {
+    return this.publicBrandImage(form, 'confirmationPhoto');
+  }
+  private async publicBrandImage(form: string, placement: 'logo' | 'confirmationPhoto') {
     const { workspace, brand } = parseForm(form);
     return this.db.brand(workspace, brand, async sql => {
       const row = await settings(sql);
       if (!row?.enabled || row.form_token !== form || this.options.mode === 'off') throw invalidLink();
-      const logo = (await sql.query<{mime:string; bytes:Buffer}>(`
-        SELECT a.mime,a.bytes FROM brands b JOIN assets a ON a.brand_id=b.id
-        AND a.id::text=b.signup_design->>'logoId' WHERE b.id=$1`, [brand])).rows[0];
-      if (!logo) throw invalidLink();
-      return logo;
+      const { design } = await brandIdentity(sql, brand);
+      const image = await brandImage(sql, brand, placement === 'logo' ? design.logoId : design.confirmation?.photoId);
+      if (!image) throw invalidLink();
+      return image;
     });
   }
   async publicSignup(form: string, raw: unknown) {

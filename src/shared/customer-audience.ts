@@ -22,7 +22,7 @@ export const audiencePolicyInput = {
   confirmationMode: z.enum(['double_opt_in', 'single_opt_in']).optional(),
 };
 export const customerAudienceCommands = {
-  'audienceOnboarding.saveDesign': commandDefinition('Publish the selected brand’s subscriber page design.', 'owner', true, { brandId, operationKey, expectedRevision: z.number().int().nonnegative(), design: signupDesign }),
+  'audienceOnboarding.saveDesign': commandDefinition('Publish the selected brand’s signup page and confirmation design.', 'owner', true, { brandId, operationKey, expectedRevision: z.number().int().nonnegative(), design: signupDesign }),
   'audienceOnboarding.status': commandDefinition(
     'Read brand signup settings, captured confirmations and verified transport receipts.',
     'owner',

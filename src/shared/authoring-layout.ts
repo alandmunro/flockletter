@@ -1,4 +1,4 @@
-import type { TemplateId } from '../shared/authoring.js';
+import type { TemplateId } from './authoring.js';
 
 type LayoutParts = { heading: string; photos: string; story: string; link: string };
 

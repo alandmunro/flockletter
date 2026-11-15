@@ -316,6 +316,7 @@ export function AudienceOnboarding({
           </a>
         )}
       </details>
+      <SignupDesignStudio key={brandId} api={api} view={view}/>
       <details>
         <summary>2. Import contacts</summary>
         <p>
@@ -446,7 +447,6 @@ export function AudienceOnboarding({
         )}
       </details>
       <PendingContactApproval key={brandId} api={api} brandId={brandId} policyVersion={view.policyVersion} enabled={view.enabled && view.mode !== 'off'} onChanged={() => { setRevision(n => n + 1); onChanged?.(); }}/>
-      <SignupDesignStudio key={brandId} api={api} view={view}/>
       {view.mode === 'exercise' && (
         <details>
           <summary>3. Exercise signup and confirmation</summary>

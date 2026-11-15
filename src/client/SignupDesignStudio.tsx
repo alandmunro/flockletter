@@ -8,7 +8,23 @@ import {
 import { SignupFields, SignupPostcard } from "../shared/SignupPostcard.js";
 import { operationKey, type Api } from "./api.js";
 import { BrandImageUpload } from "./BrandImageUpload.js";
+import { ConfirmationDesignEditor } from "./ConfirmationDesignEditor.js";
 import { useBrandImages } from "./useBrandImages.js";
+
+function usePreviewImage(api: Api, id: string | null | undefined) {
+  const [image, setImage] = useState({ id: "", url: "", error: "" });
+  useEffect(() => {
+    let active = true;
+    if (id) {
+      api.asset(id, "data").then(
+        (url) => { if (active) setImage({ id, url, error: "" }); },
+        () => { if (active) setImage({ id, url: "", error: "The selected image could not be previewed." }); },
+      );
+    }
+    return () => { active = false; };
+  }, [api, id]);
+  return image.id === id ? image : { url: "", error: "" };
+}
 
 export function SignupDesignStudio({
   api,
@@ -22,29 +38,10 @@ export function SignupDesignStudio({
   const [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [error, setError] = useState("");
-  const [logo, setLogo] = useState(""),
-    key = useRef(operationKey());
+  const key = useRef(operationKey());
   const library = useBrandImages(api, view.brandId);
-  useEffect(() => {
-    let active = true,
-      current = "";
-    setLogo("");
-    if (design.logoId)
-      api
-        .asset(design.logoId)
-        .then((url) => {
-          if (!active) return URL.revokeObjectURL(url);
-          current = url;
-          setLogo(url);
-        })
-        .catch(() => {
-          if (active) setError("The selected logo could not be previewed.");
-        });
-    return () => {
-      active = false;
-      if (current) URL.revokeObjectURL(current);
-    };
-  }, [api, design.logoId]);
+  const logo = usePreviewImage(api, design.logoId);
+  const photo = usePreviewImage(api, design.confirmation?.photoId);
   function edit(patch: Partial<SignupDesign>) {
     setDesign({ ...design, ...patch });
     key.current = operationKey();
@@ -76,7 +73,7 @@ export function SignupDesignStudio({
       setBusy(false);
     }
   }
-  return (
+  return (<>
     <details className="design-studio">
       <summary>Design studio · Signup page</summary>
       <div className="studio-columns">
@@ -114,7 +111,7 @@ export function SignupDesignStudio({
               brandId={view.brandId}
               onUploaded={library.accept}
             />
-            {library.error && <p role="alert">{library.error}</p>}
+            {(library.error || logo.error) && <p role="alert">{library.error || logo.error}</p>}
             <label>
               Button color
               <input
@@ -172,7 +169,7 @@ export function SignupDesignStudio({
           <SignupPostcard
             design={design}
             brandName={view.brandName}
-            logo={logo}
+            logo={logo.url}
             title={design.heading || "News from " + view.brandName}
             footer={
               (view.confirmationMode === "single_opt_in"
@@ -192,5 +189,18 @@ export function SignupDesignStudio({
         </div>
       </div>
     </details>
-  );
+    <ConfirmationDesignEditor
+      api={api}
+      view={view}
+      design={design}
+      edit={(confirmation) => edit({ confirmation: { ...design.confirmation, ...confirmation } })}
+      save={save}
+      busy={busy}
+      error={error || library.error || logo.error || photo.error}
+      notice={notice}
+      library={library}
+      logoUrl={logo.url}
+      photoUrl={photo.url}
+    />
+  </>);
 }
