@@ -582,3 +582,36 @@ it("rolls back a later consent batch and retries the whole 2,500-row import unde
     try { await admin.query("DROP SCHEMA IF EXISTS import_fixture CASCADE"); } finally { await admin.end(); }
   }
 });
+
+it("seeks the subscriber identity in foreign-key plans on a fresh unanalyzed 2,500-contact brand", async () => {
+  const a = await setup();
+  const admin = new pg.Client({ connectionString: fixture.adminUrl });
+  await admin.connect();
+  try {
+    await admin.query("BEGIN");
+    await admin.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+      SELECT $1,$2,gen_random_uuid(),n || '@example.test','pending' FROM generate_series(1,2500) n`, [a.w, a.brand]);
+    const { id } = (await admin.query("SELECT id FROM subscribers WHERE workspace_id=$1 AND brand_id=$2 ORDER BY email_normalized DESC LIMIT 1", [a.w, a.brand])).rows[0];
+    // This is PostgreSQL's internal FK lookup shape, planned on the uncommitted rows
+    // before autoanalyze can see the new brand. A search by email prefix scans many siblings.
+    const lookup = `SELECT 1 FROM ONLY public.subscribers x
+      WHERE x.workspace_id=$1 AND x.brand_id=$2 AND x.id=$3 FOR KEY SHARE OF x`;
+    type Plan = { "Index Cond"?: string; Plans?: Plan[] };
+    function indexConditions(plan: Plan): string[] {
+      return [plan["Index Cond"] ?? "", ...(plan.Plans ?? []).flatMap(indexConditions)];
+    }
+    for (const mode of ["generic", "custom"]) {
+      await admin.query(mode === "generic" ? "SET LOCAL plan_cache_mode=force_generic_plan" : "SET LOCAL plan_cache_mode=force_custom_plan");
+      // The named prepared statement exercises both generic and custom nested-plan shapes.
+      await admin.query(`PREPARE lookup_${mode}(text,uuid,uuid) AS ${lookup}`);
+      // pg execution parameters cannot bind the arguments of EXECUTE utility statements.
+      const explained = (await admin.query(`SELECT format('EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE lookup_${mode}(%L,%L,%L)', $1::text,$2::uuid,$3::uuid) command`, [a.w, a.brand, id])).rows[0].command;
+      const plan = (await admin.query(explained)).rows[0]["QUERY PLAN"][0].Plan as Plan;
+      expect(indexConditions(plan).some(condition =>
+        /\bid = /.test(condition) && /\bworkspace_id = /.test(condition) && /\bbrand_id = /.test(condition),
+      )).toBe(true);
+    }
+  } finally {
+    try { await admin.query("ROLLBACK"); } finally { await admin.end(); }
+  }
+});
