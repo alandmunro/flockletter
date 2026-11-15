@@ -1,6 +1,6 @@
 export type SiteEnvironment = 'local' | 'test' | 'staging' | 'production' | 'unknown';
 
-export function sitePresentation(value: unknown): {
+export function sitePresentation(value: unknown, billingMode?: unknown): {
   environment: SiteEnvironment;
   workspaceNotice: string;
   accountLabel: string;
@@ -43,5 +43,9 @@ export function sitePresentation(value: unknown): {
     }
   };
 
+  if (environment === 'production' && billingMode === 'stripe_live') {
+    return {...presentation.production, environment, accountLabel: 'Start your 14-day trial',
+      pricingNote: 'Choose Starter or Growth, sign in, then save your card with Stripe. You will see your first charge date before you accept the trial.'};
+  }
   return { environment, ...presentation[environment] };
 }

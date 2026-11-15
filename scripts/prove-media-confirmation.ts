@@ -65,6 +65,7 @@ try {
   customer = new CustomerWorkflows(db, config, identity, {
     APP_ENV: "local",
     FLOCKLETTER_CUSTOMER_AUDIENCE: "exercise",
+    FLOCKLETTER_CUSTOMER_BILLING: "exercise",
   });
   const service = new CommandService(
     db,
@@ -92,6 +93,9 @@ try {
   const brand = (
     (await service.execute("workspace.get", {}, actor)) as Workspace
   ).brands[0]!.id;
+  await service.execute("customerBilling.startTrial", {
+    operationKey: randomUUID(), plan: "starter", simulatedCardConfirmed: true,
+  }, actor);
   server.on(
     "request",
     createApp(config, service, new Authenticator(db, identity)),
@@ -222,7 +226,7 @@ try {
     .setInputFiles({
       name: "permission.csv",
       mimeType: "text/csv",
-      buffer: Buffer.from("email\nimport@example.com"),
+      buffer: Buffer.from(["email,notes", ...Array.from({ length: 2498 }, (_, i) => `reader-${i}@alpine.test,${"x".repeat(160)}`)].join("\n")),
     });
   await importDetails.getByLabel("Email column").waitFor();
   await command(page, "audience.previewImport", () =>
@@ -244,7 +248,7 @@ try {
       "Subscribe imported contacts immediately without a confirmation email",
     )
     .check();
-  await command(page, "audienceOnboarding.import", () =>
+  const imported = await command(page, "audienceOnboarding.import", () =>
     importDetails
       .getByRole("button", {
         name: "Import and subscribe without email",
@@ -252,6 +256,10 @@ try {
       })
       .click(),
   );
+  assert.equal(imported.rows.length, 2498);
+  assert.ok(imported.rows.every((row: { outcome: string }) => row.outcome === "subscribed_added"));
+  await importDetails.getByRole("button", { name: "Next rows", exact: true }).click();
+  await importDetails.getByText("Rows 51–100 of 2498", { exact: true }).waitFor();
   // Existing pending contacts use a separate explicit owner declaration.
   await service.execute(
     "audienceOnboarding.import",
@@ -303,10 +311,8 @@ try {
       (await sql.query<{ state: string }>("SELECT state FROM subscribers"))
         .rows,
   );
-  assert.deepEqual(
-    rows.map((row) => row.state),
-    ["confirmed", "confirmed", "confirmed"],
-  );
+  assert.equal(rows.length, 2500);
+  assert.ok(rows.every(row => row.state === "confirmed"));
   assert.equal(
     await db.brand(
       actor.workspaceId,
@@ -326,7 +332,7 @@ try {
   await page.screenshot({ path: root + "/audience-mobile.png" });
   assert.deepEqual(errors, []);
   console.log(
-    "GIF fidelity, safe SVG partial upload, single opt-in and explicit pending subscription passed desktop/mobile with disposable contacts and no external email.",
+    "GIF fidelity, safe SVG partial upload, single opt-in, bulk permission import and explicit pending subscription at the 2,500-contact trial limit passed desktop/mobile with disposable contacts and no external email.",
   );
 } catch (error) {
   if (proofPage) {

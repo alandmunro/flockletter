@@ -1,3 +1,6 @@
+import {publicSubscriptionOffers,proEnrollmentNotice} from '../../shared/subscription-offers.js';
+import {billingTaxMode,locationDigest,verifyNoTaxSubscription} from './tax-policy.js';
+import type {BillingTaxMode} from '../../shared/billing-tax.js';
 import Stripe from 'stripe';
 import { plans } from '../../shared/contracts.js';
 import type { CustomerBillingState, CustomerPlan } from '../../shared/customer-billing.js';
@@ -5,6 +8,7 @@ import { billingPortalMatches, billingProviderEvents, readBillingCatalogue, read
 import { scheduledDowngradePlan } from './scheduled-plan.js';
 
 export type ProviderIntent = {
+  taxMode?:BillingTaxMode;
   id: string;
   workspace: string;
   plan: CustomerPlan;
@@ -16,13 +20,16 @@ export type ProviderIntent = {
   previousRevision?: number;
 };
 export type ProviderSetupProof = {
+  taxMode?:BillingTaxMode;
   checkout: string;
   setupIntent: string;
   customer: string;
   paymentMethod: string;
   fingerprint: string;
+  locationDigest?:string;
 };
 export type ProviderTrialActivation = ProviderIntent & {
+  locationDigest?:string;
   customer: string;
   paymentMethod: string;
   activationKey: string;
@@ -36,6 +43,7 @@ export type ProviderNotice = {
   risk: boolean;
 };
 export type ProviderSubscription = {
+  taxMode?:BillingTaxMode;
   workspaceHint: string | null;
   intentHint: string | null;
   id: string;
@@ -55,6 +63,7 @@ export type ProviderSubscription = {
   pendingPlan?: CustomerPlan | null;
 };
 export type CustomerBillingProvider = {
+  readonly taxMode?:BillingTaxMode;
   account: string;
   live: boolean;
   checkout(intent: ProviderIntent): Promise<ProviderCheckout>;
@@ -76,6 +85,8 @@ export type CustomerBillingProvider = {
   }>;
   close(): void;
 };
+/** Receipt/reconciliation capability; deliberately contains no external mutation methods. */
+export type CustomerBillingEvents = Pick<CustomerBillingProvider, 'account' | 'live' | 'verify' | 'resolve' | 'lookupCheckout' | 'close'>;
 export type ProviderCheckout = {
   id: string;
   url: string | null;
@@ -84,6 +95,9 @@ export type ProviderCheckout = {
   subscription?: string | null;
 };
 const invalid = () => Error('The Flockletter billing provider could not be verified.');
+export class UnsupportedTrialPaymentMethod extends Error {
+  constructor() { super('The trial requires a card entered directly in Stripe.'); }
+}
 const reference = (v: string | { id: string } | null | undefined) =>
   typeof v === 'string' ? v : (v?.id ?? null);
 const date = (n: number | null | undefined) => (n ? new Date(n * 1000) : null);
@@ -112,6 +126,7 @@ export function customerBillingConfiguration(env: NodeJS.ProcessEnv) {
   const missing = mode.startsWith('stripe_') ? required.filter((name) => !env[name]) : [];
   if (mode === 'stripe_live' && env.FLOCKLETTER_LIVE_BILLING_APPROVED !== 'true')
     missing.push('FLOCKLETTER_LIVE_BILLING_APPROVED');
+  if((mode==='stripe_live'||env.FLOCKLETTER_BILLING_TAX!==undefined)&&!['off','stripe-automatic'].includes(env.FLOCKLETTER_BILLING_TAX??''))missing.push('FLOCKLETTER_BILLING_TAX');
   return {
     mode,
     enabled: mode === 'stripe_test' || mode === 'stripe_live',
@@ -132,8 +147,38 @@ export function stripeCustomerProvider(
   env: NodeJS.ProcessEnv,
   clientFactory?: (key: string) => Stripe,
 ): CustomerBillingProvider | undefined {
+  return buildStripeCustomerProvider(origin, env, clientFactory, false);
+}
+
+/** Preserve signed provider facts while new billing is disabled, using the installed event credentials. */
+export function stripeCustomerEventProvider(
+  origin: string,
+  env: NodeJS.ProcessEnv,
+  clientFactory?: (key: string) => Stripe,
+): CustomerBillingEvents | undefined {
   const mode = env.FLOCKLETTER_CUSTOMER_BILLING ?? 'off';
+  if (mode === 'exercise') return;
+  if (mode === 'off' && !env.FLOCKLETTER_CUSTOMER_STRIPE_KEY && !env.FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK) return;
+  const provider = buildStripeCustomerProvider(origin, env, clientFactory, true);
+  if (!provider) return;
+  const { account, live, verify, resolve, lookupCheckout, close } = provider;
+  return { account, live, verify, resolve, lookupCheckout, close };
+}
+
+function buildStripeCustomerProvider(
+  origin: string,
+  env: NodeJS.ProcessEnv,
+  clientFactory: ((key: string) => Stripe) | undefined,
+  eventsOnly: boolean,
+): CustomerBillingProvider | undefined {
+  const selectedMode = env.FLOCKLETTER_CUSTOMER_BILLING ?? 'off';
+  if (eventsOnly && !['local', 'test', 'staging', 'production'].includes(env.APP_ENV ?? '')) throw invalid();
+  const mode = eventsOnly && selectedMode === 'off'
+    ? env.APP_ENV === 'production' ? 'stripe_live' : 'stripe_test'
+    : selectedMode;
   if (['off', 'exercise'].includes(mode)) return;
+  const taxMode=billingTaxMode(env.FLOCKLETTER_BILLING_TAX,!eventsOnly&&mode==='stripe_live');
+  const taxEnabled=taxMode==='stripe-automatic',collectAddress=taxMode!==undefined;
   const live = mode === 'stripe_live',
     account = env.FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT ?? '',
     key = env.FLOCKLETTER_CUSTOMER_STRIPE_KEY ?? '',
@@ -155,21 +200,24 @@ export function stripeCustomerProvider(
     !/^acct_[A-Za-z0-9]+$/.test(account) ||
     !new RegExp('^(sk|rk)_' + (live ? 'live' : 'test') + '_[A-Za-z0-9]+$').test(key) ||
     !webhook.startsWith('whsec_') ||
-    !/^pmc_[A-Za-z0-9]+$/.test(card) ||
-    !/^bpc_[A-Za-z0-9]+$/.test(portalConfiguration) ||
-    !Object.values(planPortalConfigurations).every(id => /^bpc_[A-Za-z0-9]+$/.test(id)) ||
-    new Set([portalConfiguration, ...Object.values(planPortalConfigurations)]).size !== 4 ||
+    (!eventsOnly && (!/^pmc_[A-Za-z0-9]+$/.test(card) ||
+      !/^bpc_[A-Za-z0-9]+$/.test(portalConfiguration) ||
+      !Object.values(planPortalConfigurations).every(id => /^bpc_[A-Za-z0-9]+$/.test(id)) ||
+      new Set([portalConfiguration, ...Object.values(planPortalConfigurations)]).size !== 4)) ||
     !Object.values(prices).every((v) => /^price_[A-Za-z0-9]+$/.test(v)) ||
     new Set(Object.values(prices)).size !== 3 ||
     new URL(origin).origin !== origin ||
     !origin.startsWith('https://') ||
-    (live && (env.APP_ENV !== 'production' || env.FLOCKLETTER_LIVE_BILLING_APPROVED !== 'true'))
+    (live && (env.APP_ENV !== 'production' || (!eventsOnly && env.FLOCKLETTER_LIVE_BILLING_APPROVED !== 'true')))
   )
     throw invalid();
   const stripe = clientFactory
     ? clientFactory(key)
     : new Stripe(key, { maxNetworkRetries: 0, timeout: 7000 });
-  const inspectionTarget: BillingInspectionTarget = { account, live, origin, prices, cardConfiguration: card, portalConfiguration, planPortalConfigurations };
+  const inspectionTarget: BillingInspectionTarget = { taxMode,taxEnabled,account, live, origin, prices, cardConfiguration: card, portalConfiguration, planPortalConfigurations };
+  function requireCurrentTaxMode(intent:ProviderIntent) {
+    if(intent.taxMode!==taxMode)throw Error('Review the current tax collection terms before starting a new agreement.');
+  }
   async function accountCheck() {
     if ((await stripe.accounts.retrieveCurrent()).id !== account) throw invalid();
   }
@@ -192,21 +240,34 @@ export function stripeCustomerProvider(
       throw invalid();
     return plan.id;
   }
-  async function snapshot(id: string): Promise<ProviderSubscription> {
-    const s = await stripe.subscriptions.retrieve(id, {
+  async function readSubscription(id: string) {
+    return stripe.subscriptions.retrieve(id, {
       expand: ['default_payment_method', 'latest_invoice'],
     });
+  }
+  async function snapshot(id: string, observed?: Stripe.Subscription): Promise<ProviderSubscription> {
+    const s = observed ?? await readSubscription(id);
+    const recordedTaxMode=billingTaxMode(s.metadata.fl_tax_mode);
     if (
+      (recordedTaxMode==='stripe-automatic'||!recordedTaxMode&&taxEnabled)&&s.automatic_tax?.enabled!==true ||
+      recordedTaxMode!==undefined&&!(s.managed_payments===null||s.managed_payments?.enabled===false) ||
       s.livemode !== live ||
+      s.managed_payments?.enabled===true ||
       s.items.has_more ||
       s.items.data.length !== 1 ||
       s.collection_method !== 'charge_automatically'
     )
       throw invalid();
+    if(recordedTaxMode==='off')verifyNoTaxSubscription(s);
     const item = s.items.data[0]!,
       plan = planFor(item),
       customer = reference(s.customer);
     if (!customer) throw invalid();
+    if(recordedTaxMode==='off'){
+      const c=await stripe.customers.retrieve(customer);
+      if(c.deleted)throw invalid();
+      locationDigest(c.address);
+    }
     let pendingPlan: CustomerPlan | null = null;
     const scheduleId = reference(s.schedule);
     if (scheduleId) {
@@ -237,6 +298,7 @@ export function stripeCustomerProvider(
     if (s.status === 'canceled' || s.status === 'incomplete_expired') state = 'canceled';
     return {
       id: s.id,
+      ...(recordedTaxMode?{taxMode:recordedTaxMode}:{}),
       customer,
       state,
       plan,
@@ -256,11 +318,28 @@ export function stripeCustomerProvider(
       pendingPlan,
     };
   }
+  async function eventSnapshot(id: string) {
+    const observed = await readSubscription(id);
+    if (observed.livemode !== live) throw invalid();
+    // Shared merchants emit other applications' events. These hints only filter/route;
+    // exact catalogue facts and durable local bindings still establish authority.
+    if (!observed.metadata.fl_workspace && !observed.metadata.fl_intent) return null;
+    if (!observed.metadata.fl_workspace || !observed.metadata.fl_intent) throw invalid();
+    return snapshot(id, observed);
+  }
+  function verifySessionTax(s:Stripe.Checkout.Session,expectedMode:BillingTaxMode|undefined) {
+    if(s.managed_payments?.enabled===true||
+      expectedMode!==undefined&&!(s.managed_payments===null||s.managed_payments?.enabled===false)||
+      expectedMode==='stripe-automatic'&&s.automatic_tax?.enabled!==true||
+      expectedMode==='off'&&(s.automatic_tax?.enabled!==false||s.total_details?.amount_tax!==0))throw invalid();
+  }
   async function checkoutProjection(
     s: Stripe.Checkout.Session,
     intent: ProviderIntent,
   ): Promise<ProviderCheckout> {
+    verifySessionTax(s,intent.taxMode??(taxEnabled?'stripe-automatic':undefined));
     if (
+      intent.taxMode!==undefined&&s.metadata?.fl_tax_mode!==intent.taxMode ||
       s.livemode !== live ||
       s.mode !== 'subscription' ||
       s.client_reference_id !== intent.workspace ||
@@ -296,6 +375,8 @@ export function stripeCustomerProvider(
     if (
       s.livemode !== live ||
       s.mode !== 'setup' ||
+      s.managed_payments?.enabled===true ||
+      collectAddress&&!(s.managed_payments===null||s.managed_payments?.enabled===false) ||
       s.client_reference_id !== intent.workspace ||
       s.metadata?.fl_intent !== intent.id ||
       s.metadata?.fl_workspace !== intent.workspace ||
@@ -335,6 +416,7 @@ export function stripeCustomerProvider(
       s.customer !== intent.customer ||
       s.plan !== intent.plan ||
       !s.cardVerified ||
+      intent.taxMode!==undefined&&s.taxMode!==intent.taxMode ||
       s.trialEnd?.getTime() !== intent.trialEnd.getTime()
     )
       throw invalid();
@@ -342,8 +424,10 @@ export function stripeCustomerProvider(
   }
   return {
     account,
+    ...(taxMode?{taxMode}:{}),
     live,
     async setupCheckout(intent) {
+      if(live&&!publicSubscriptionOffers[intent.plan])throw Error(proEnrollmentNotice);
       await accountCheck();
       const metadata = { fl_workspace: intent.workspace, fl_intent: intent.id };
       const requestTime = Date.now(),
@@ -354,12 +438,15 @@ export function stripeCustomerProvider(
       const result = await stripe.checkout.sessions.create(
         {
           mode: 'setup',
+          ...(collectAddress?{billing_address_collection:'required' as const}:{}),
           managed_payments: { enabled: false },
           currency: 'usd',
           client_reference_id: intent.workspace,
           metadata,
           customer_creation: 'always',
-          payment_method_configuration: card,
+          // Stripe accepts either a method allowlist or a named method configuration.
+          allowed_payment_method_types: ['card'],
+          wallet_options: { link: { display: 'never' } },
           setup_intent_data: { metadata },
           expires_at: Math.floor(requestTime / 1000) + 31 * 60,
           success_url: origin + '/?billing=card-returned',
@@ -395,22 +482,29 @@ export function stripeCustomerProvider(
         setup.metadata?.fl_intent !== intent.id ||
         typeof method !== 'object' ||
         !method ||
-        method.type !== 'card' ||
         method.livemode !== live ||
-        reference(method.customer) !== customer ||
-        !method.card?.fingerprint
+        reference(method.customer) !== customer
       )
         throw invalid();
+      if (method.type !== 'card') throw new UnsupportedTrialPaymentMethod();
+      if (!method.card?.fingerprint) throw invalid();
+      let billingLocation:string|undefined;
+      if(collectAddress){const customerRecord=await stripe.customers.retrieve(customer);if(customerRecord.deleted)throw invalid();billingLocation=locationDigest(customerRecord.address);}
       return {
         checkout: session.id,
         setupIntent: setup.id,
         customer,
         paymentMethod: method.id,
         fingerprint: method.card.fingerprint,
+        ...(taxMode?{taxMode}:{}),
+        ...(billingLocation?{locationDigest:billingLocation}:{}),
       };
     },
     async createTrial(intent) {
+      if(live&&!publicSubscriptionOffers[intent.plan])throw Error(proEnrollmentNotice);
+      requireCurrentTaxMode(intent);
       await accountCheck();
+      if(collectAddress){const c=await stripe.customers.retrieve(intent.customer);if(c.deleted||!intent.locationDigest||locationDigest(c.address)!==intent.locationDigest)throw invalid();}
       const price = await readBillingPrice(stripe, inspectionTarget, intent.plan);
       // Reuse the same exact monthly-price checks used on authoritative subscription snapshots.
       if (!price.active) throw invalid();
@@ -419,6 +513,8 @@ export function stripeCustomerProvider(
         {
           customer: intent.customer,
           default_payment_method: intent.paymentMethod,
+          ...(taxMode?{automatic_tax:{enabled:taxEnabled}}:{}),
+          ...(taxMode==='off'?{default_tax_rates:'' as const}:{}),
           items: [{ price: price.id, quantity: 1 }],
           trial_end: Math.floor(intent.trialEnd.getTime() / 1000),
           trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
@@ -427,6 +523,7 @@ export function stripeCustomerProvider(
             fl_workspace: intent.workspace,
             fl_intent: intent.id,
             fl_trial_activation: intent.activationKey,
+            ...(taxMode?{fl_tax_mode:taxMode}:{}),
           },
         },
         { idempotencyKey: 'flockletter-trial-activate-' + intent.activationKey },
@@ -461,6 +558,8 @@ export function stripeCustomerProvider(
       return snapshot(id);
     },
     async checkout(intent) {
+      if(live&&!publicSubscriptionOffers[intent.plan])throw Error(proEnrollmentNotice);
+      requireCurrentTaxMode(intent);
       await accountCheck();
       const price = await readBillingPrice(stripe, inspectionTarget, intent.plan),
         plan = plans.find((p) => p.id === intent.plan)!;
@@ -476,6 +575,7 @@ export function stripeCustomerProvider(
       const metadata = {
         fl_intent: intent.id,
         fl_workspace: intent.workspace,
+        ...(taxMode?{fl_tax_mode:taxMode}:{}),
         ...(intent.previousSubscription
           ? {
               fl_rejoin_of: intent.previousSubscription,
@@ -486,6 +586,7 @@ export function stripeCustomerProvider(
       const result = await stripe.checkout.sessions.create(
         {
           mode: 'subscription',
+          ...(collectAddress?{billing_address_collection:'required' as const,automatic_tax:{enabled:taxEnabled},...(intent.customer?{customer_update:{address:'auto' as const}}:{})}:{}),
           managed_payments: { enabled: false },
           client_reference_id: intent.workspace,
           metadata,
@@ -536,6 +637,7 @@ export function stripeCustomerProvider(
       throw invalid();
     },
     async portal(customer, key, plan, subscription) {
+      if(live&&plan&&!publicSubscriptionOffers[plan])throw invalid();
       await accountCheck();
       const catalogue = await readBillingCatalogue(stripe, inspectionTarget);
       const selectedConfiguration = plan ? planPortalConfigurations[plan] : portalConfiguration;
@@ -586,6 +688,9 @@ export function stripeCustomerProvider(
       if (notice.checkout) {
         const s = await stripe.checkout.sessions.retrieve(notice.checkout);
         if (s.livemode !== live) throw invalid();
+        if (!s.metadata?.fl_workspace && !s.metadata?.fl_intent)
+          return { subscription: null, checkoutId: null, intentId: null, workspace: null };
+        if (!s.metadata?.fl_workspace || !s.metadata?.fl_intent) throw invalid();
         if (s.mode === 'setup')
           return {
             subscription: null,
@@ -594,11 +699,14 @@ export function stripeCustomerProvider(
             workspace: s.client_reference_id,
           };
         if (s.mode !== 'subscription') throw invalid();
+        const sessionTaxMode=billingTaxMode(s.metadata?.fl_tax_mode);
+        verifySessionTax(s,sessionTaxMode);
         const subscription = reference(s.subscription),
-          observed = subscription ? await snapshot(subscription) : null;
+          observed = subscription ? await eventSnapshot(subscription) : null;
         if (
           observed &&
           (observed.customer !== reference(s.customer) ||
+            sessionTaxMode!==undefined&&observed.taxMode!==sessionTaxMode ||
             observed.workspaceHint !== s.client_reference_id ||
             observed.workspaceHint !== s.metadata?.fl_workspace ||
             observed.intentHint !== s.metadata?.fl_intent ||
@@ -659,14 +767,15 @@ export function stripeCustomerProvider(
           const schedule = await stripe.subscriptionSchedules.retrieve(id);
           if (schedule.id !== id || schedule.livemode !== live) throw invalid();
           subscription = reference(schedule.subscription) ?? reference(schedule.released_subscription);
-          if (!subscription) throw invalid();
-          const observed = await snapshot(subscription);
+          if (!subscription) return { subscription: null, checkoutId: null, intentId: null, workspace: null };
+          const observed = await eventSnapshot(subscription);
+          if (!observed) return { subscription: null, checkoutId: null, intentId: null, workspace: null };
           if (observed.customer !== reference(schedule.customer)) throw invalid();
           return { subscription: observed, checkoutId: null, intentId: null, workspace: null };
         }
       }
       return {
-        subscription: subscription ? await snapshot(subscription) : null,
+        subscription: subscription ? await eventSnapshot(subscription) : null,
         checkoutId: null,
         intentId: null,
         workspace: null,

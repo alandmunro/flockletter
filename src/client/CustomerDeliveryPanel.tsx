@@ -1,3 +1,6 @@
+import {SenderDomain} from './SenderDomain.js';
+import {SenderSetupPanel} from './SenderSetupPanel.js';
+import {SendingTrustNotice} from './SendingTrustNotice.js';
 import {DeliveryProviderPanel} from './DeliveryProviderPanel.js';
 import {externalDelivery} from '../shared/customer-delivery.js';
 import { useCallback,useEffect,useRef,useState } from 'react';
@@ -25,11 +28,21 @@ function captureHtml(message:Captured) {
 }
 export function CustomerDeliveryPanel({api,brands,canChooseProvider=false}:{api:Api;brands:Brand[];canChooseProvider?:boolean}) {
   const [id,setId]=useState(brands[0]?.id??''),[providerRevision,setProviderRevision]=useState(0);
+  const [senderRevision,setSenderRevision]=useState(0);
+  const senderChanged=()=>setSenderRevision(value=>value+1);
   const brand=brands.find(item=>item.id===id);
   return <><h1 className="page-heading">Delivery</h1><p className="page-intro">Review your saved message and audience, then approve that exact version.</p>
     <div className="field"><label htmlFor="delivery-brand">Sending brand</label><select id="delivery-brand" value={id} onChange={event=>setId(event.target.value)}>
       {brands.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
-    {brand&&<>{canChooseProvider&&<DeliveryProviderPanel key={'provider-'+brand.id} api={api} brandId={brand.id} onChanged={()=>setProviderRevision(v=>v+1)}/>}<DeliveryBrand key={brand.id+'-'+providerRevision} api={api} brand={brand}/><SenderProfilePanel key={'sender-'+brand.id+'-'+providerRevision} api={api} brandId={brand.id}/></>}
+    {brand&&<>
+      <SenderProfilePanel key={'sender-'+brand.id} api={api} brandId={brand.id} onSaved={senderChanged}/>
+      {canChooseProvider&&<>
+        <SenderDomain key={'domain-'+brand.id} api={api} brand={brand} onChanged={senderChanged} showSimulator={false}/>
+        <SenderSetupPanel key={'setup-'+brand.id} api={api} brandId={brand.id} refreshRevision={senderRevision}/>
+        <DeliveryProviderPanel key={'provider-'+brand.id} api={api} brandId={brand.id} onChanged={()=>setProviderRevision(v=>v+1)}/>
+      </>}
+      <DeliveryBrand key={brand.id+'-'+providerRevision} api={api} brand={brand}/>
+    </>}
   </>;
 }
 function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
@@ -69,6 +82,14 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
   async function refresh() {
     if(acting.current)return;acting.current=true;setBusy('refresh');setError('');
     try{apply(await read());}catch(error){setError(explain(error));}finally{acting.current=false;setBusy('');}
+  }
+  async function refreshAfterTest() {
+    const revision = context.current;
+    const next = await api.call<Status>('delivery.status', { brandId: brand.id });
+    if (revision === context.current) {
+      setStatus(next);
+      setChecks(null);
+    }
   }
   async function mutate<T>(name:CommandName,input:Record<string,unknown>,slot:string,after?:(result:T)=>void,before?:()=>Promise<boolean>) {
     if(acting.current)return;acting.current=true;setBusy(slot);setError('');setNotice('');
@@ -110,9 +131,10 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
       <p className="badge">{status?.mode==='capture'?'Captured exercise · no external email':externalDelivery(status?.mode??'off')?`${status?.mode==='resend'?'Resend':'AWS SES'} · ${status?.providerConfigured===false?'brand route missing':status?.senderVerified?'sender checks current':'sender/provider checks needed'}`:'Delivery is off'}</p>
       {status&&<DeliveryScopeNotice mode={status.mode} scope={status.scope??'all'}/>}
       {status?.context&&<DeliveryDiagnostics status={status} brand={brand} campaign={selectedCampaign?{id:selectedCampaign.id,version:selectedCampaign.version,title:selectedCampaign.content.title}:null}/>}
+      {status?.trust&&<SendingTrustNotice status={status.trust}/>}
       {status?.mode==='capture'&&<p className="help">These messages stay in your staging workspace. Captured outcomes exercise the workflow and cannot prove inbox delivery.</p>}
       {!!status?.gaps.length&&<ul>{status.gaps.map(gap=><li key={gap}>{gap}</li>)}</ul>}
-      {!status?.eligible&&<div className="notice"><strong>Service activation needed</strong><ul>{status?.eligibility.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul><p>Open Subscription to review your plan or start a captured trial.</p></div>}
+      {!status?.eligible&&<div className="notice"><strong>Service activation needed</strong><ul>{status?.eligibility.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul><p>Open Subscription to check your plan and available trial options.</p></div>}
       <fieldset disabled={!!busy}>
         <div className="field"><label htmlFor="delivery-campaign">Saved campaign</label><select id="delivery-campaign" value={campaignId} onChange={event=>{setCampaignId(event.target.value);setReview(null);setChecks(null);}}>
           {campaigns.map(item=><option key={item.id} value={item.id}>{item.content.subject||item.content.title||'Untitled'} · version {item.version}</option>)}</select></div>
@@ -134,7 +156,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
     </>}
   </section>
   <CustomerTestSendPanel api={api} brandId={brand.id} draft={campaigns.find(campaign=>campaign.id===campaignId)??null}
-    restoreId={testRestoreId} onSelectTest={(id,test)=>{setCampaignId(id);setReview(null);setTestRestoreId(test);}} onRestoreConsumed={consumeTestRestore} onChanged={refresh}/>
+    restoreId={testRestoreId} onSelectTest={(id,test)=>{setCampaignId(id);setReview(null);setTestRestoreId(test);}} onRestoreConsumed={consumeTestRestore} onChanged={refreshAfterTest}/>
   <section className="card"><h2>Delivery history</h2>{loaded&&!deliveries.length&&<p>No reviewed deliveries yet.</p>}
     {deliveries.map(item=><article className="delivery-record" key={item.id}>
       <h3>{item.subject}</h3><p>Version {item.version} · {item.state} · {new Date(item.dueAt).toLocaleString()}</p>

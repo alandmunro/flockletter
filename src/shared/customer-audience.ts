@@ -36,7 +36,7 @@ export const customerAudienceCommands = {
     audiencePolicyInput,
   ),
   'audienceOnboarding.import': commandDefinition(
-    'Import contacts with permission. Immediate subscription additionally requires audience:confirm and the current consent policy. Existing suppression is preserved.',
+    'Import up to 2,500 CSV rows (1 MiB) for one brand with permission. Immediate subscription additionally requires audience:confirm and the current consent policy. Existing suppression is preserved.',
     'audience:write',
     true,
     {

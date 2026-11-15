@@ -14,11 +14,11 @@ const secret='whsec_'+Buffer.alloc(32,7).toString('base64');
 beforeAll(async()=>{fixture=await startDatabase();db=new Database(fixture.url);});
 afterAll(async()=>{await db?.close();await fixture?.stop();});
 function signed(value:unknown,id='evt_'+randomUUID(),age=0){const date=new Date(Date.now()+age),body=Buffer.from(JSON.stringify(value));return {body,headers:{'svix-id':id,'svix-timestamp':String(Math.floor(date.getTime()/1000)),'svix-signature':new Webhook(secret).sign(id,date,body.toString())}};}
-async function setup(){
+async function setup(transport?:typeof fetch){
  const f=await createTestSendFixture(db,{mode:'resend',scope:'tests'});const messageId=randomUUID();
  const route=parseResendRoute({workspaceId:f.workspaceId,brandId:f.brandId,from:'news@shop.example.com',domainId:randomUUID(),webhookId:randomUUID(),region:'us-east-1'});
- const provider=new CustomerResendProvider(route,f.options.origin,'synthetic',async()=>true,'tests');
- f.options.provider=()=>({...provider,fingerprint:route.fingerprint,from:route.from,ready:async()=>true,submit:vi.fn(async()=>({outcome:'unknown' as const})),lookup:async()=>({outcome:'unknown' as const})});
+ const provider=new CustomerResendProvider(route,f.options.origin,'synthetic',async()=>true,'tests',transport);
+ f.options.provider=()=>transport?provider:({...provider,fingerprint:route.fingerprint,from:route.from,ready:async()=>true,submit:vi.fn(async()=>({outcome:'unknown' as const})),lookup:async()=>({outcome:'unknown' as const})});
  await saveSenderProfile(f.delivery,f.actor,f.brandId);
  await f.delivery.execute('delivery.saveSender',{operationKey:randomUUID(),brandId:f.brandId,fromName:'Shop',fromEmail:route.from,replyTo:route.from,organization:'Synthetic shop',postalAddress:'123 Example Road Denver CO 80202'},f.actor);await addCampaignPhoto(db,f.actor,f.brandId,f.campaign.id);
  await db.brand(f.workspaceId,f.brandId,sql=>sql.query("INSERT INTO sender_domains(workspace_id,brand_id,domain,challenge,verified_at) VALUES($1,$2,'shop.example.com',gen_random_uuid(),now())",[f.workspaceId,f.brandId]));
@@ -28,19 +28,20 @@ async function setup(){
  const operation=(await db.tenant(f.workspaceId,sql=>sql.query<{id:string}>('SELECT id FROM customer_delivery_recipients WHERE delivery_id=$1',[review.id]))).rows[0]!.id;
  let receipt={id:messageId,from:route.from,to:['confirmed@shop.test'],tags:[{name:'fl_kind',value:'customer'},{name:'fl_operation',value:operation},{name:'fl_workspace',value:f.workspaceId},{name:'fl_brand',value:f.brandId},{name:'fl_route',value:route.fingerprint}]};
  const send=vi.fn<typeof fetch>(async()=>new Response(JSON.stringify(receipt)));
- const feedback=new CustomerResendFeedback(db,{entries:[{route,provider}],retrieveKey:'synthetic-retrieve',webhookSecret:secret,send,provider:()=>provider},f.delivery.worker);
+ const feedback=new CustomerResendFeedback(db,{register:vi.fn(),entries:[{route,provider}],retrieveKey:'synthetic-retrieve',webhookSecret:secret,send},f.delivery.worker);
  const event=(type='email.delivered',bounce?:{type:string})=>({type,created_at:new Date().toISOString(),data:{email_id:messageId,from:route.from,to:['confirmed@shop.test'],...(bounce?{bounce}:{})}});
  const rows=()=>db.brand(f.workspaceId,f.brandId,async sql=>({person:(await sql.query('SELECT state,feedback,message_id FROM customer_delivery_recipients WHERE id=$1',[operation])).rows[0],subscriber:(await sql.query('SELECT state FROM subscribers WHERE id=$1',[f.subscriberId])).rows[0]}));
  return {...f,feedback,send,event,rows,review,receipt,setReceipt:(value:typeof receipt)=>{receipt=value;}};
 }
 it('settles unknown acceptance from a real-shaped nullable recipient receipt and applies deduplicated delivery, complaint and monotonic suppression',async()=>{
  const f=await setup(),delivered=signed(f.event());
- f.send.mockImplementation(async()=>new Response(JSON.stringify({...f.receipt,cc:null,bcc:null})));
+ f.send.mockImplementation(async()=>new Response(JSON.stringify({...f.receipt,cc:null,bcc:null,html:'x'.repeat(512_000)})));
  await f.feedback.receive(delivered.body,delivered.headers);await f.feedback.receive(delivered.body,delivered.headers);
  expect((await f.rows()).person).toMatchObject({state:'accepted',feedback:'delivered'});
  const complaint=signed(f.event('email.complained'));await f.feedback.receive(complaint.body,complaint.headers);
  const late=signed(f.event());await f.feedback.receive(late.body,late.headers);
  expect(await f.rows()).toMatchObject({person:{feedback:'complaint'},subscriber:{state:'complained'}});expect((await f.billing.status(f.workspaceId)).usage.emails).toBe(1);
+ expect(f.send).toHaveBeenCalledTimes(1);
  expect(f.send.mock.calls.every(c=>c[1]?.method===undefined)).toBe(true);
 });
 it('rejects invalid/stale signatures, oversized events, wrong recipients and forged routing',async()=>{
@@ -56,4 +57,25 @@ it('requires retrieval, rejects replay conflicts, and preserves negative feedbac
  const f=await setup(),good=signed(f.event());f.send.mockResolvedValueOnce(new Response('',{status:503}));await expect(f.feedback.receive(good.body,good.headers)).rejects.toMatchObject({status:503});
  await f.feedback.receive(good.body,good.headers);const changed=signed(f.event('email.complained'),good.headers['svix-id']);await expect(f.feedback.receive(changed.body,changed.headers)).rejects.toMatchObject({code:'delivery_feedback_conflict'});
  f.options.mode='off';const hard=signed(f.event('email.bounced',{type:'Permanent'}));await f.feedback.receive(hard.body,hard.headers);expect((await f.rows()).subscriber.state).toBe('hard_bounced');
+});
+
+it('resumes a throttled original submission only after its retry time and bills one final acceptance',async()=>{
+ const finalId=randomUUID();
+ const transport=vi.fn<typeof fetch>()
+  .mockResolvedValueOnce(new Response(JSON.stringify({name:'rate_limit_exceeded'}),{status:429,headers:{'Retry-After':'9'}}))
+  .mockResolvedValueOnce(new Response(JSON.stringify({id:finalId})));
+ const f=await setup(transport);
+ const saved=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query(
+  'SELECT id,state,reason,attempts,next_check_at FROM customer_delivery_recipients WHERE delivery_id=$1',[f.review.id])).rows[0]!);
+ expect(saved).toMatchObject({state:'prepared',reason:'sending_provider_backoff',attempts:0});
+ expect(saved.next_check_at.getTime()).toBe(f.now().getTime()+9000);
+ expect(await f.delivery.worker.tick(f.workspaceId,f.review.id)).toEqual({processed:false});
+ const checkout=await f.billing.status(f.workspaceId);expect(checkout.usage.emails).toBe(0);
+ f.setClock(new Date(saved.next_check_at.getTime()+1));
+ expect(await f.delivery.worker.tick(f.workspaceId,f.review.id)).toEqual({processed:true});
+ expect(transport).toHaveBeenCalledTimes(2);
+ for(const [,request] of transport.mock.calls)expect(request?.headers).toMatchObject({'Idempotency-Key':'flockletter-customer/'+saved.id});
+ expect(transport.mock.calls[0]![1]!.body).toBe(transport.mock.calls[1]![1]!.body);
+ expect((await f.rows()).person).toMatchObject({state:'accepted',message_id:finalId});
+ expect((await f.billing.status(f.workspaceId)).usage.emails).toBe(1);
 });

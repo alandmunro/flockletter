@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const importLimits = { bytes: 256 * 1024, rows: 1000, columns: 64, issueExamples: 10 } as const;
+export const importLimits = { bytes: 1024 * 1024, rows: 2500, columns: 64, issueExamples: 10 } as const;
 export const importPreviewInput = z
   .object({
     brandId: z.uuid().toLowerCase(),
@@ -47,7 +47,7 @@ export type ImportPreviewResult = {
 
 export function parseImportCsv(text: string): string[][] {
   if (new TextEncoder().encode(text).length > importLimits.bytes)
-    throw new Error('Choose a CSV file of 256 KiB or less.');
+    throw new Error('Choose a CSV file of 1 MiB or less.');
   if (text.includes('\0')) throw new Error('The CSV contains an invalid control character.');
   const rows: string[][] = [];
   let row: string[] = [],
@@ -62,7 +62,7 @@ export function parseImportCsv(text: string): string[][] {
   }
   function finishRecord() {
     finishCell();
-    if (rows.length === importLimits.rows + 1) throw new Error('Choose a CSV with at most 1,000 data rows.');
+    if (rows.length === importLimits.rows + 1) throw new Error('Choose a CSV with at most 2,500 data rows.');
     rows.push(row);
     row = [];
     hasRecord = false;
@@ -94,7 +94,7 @@ export function parseImportCsv(text: string): string[][] {
 }
 
 export function readImportCsv(bytes: Uint8Array) {
-  if (bytes.byteLength > importLimits.bytes) throw new Error('Choose a CSV file of 256 KiB or less.');
+  if (bytes.byteLength > importLimits.bytes) throw new Error('Choose a CSV file of 1 MiB or less.');
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);

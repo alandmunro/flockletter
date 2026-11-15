@@ -4,13 +4,15 @@ Applicable requirements: FL-PROD-002, FL-ONB-001/003/004, FL-ID-001/002, FL-BIL-
 
 ## Customer flow
 
-Each pricing card offers **Choose Starter**, **Choose Growth** or **Choose Pro**. The link carries only a recognized plan ID into account setup. Prices, eligibility and provider references remain server-owned. Selecting a link starts no trial, subscription or payment.
+Pricing offers **Choose Starter** and **Choose Growth**. Pro shows a paused-enrollment notice under D-060. The link carries only a recognized plan ID into account setup. Prices, eligibility and provider references remain server-owned. Selecting a link starts no trial, subscription or payment.
 
 Clerk sign-up, sign-in, organization creation and organization selection retain the internal Subscription destination and chosen plan. If an organization is already selected, the customer continues in that workspace. A new customer names the app workspace and first brand, then reaches Subscription. Clerk remains authoritative for identity and current membership; the URL and local navigation state grant no workspace access.
 
 Subscription reads `customerBilling.status` before offering actions. The selected tier survives refresh. An existing ordinary subscription without a new tier hint starts with its recorded plan. A pending card setup takes precedence over URL hints and locks its original tier until that setup is resolved. Complimentary workspaces retain their assigned service and show no card or purchase actions.
 
 With configured billing, **Verify card with Stripe** opens card-only setup. Card entry stays with Stripe. After returning, the customer chooses **Review trial terms after card setup**. The server verifies the provider-held setup and supplies the exact tier, price, first-charge date, expiry, revision and review hash. Only checking the acceptance box and clicking **Accept and start 14-day trial** submits that agreement. A replacement review clears the checkbox. Subscription eligibility still follows verified provider facts; navigation alone never establishes payment or service access.
+
+For FL-BIL-002/007, trial Checkout permits only cards and hides Link on the setup session. Older sessions could save Link or a bank account. Once Stripe confirms that a completed setup belongs to this workspace and its payment method belongs to the same customer, reviewing an unsupported method closes that setup and displays the earliest card retry time. A new card setup uses the ordinary owner reservation and attempt limits. An unavailable provider or inconsistent ownership leaves the original setup available for reconciliation.
 
 All recognized Checkout return/cancel markers lead back to Subscription without starting a billing action. Stripe portal management and selected-plan confirmation also return to `/subscription`. Opening either view does not accept an agreement. Existing uncertain-outcome reconciliation and owner-only `customerBilling.*` commands remain shared by the UI, HTTP API and MCP; no delegated billing permission is introduced.
 

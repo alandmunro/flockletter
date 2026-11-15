@@ -32,7 +32,7 @@ afterAll(async () => {
   await fixture?.stop();
 });
 
-async function factory(optionsOverride: Partial<DeliveryOptions> = {}) {
+async function factory(optionsOverride: Partial<DeliveryOptions> = {}, paid=true) {
   const workspaceId = 'org_' + randomUUID().replaceAll('-', ''),
     userId = 'user_' + randomUUID(),
     actor: Actor = {
@@ -77,7 +77,7 @@ async function factory(optionsOverride: Partial<DeliveryOptions> = {}) {
     { operationKey: randomUUID(), plan: 'starter', simulatedCardConfirmed: true },
     actor,
   );
-  await billing.execute(
+  if(paid)await billing.execute(
     'customerBilling.exercisePayment',
     { operationKey: randomUUID(), result: 'succeeded' },
     actor,
@@ -129,6 +129,65 @@ async function reviewAndApprove(f: Awaited<ReturnType<typeof factory>>) {
   return reviewed;
 }
 
+it('rolls back a partial 2,500-person freeze and replays the exact trial queue and allowance once', async () => {
+  const f=await factory({},false);
+  const request={operationKey:randomUUID(),brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1};
+  const scoped=<T,>(fn:(sql:Sql)=>Promise<T>)=>db.brand(f.workspaceId,f.brandId,fn);
+  await scoped(sql=>sql.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+    SELECT $1,$2,gen_random_uuid(),'reader-'||n||'@example.test','confirmed' FROM generate_series(1,2499) n`,[f.workspaceId,f.brandId]));
+  const expected=(await scoped(sql=>sql.query<{id:string}>('SELECT id FROM subscribers ORDER BY id'))).rows.map(x=>x.id);
+  const admin=new Database(fixture.adminUrl);
+  try {
+    // A test-only statement trigger models the hosted statement budget. Fail after the first
+    // batch succeeded; sequence advancement survives rollback so the same request can recover.
+    await admin.pool.query(`
+      CREATE SEQUENCE public.test_freeze_batch;
+      CREATE FUNCTION public.test_bounded_freeze() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+      BEGIN
+        IF (SELECT count(*) FROM inserted)>100 THEN RAISE EXCEPTION 'unbounded freeze'; END IF;
+        IF nextval('public.test_freeze_batch'::regclass)=2 THEN RAISE EXCEPTION 'interrupted snapshot'; END IF;
+        RETURN NULL;
+      END $$;
+      REVOKE ALL ON FUNCTION public.test_bounded_freeze() FROM PUBLIC;
+      CREATE TRIGGER test_bounded_freeze AFTER INSERT ON public.customer_delivery_recipients
+        REFERENCING NEW TABLE AS inserted FOR EACH STATEMENT EXECUTE FUNCTION public.test_bounded_freeze();`);
+    await expect(f.delivery.execute('delivery.review',request,f.actor)).rejects.toThrow('interrupted snapshot');
+    expect((await scoped(sql=>sql.query(`SELECT
+      (SELECT count(*)::int FROM customer_deliveries) reviews,
+      (SELECT count(*)::int FROM customer_delivery_recipients) recipients,
+      (SELECT count(*)::int FROM operations WHERE operation_key=$1) operations,
+      (SELECT count(*)::int FROM customer_usage_reservations) reservations`,[request.operationKey]))).rows[0]
+    ).toEqual({reviews:0,recipients:0,operations:0,reservations:0});
+    const started=performance.now();
+    const review=await f.delivery.execute('delivery.review',request,f.actor) as DeliveryView;
+    expect(review).toMatchObject({selected:2500,state:'reviewed'});
+    const frozen=async ()=>(await scoped(sql=>sql.query<{id:string;subscriber_id:string}>(
+      "SELECT id,subscriber_id FROM customer_delivery_recipients WHERE delivery_id=$1 AND state='pending' ORDER BY subscriber_id",[review.id]))).rows;
+    const people=await frozen();
+    expect(people.map(p=>p.subscriber_id)).toEqual(expected);
+    expect(new Set(people.map(p=>p.id)).size).toBe(2500);
+    // Membership changes within the trial contact cap must not replace frozen recipients.
+    // The worker independently rechecks the revoked subscriber before submission.
+    await scoped(sql=>sql.query("UPDATE subscribers SET state='unsubscribed' WHERE id=$1",[f.subscriberId]));
+    await scoped(sql=>sql.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+      VALUES($1,$2,gen_random_uuid(),'later@example.test','confirmed')`,[f.workspaceId,f.brandId]));
+    expect(await f.delivery.execute('delivery.review',request,f.actor)).toEqual(review);
+    const approve={operationKey:randomUUID(),brandId:f.brandId,id:review.id};
+    const approved=await f.delivery.execute('delivery.approve',approve,f.actor);
+    expect(approved).toMatchObject({id:review.id,selected:2500,state:'queued'});
+    expect(await f.delivery.execute('delivery.approve',approve,f.actor)).toEqual(approved);
+    expect(await f.delivery.execute('delivery.approve',{...approve,operationKey:randomUUID()},f.actor)).toEqual(approved);
+    expect(await frozen()).toEqual(people);
+    expect((await scoped(sql=>sql.query('SELECT recipients,slots,state FROM customer_usage_reservations'))).rows
+    ).toEqual([{recipients:2500,slots:1,state:'reserved'}]);
+    expect(performance.now()-started).toBeLessThan(30_000);
+  } finally {
+    try { await admin.pool.query(`DROP TRIGGER IF EXISTS test_bounded_freeze ON public.customer_delivery_recipients;
+      DROP FUNCTION IF EXISTS public.test_bounded_freeze(); DROP SEQUENCE IF EXISTS public.test_freeze_batch;`); }
+    finally { await admin.close(); }
+  }
+},45_000);
+
 it('renders to reserved address, captures message with unsubscribe and settles delivery', async () => {
   const f = await factory();
   const id = (await reviewAndApprove(f)).id;
@@ -152,6 +211,23 @@ it('renders to reserved address, captures message with unsubscribe and settles d
     f.actor,
   )) as { html: string };
   expect(message.html).toContain('Unsubscribe from this newsletter');
+});
+
+it('rechecks an unavailable Clerk membership before retrying an unsubmitted recipient',async()=>{
+  const f=await factory();
+  const id=(await reviewAndApprove(f)).id;
+  await f.delivery.worker.tick(f.workspaceId,id);
+  f.options.isOwner=async()=>{throw Error('temporary Clerk failure');};
+  await f.delivery.worker.tick(f.workspaceId,id);
+  const read=()=>db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query(
+    'SELECT id,state,reason,attempts,next_check_at FROM customer_delivery_recipients WHERE delivery_id=$1',[id])).rows[0]!);
+  const saved=await read();
+  expect(saved).toMatchObject({state:'prepared',reason:'authority_verification_unavailable',attempts:0});
+  expect(await f.delivery.worker.tick(f.workspaceId,id)).toEqual({processed:false});
+  f.options.now=()=>new Date(saved.next_check_at.getTime()+1);
+  f.options.isOwner=async()=>true;
+  await f.delivery.worker.tick(f.workspaceId,id);
+  expect(await read()).toMatchObject({id:saved.id,state:'accepted',attempts:1});
 });
 
 it('excludes subscriber who unsubscribes after render', async () => {

@@ -217,7 +217,7 @@ it('executes only with separate restricted authority and replays the durable era
     );
     await admin.query('GRANT USAGE ON SCHEMA flockletter_customer_jobs TO ' + pg.escapeIdentifier(role));
     await admin.query(
-      'GRANT SELECT,DELETE ON flockletter_customer_jobs.scopes,flockletter_customer_jobs.support_reply_routes,flockletter_customer_jobs.confirmation_routes,flockletter_retention_control.platform_records TO ' + pg.escapeIdentifier(role),
+      'GRANT SELECT,DELETE ON flockletter_customer_jobs.resend_domain_claims,flockletter_customer_jobs.resend_sender_routes,flockletter_customer_jobs.sending_state,flockletter_customer_jobs.sending_admissions,flockletter_customer_jobs.scopes,flockletter_customer_jobs.support_reply_routes,flockletter_customer_jobs.confirmation_routes,flockletter_retention_control.platform_records TO ' + pg.escapeIdentifier(role),
     );
     await admin.query('GRANT INSERT ON customer_retention_receipts TO ' + pg.escapeIdentifier(role));
     await admin.query(

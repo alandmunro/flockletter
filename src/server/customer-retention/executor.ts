@@ -225,7 +225,7 @@ export async function executeAuthorizedRetention(
         ' IN SHARE ROW EXCLUSIVE MODE',
     );
     await options.verifyLockedPlan?.(db,workspace,job);
-    for(const route of ['scopes','support_reply_routes','confirmation_routes']) {
+    for(const route of ['scopes','support_reply_routes','confirmation_routes','sending_state','sending_admissions','resend_domain_claims','resend_sender_routes']) {
       const qualified='flockletter_customer_jobs.'+identifier(route);
       if((await db.query('SELECT to_regclass($1) present',['flockletter_customer_jobs.'+route])).rows[0]?.present){
         const allowed=(await db.query("SELECT has_table_privilege(current_user,$1,'DELETE') AND has_table_privilege(current_user,$1,'SELECT') allowed",['flockletter_customer_jobs.'+route])).rows[0]?.allowed;

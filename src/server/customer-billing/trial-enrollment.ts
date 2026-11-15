@@ -1,3 +1,5 @@
+import {trialAllowance} from './policy.js';
+import {hostedPolicies} from '../../shared/hosted-policies.js';
 import {lockWorkspace} from '../workspace-lock.js';
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
@@ -8,6 +10,7 @@ import { plans } from '../../shared/contracts.js';
 import type { CustomerPlan, TrialReview } from '../../shared/customer-billing.js';
 import { TrialRegistry, type TrialIdentity, type TrialSource } from '../customer-abuse/registry.js';
 import type { CustomerBillingProvider, ProviderIntent, ProviderTrialActivation } from './provider.js';
+import { UnsupportedTrialPaymentMethod } from './provider.js';
 
 type Setup = {
   workspace_id: string;
@@ -38,6 +41,7 @@ type Setup = {
   created_at: Date;
 };
 export type TrialEnrollmentOptions = {
+  planAvailable?:(plan:ProviderIntent['plan'])=>boolean;
   registry?: TrialRegistry;
   gateway: CustomerBillingProvider;
   now: () => Date;
@@ -55,6 +59,8 @@ const intent = (s: Setup): ProviderIntent => ({
   createdAt: s.created_at,
   reference: s.checkout_id,
 });
+// Allow the existing 35-minute owner reservation to finish before retrying with a new intent.
+const cardRetryAt = (s: Setup) => new Date(s.created_at.getTime() + 36 * 60000).toISOString();
 const projection = (s: Setup) => ({
   id: s.id,
   state: s.state,
@@ -62,6 +68,7 @@ const projection = (s: Setup) => ({
   revision: s.revision,
   review: s.review,
   activationKey: s.activation_key,
+  ...(s.state === 'expired' && s.failure_code === 'unsupported_payment_method' ? {cardRetryAt: cardRetryAt(s)} : {}),
 });
 export async function trialSetupStatus(sql: Sql) {
   const s = (
@@ -192,7 +199,10 @@ export class TrialEnrollment {
           'operation_conflict',
           'Retry the original plan with its original key.',
         );
-        return { s: await this.setup(sql, actor, s.id), fresh: false };
+        const original = await this.setup(sql, actor, s.id);
+        if (original.state === 'expired' && original.failure_code === 'unsupported_payment_method')
+          return { retryAt: cardRetryAt(original) };
+        return { s: original, fresh: false };
       }
       const existing = (
         await sql.query<Setup>(
@@ -222,6 +232,13 @@ export class TrialEnrollment {
           [s.id],
         );
       }
+      const previous = (await sql.query<Setup>(
+        'SELECT * FROM customer_trial_setups WHERE actor_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1',
+        [actor.actorId],
+      )).rows[0];
+      if (previous?.state === 'expired' && previous.failure_code === 'unsupported_payment_method' &&
+          Date.parse(cardRetryAt(previous)) > this.options.now().getTime())
+        return { retryAt: cardRetryAt(previous) };
       const id = randomUUID(),
         who = registry.identity(actor.workspaceId, actor.userId);
       const decision = await registry.claim(sql, actor.workspaceId, who, id, 'reserve');
@@ -247,6 +264,7 @@ export class TrialEnrollment {
       ).rows[0]!;
       return { s, fresh: true };
     });
+    if ('retryAt' in prepared) return { state: 'trial_card_required', retryAt: prepared.retryAt };
     if ('denied' in prepared) return { state: 'trial_unavailable' };
     const { s, fresh } = prepared;
     if (['active', 'activation_pending'].includes(s.state)) return { state: s.state };
@@ -295,13 +313,26 @@ export class TrialEnrollment {
     );
     return this.locked(actor, async (sql) => {
       const s = await this.setup(sql, actor, setupId);
+      if (s.state === 'expired' && s.failure_code === 'unsupported_payment_method')
+        return { state: 'trial_card_required', retryAt: cardRetryAt(s) };
       requireCondition(
         ['pending', 'card_verified', 'reviewed'].includes(s.state),
         409,
         'trial_review_unavailable',
         'Resolve the current trial setup before reviewing again.',
       );
-      const proof = await g.inspectSetup!(intent(s));
+      let proof;
+      try {
+        proof = await g.inspectSetup!(intent(s));
+      } catch (error) {
+        if (!(error instanceof UnsupportedTrialPaymentMethod)) throw error;
+        // Only an authenticated, completed setup for this owner and workspace reaches this branch.
+        await sql.query(
+          "UPDATE customer_trial_setups SET state='expired',failure_code='unsupported_payment_method',revision=revision+1,review=NULL,review_hash=NULL,review_expires_at=NULL WHERE id=$1",
+          [s.id],
+        );
+        return { state: 'trial_card_required', retryAt: cardRetryAt(s) };
+      }
       requireCondition(
         proof && proof.checkout === s.checkout_id,
         409,
@@ -313,6 +344,10 @@ export class TrialEnrollment {
         revision = s.revision + 1;
       const base = {
         version: 1 as const,
+        policyVersion:hostedPolicies.version,
+        ...(proof.taxMode?{taxMode:proof.taxMode}:{}),
+        limits: trialAllowance,
+        ...(proof.locationDigest?{locationDigest:proof.locationDigest,tax:'exclusive' as const}:{}),
         setupId: s.id,
         revision,
         plan: s.plan,
@@ -363,6 +398,7 @@ export class TrialEnrollment {
       actor,
       async (sql) => {
         const s = await this.setup(sql, actor, input.setupId);
+        if(!s.activation_key)requireCondition(this.options.planAvailable?.(s.plan)!==false,409,'plan_enrollment_paused','New subscriptions to this tier are paused. Select an offered tier before starting.');
         if (s.activation_key) {
           requireCondition(
             s.activation_key === input.operationKey &&
@@ -382,7 +418,7 @@ export class TrialEnrollment {
             input.accepted &&
             s.review_expires_at &&
             s.review_expires_at > this.options.now() &&
-            s.review?.firstChargeAt,
+            s.review?.firstChargeAt && s.review.policyVersion===hostedPolicies.version,
           409,
           'trial_review_changed',
           'Review the current trial terms again before accepting.',
@@ -400,7 +436,8 @@ export class TrialEnrollment {
             proof.customer === s.customer_id &&
             proof.paymentMethod === s.payment_method_id &&
             proof.setupIntent === s.setup_intent_id &&
-            registry.card(proof.fingerprint) === s.card_digest,
+            proof.taxMode===s.review.taxMode &&
+            registry.card(proof.fingerprint) === s.card_digest && (!s.review.locationDigest || proof.locationDigest===s.review.locationDigest),
           409,
           'card_setup_changed',
           'Review the current verified card setup again.',
@@ -443,7 +480,7 @@ export class TrialEnrollment {
             input.operationKey,
             digest(JSON.stringify(input)),
             g.account,
-            JSON.stringify({ plan: s.plan, trialDays: 14, setupId: s.id, reviewHash: s.review_hash }),
+            JSON.stringify({ plan: s.plan, trialDays: 14, setupId: s.id, reviewHash: s.review_hash,policyVersion:hostedPolicies.version,...(s.review.taxMode?{taxMode:s.review.taxMode}:{}) }),
           ],
         );
         s.activation_key = input.operationKey;
@@ -469,6 +506,8 @@ export class TrialEnrollment {
       paymentMethod: s.payment_method_id,
       activationKey: s.activation_key,
       trialEnd: s.trial_end_at,
+      ...(s.review?.taxMode?{taxMode:s.review.taxMode}:{}),
+      ...(s.review?.locationDigest?{locationDigest:s.review.locationDigest}:{}),
     };
     // Saved approval/claim is already committed. New agreement creation and hold
     // writes serialize on this same lock. Read-only lookup remains available while held.

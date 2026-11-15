@@ -48,6 +48,7 @@ async function seed(db: pg.Client, workspace: string) {
     BEGIN
       INSERT INTO workspaces(workspace_id,name) VALUES(w,'Fixture company');
       INSERT INTO brands(workspace_id,id,name) VALUES(w,b,'Fixture brand');
+      INSERT INTO customer_resend_senders(workspace_id,brand_id,operation_id,actor_id,creator_id,captured,domain,from_email,sender_revision,state) VALUES(w,b,gen_random_uuid(),'fixture','fixture',true,'example.test','news@example.test',1,'reviewed');
       INSERT INTO campaigns(workspace_id,id,brand_id,content) VALUES(w,camp,b,'{"subject":"Fixture draft"}');
       INSERT INTO assets(workspace_id,id,brand_id,item_key,name,mime,bytes,sha256,width,height)
         VALUES(w,gen_random_uuid(),b,'fixture-image','fictional.png','image/png',decode('0102','hex'),digest,1,1);

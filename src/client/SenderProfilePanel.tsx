@@ -5,7 +5,7 @@ type Fields=Omit<CustomerSenderProfile,'revision'>;
 type Result={profile:CustomerSenderProfile|null;eligible:boolean;mode:string};
 const empty:Fields={fromName:'',fromEmail:'',replyTo:'',organization:'',postalAddress:''};
 const controls=[['fromName','From name','text',100],['fromEmail','From email','email',254],['replyTo','Reply-to email','email',254],['organization','Business or organization','text',150],['postalAddress','Postal address for the email footer','text',500]] as const;
-export function SenderProfilePanel({api,brandId}:{api:Api;brandId:string}) {
+export function SenderProfilePanel({api,brandId,onSaved}:{api:Api;brandId:string;onSaved?:()=>void}) {
   const id=useId(),[fields,setFields]=useState<Fields>(empty),[result,setResult]=useState<Result|null>(null);
   const [error,setError]=useState(''),[busy,setBusy]=useState(false),[loaded,setLoaded]=useState(false),[saved,setSaved]=useState(false);
   const attempt=useRef<{signature:string;key:string}|null>(null),request=useRef(0);
@@ -29,7 +29,7 @@ export function SenderProfilePanel({api,brandId}:{api:Api;brandId:string}) {
     try {
       const profile=await api.call<CustomerSenderProfile>('delivery.saveSender',{brandId,operationKey:key,...fields});
       setFields({fromName:profile.fromName,fromEmail:profile.fromEmail,replyTo:profile.replyTo,organization:profile.organization,postalAddress:profile.postalAddress});
-      setResult(previous=>({profile,eligible:false,mode:previous?.mode??'off'}));attempt.current=null;setSaved(true);
+      setResult(previous=>({profile,eligible:false,mode:previous?.mode??'off'}));attempt.current=null;setSaved(true);onSaved?.();
       try{await load(false);}catch{setError('Sender profile saved. The latest verification could not refresh; retry sender checks before reviewing delivery.');}
     }catch(error){setError(error instanceof Error?error.message:'The profile could not save. Retry with the same fields.');}finally{setBusy(false);}
   }
