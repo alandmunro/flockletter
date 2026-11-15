@@ -31,7 +31,7 @@ The signup journey uses the capped trial example. The populated audience, campai
 - An interactive browser-local prototype with catalogue/story navigation, filters, sample editing, confirmations and recovery examples.
 - Stable screen/story IDs mapped to SRD requirements, plus a documented [visual system](DESIGN_SYSTEM.md) and [design verification](VERIFICATION.md).
 - The owner-supplied Frosty Flamingo Software logo in the upper-right header across all screen families, with responsive sizing.
-- Approved $15/$25/$39 tier values, 250-contact/500-email trial limits and Clerk-owned workspace memberships, with the four approved launch sign-in methods.
+- Approved $15/$25/$39 tier values, 2,500-contact/2,500-email trial limits and Clerk-owned workspace memberships, with the four approved launch sign-in methods.
 
 ## Review boundaries
 

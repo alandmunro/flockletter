@@ -26,7 +26,7 @@ export async function retentionInventoryDigest(db:pg.Client,workspace:string) {
   else count=Number((await db.query('SELECT count(*) n FROM public.'+name+' WHERE workspace_id=$1',[workspace])).rows[0].n);
   requireRetention(Number.isSafeInteger(count),'inventory_count_invalid');counts[table.name]=count;
  }
- for(const name of ['scopes','support_reply_routes','confirmation_routes'])if((await db.query('SELECT to_regclass($1) present',['flockletter_customer_jobs.'+name])).rows[0]?.present)counts['private.'+name]=Number((await db.query('SELECT count(*) n FROM flockletter_customer_jobs.'+pg.escapeIdentifier(name)+' WHERE workspace_id=$1',[workspace])).rows[0].n);
+ for(const name of ['scopes','support_reply_routes','confirmation_routes','sending_state','sending_admissions','resend_domain_claims','resend_sender_routes'])if((await db.query('SELECT to_regclass($1) present',['flockletter_customer_jobs.'+name])).rows[0]?.present)counts['private.'+name]=Number((await db.query('SELECT count(*) n FROM flockletter_customer_jobs.'+pg.escapeIdentifier(name)+' WHERE workspace_id=$1',[workspace])).rows[0].n);
  if((await db.query("SELECT to_regclass('flockletter_retention_control.platform_records') present")).rows[0]?.present)counts['private.platform_records']=Number((await db.query("SELECT count(*) n FROM flockletter_retention_control.platform_records WHERE workspace_id=$1 AND kind<>'approval'",[workspace])).rows[0].n);
  return retentionDigest(counts);
 }

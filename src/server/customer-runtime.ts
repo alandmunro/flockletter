@@ -1,3 +1,6 @@
+import {ResendSenderSetup,resendSenderSetupPort,capturedSenderSetupPort} from './customer-delivery/sender-setup.js';
+import {storedResendRoute} from './customer-delivery/resend-route.js';
+import {SendingSafeguards} from './customer-delivery/safeguards.js';
 import {externalDelivery,type SendingProvider} from '../shared/customer-delivery.js';
 import {selectedDelivery} from './customer-delivery/selection.js';
 import {customerResendRuntime} from './customer-delivery/resend.js';
@@ -16,7 +19,7 @@ import { commands,type CommandName,type Capability } from '../shared/contracts.j
 import type { CustomerOperationsStatus } from '../shared/customer-operations.js';
 import { customerSettings } from './customer-settings.js';
 import { CustomerBilling,customerEligibility,customerContactLimit,customerSeatLimit,retentionServiceEndSql,retentionClockSql } from './customer-billing/service.js';
-import { customerBillingConfiguration,stripeCustomerProvider } from './customer-billing/provider.js';
+import { customerBillingConfiguration,stripeCustomerProvider,stripeCustomerEventProvider } from './customer-billing/provider.js';
 import { CustomerAudience,createCustomerOptOut,productionConsentEligible,productionConsentEligibleBatch } from './customer-audience/service.js';
 import { CustomerConfirmationFeedback } from './customer-audience/feedback.js';
 import { CustomerConfirmationProvider } from './customer-audience/resend.js';
@@ -40,7 +43,7 @@ import { CustomerInfrastructure } from './customer-infrastructure/index.js';
 import { createAwsInfrastructurePort } from './customer-infrastructure/aws.js';
 import { parseSesRoute, type SesRoute } from './campaign/ses-runtime.js';
 
-const prefixes=['customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
+const prefixes=['senderSetup.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
 export class CustomerWorkflows {
   readonly settings;
   readonly billing:CustomerBilling;
@@ -50,6 +53,7 @@ export class CustomerWorkflows {
   readonly retention:CustomerRetention;
   readonly delivery:CustomerDelivery;
   readonly infrastructure:CustomerInfrastructure;
+  readonly senderSetup:ResendSenderSetup;
   readonly engine?:CustomerEnginePool;
   readonly ses?:ReturnType<typeof customerSesRuntime>;
   readonly feedback?:SesFeedbackRouter;
@@ -58,12 +62,13 @@ export class CustomerWorkflows {
   observe?: (value:{workspaceId:string;status:CustomerOperationsStatus})=>Promise<void>;
   private running=false;
   private closing=false;
-  private active=new Map<string,Promise<void>>();
+  private active=new Map<string,Promise<number>>();
   constructor(readonly db:Database,readonly config:Config,readonly identity:IdentityProvider,readonly env:NodeJS.ProcessEnv=process.env) {
     const settings=this.settings=customerSettings(config,env);
     const gateway=stripeCustomerProvider(config.origin,env);
+    const eventGateway=gateway??stripeCustomerEventProvider(config.origin,env);
     this.billing=new CustomerBilling(db,{environment:config.environment,exerciseEnabled:settings.billing==='exercise',
-      gateway,trialRegistry:trialRegistryFromEnvironment(env,settings.billing==='exercise'?'exercise':gateway?.live?'stripe_live':'stripe_test',settings.billing==='exercise'?'captured':gateway?.account??'unconfigured'),checkOwner:identity.isOwner});
+      gateway,eventGateway,trialRegistry:trialRegistryFromEnvironment(env,settings.billing==='exercise'?'exercise':eventGateway?.live?'stripe_live':'stripe_test',settings.billing==='exercise'?'captured':eventGateway?.account??'unconfigured'),checkOwner:identity.isOwner});
     const confirmationFeedback=settings.audience==='live'?new CustomerConfirmationFeedback(db,{
       sendingKey:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_KEY??'',retrieveKey:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_RETRIEVE_KEY??'',
       sender:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_FROM??'',webhookSecret:env.FLOCKLETTER_CUSTOMER_CONFIRMATION_WEBHOOK_SECRET??'',
@@ -92,11 +97,19 @@ export class CustomerWorkflows {
     this.ses=customerSesRuntime(config.origin,env);
     this.resend=customerResendRuntime(config.origin,env);
     const provider=(w:string,b:string,mode:SendingProvider=settings.delivery==='resend'?'resend':'ses')=>mode==='ses'?this.ses?.provider(w,b):this.resend?.provider(w,b);
-    this.delivery=new CustomerDelivery(db,{mode:settings.delivery,scope:settings.deliveryScope,environment:config.environment,origin:config.origin,
+    const safeguards=env.FLOCKLETTER_SENDING_POLICY==='permission-v1'?new SendingSafeguards(db,env.FLOCKLETTER_CUSTOMER_RESEND_RETRIEVE_KEY,fetch,Number(env.FLOCKLETTER_RESEND_APPROVED_MONTHLY_LIMIT??'50000')):undefined;
+    this.delivery=new CustomerDelivery(db,{safeguards,mode:settings.delivery,scope:settings.deliveryScope,environment:config.environment,origin:config.origin,
       billing:this.billing,eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),isOwner:identity.isOwner,
       render:this.engine?message=>this.engine!.render(message):undefined,optOut:createCustomerOptOut,liveConsent:productionConsentEligible,liveConsentBatch:productionConsentEligibleBatch,
       provider});
-    if(this.resend)this.resendFeedback=new CustomerResendFeedback(db,this.resend,this.delivery.worker);
+    if(this.resend)this.resendFeedback=new CustomerResendFeedback(db,this.resend,this.delivery.worker,async fingerprint=>{const value=(await db.pool.query('SELECT flockletter_customer_jobs.resolve_resend_route($1) route',[fingerprint])).rows[0]?.route;return value?storedResendRoute(value):null;});
+    const selfService=env.FLOCKLETTER_RESEND_SELF_SERVICE==='approved';
+    const capturedSetup=env.FLOCKLETTER_RESEND_SELF_SERVICE==='capture';
+    if(env.FLOCKLETTER_RESEND_SELF_SERVICE!==undefined&&!['off','approved','capture'].includes(env.FLOCKLETTER_RESEND_SELF_SERVICE))throw Error('Unknown sender setup mode.');
+    if(capturedSetup&&config.environment==='production'||selfService&&config.environment!=='production')throw Error('Use captured sender setup only outside production.');
+    const provisioningKey=env.FLOCKLETTER_RESEND_PROVISION_KEY;
+    if(selfService&&(!this.resend||!provisioningKey||[env.FLOCKLETTER_CUSTOMER_RESEND_KEY,env.FLOCKLETTER_CUSTOMER_RESEND_RETRIEVE_KEY].includes(provisioningKey)))throw Error('Self-service sending needs a separate Resend provisioning credential and configured newsletter service.');
+    this.senderSetup=new ResendSenderSetup(db,{enabled:selfService||capturedSetup,captured:capturedSetup,port:capturedSetup?capturedSenderSetupPort():provisioningKey?resendSenderSetupPort(provisioningKey):undefined,webhookId:env.FLOCKLETTER_RESEND_CUSTOMER_WEBHOOK_ID??this.resend?.entries[0]?.route.webhookId??(capturedSetup?'00000000-0000-4000-8000-000000000001':undefined),isOwner:identity.isOwner,eligible:(w,sql)=>customerEligibility(sql,w,this.billing.options),configured:(w,b,from)=>!!from&&this.resend?.provider(w,b)?.from===from,register:route=>this.resend?.register(route)});
     this.infrastructure=new CustomerInfrastructure(db,{mode:settings.infrastructure,environment:config.environment,isOwner:identity.isOwner,
       eligibility:w=>this.billing.eligibility(w),eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),
       provider:settings.infrastructure==='aws'?createAwsInfrastructurePort(env,async request=>db.brand(request.workspaceId,request.brandId,async sql=>{
@@ -143,6 +156,26 @@ export class CustomerWorkflows {
     }));
   }
   private async hydrateInfrastructure(workspace:string) {
+    await this.delivery.options.safeguards?.refreshUsage();
+    if(this.resend) {
+      const resend=this.resend;
+      await this.db.read(workspace,async sql=>{
+        const stored=await sql.query<{route:unknown}>('SELECT flockletter_customer_jobs.resend_routes($1) route',[workspace]);
+        requireCondition(stored.rows.length<=100,503,'sender_route_capacity','Sender route history needs operator review.');
+        const routes=stored.rows.map(row=>storedResendRoute(row.route));
+        for(const route of routes)resend.register(route,false);
+        const brands=await sql.query<{id:string}>('SELECT id FROM brands ORDER BY id LIMIT 5');
+        for(const brand of brands.rows) {
+          await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[brand.id]);
+          const current=(await sql.query<{from_email:string;domain_id:string}>(`SELECT s.from_email,s.domain_id
+            FROM customer_resend_senders s JOIN customer_sender_profiles p USING(workspace_id,brand_id)
+            WHERE s.brand_id=$1 AND s.state='verified' AND NOT s.captured
+            AND s.from_email=p.profile->>'fromEmail' AND s.sender_revision=(p.profile->>'revision')::int`,[brand.id])).rows[0];
+          const active=current&&routes.find(r=>r.brandId===brand.id&&r.from===current.from_email&&r.domainId===current.domain_id);
+          if(active)resend.register(active);else resend.restoreConfiguredRoute(workspace,brand.id);
+        }
+      });
+    }
     if(this.settings.infrastructure!=='aws')return;
     this.ses?.deactivate(workspace);
     for(const route of await this.infrastructure.routeCandidates(workspace)) {
@@ -205,7 +238,7 @@ export class CustomerWorkflows {
         const profile=await senderProfile(sql,brand.id);
         let liveSender=false,unavailable=false;
         if(externalDelivery(this.settings.delivery))try{const selected=await selectedDelivery(sql,this.delivery.options,actor.workspaceId,brand.id);liveSender=await senderEligible(sql,brand.id,selected.provider);}catch{unavailable=true;}
-        if(confirmed===0)gaps.push({code:'confirmed_audience_required',title:'Confirm subscribers',detail:'Add contacts with permission and complete email confirmation.',brandId:brand.id,action:'audience'});
+        if(confirmed===0)gaps.push({code:'confirmed_audience_required',title:'Confirm subscribers',detail:'Import contacts with documented permission for this brand, or invite subscribers to confirm by email.',brandId:brand.id,action:'audience'});
         if(confirmed===null)gaps.push({code:'audience_review_required',title:'Audience review',detail:'An owner or an explicitly granted audience-summary connection must inspect audience totals.',brandId:brand.id,action:'audience'});
         if(!profile)gaps.push({code:'sender_profile_required',title:'Complete sender identity',detail:'Save this brand’s recognizable sender and required postal footer.',brandId:brand.id,action:'delivery'});
         if(externalDelivery(this.settings.delivery)&&!liveSender)gaps.push({code:unavailable?'sender_verification_unavailable':'sender_verification_required',title:unavailable?'Refresh sender verification':'Verify this sender',detail:unavailable?'The latest sender/provider check could not complete. Retry before reviewing delivery.':'Complete the legal sender profile, current DNS proof and provider setup.',brandId:brand.id,action:'delivery'});
@@ -227,7 +260,7 @@ export class CustomerWorkflows {
     if(!this.owns(name))return undefined;
     requireCondition(!this.closing,503,'worker_draining','The service is restarting. Retry with the same operation key.');
     const mutation=commands[name].mutation;
-    if(name.startsWith('infrastructure.')||name.startsWith('delivery.')&&!['delivery.preflight','delivery.outcomes','delivery.testDetails'].includes(name))await this.hydrateInfrastructure(actor.workspaceId);
+    if(name.startsWith('infrastructure.')||name.startsWith('senderSetup.')||name.startsWith('delivery.')&&!['delivery.outcomes','delivery.testDetails'].includes(name))await this.hydrateInfrastructure(actor.workspaceId);
     if(mutation)await this.wake(actor.workspaceId);
     let result:unknown;
     if(name==='operations.status')return this.status(actor.workspaceId);
@@ -248,40 +281,59 @@ export class CustomerWorkflows {
     else if(name.startsWith('teamLifecycle.'))result=await this.team.execute(name,raw,actor);
     else if(name.startsWith('support.'))result=await this.support.execute(name,raw,actor);
     else if(name.startsWith('retention.'))result=await this.retention.execute(name,raw,actor);
+    else if(name.startsWith('senderSetup.'))result=await this.senderSetup.execute(name,raw,actor);
     else if(name.startsWith('infrastructure.')){result=await this.infrastructure.execute(name,raw,actor);await this.hydrateInfrastructure(actor.workspaceId);}
     else result=await this.delivery.execute(name,raw,actor);
     if(mutation)await this.wake(actor.workspaceId);
     return result;
   }
-  async processWorkspace(workspace:string):Promise<void> {
+  async processWorkspace(workspace:string,maintenance=true):Promise<number> {
     const current=this.active.get(workspace);if(current)return current;
-    const job=this.process(workspace).finally(()=>this.active.delete(workspace));
+    const job=this.process(workspace,maintenance).finally(()=>this.active.delete(workspace));
     this.active.set(workspace,job);return job;
   }
-  private async process(workspace:string) {
-    if(this.closing)return;
+  private async process(workspace:string,maintenance:boolean):Promise<number> {
+    const idleDelay=15000;
+    if(this.closing)return idleDelay;
     const erased=await this.db.tenant(workspace,async sql=>Boolean((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount));
-    if(erased)return;
+    if(erased)return idleDelay;
     let failure:string|null=null;
     const run=async(action:()=>Promise<unknown>)=>{if(this.closing)return;try{await action();}catch{failure='workspace_job_requires_review';}};
-    const brands=await this.db.tenant(workspace,async sql=>(await sql.query<{id:string}>('SELECT id FROM brands ORDER BY id LIMIT 5')).rows);
-    for(const brand of brands)if(this.settings.infrastructure==='aws'||externalDelivery(this.settings.delivery))
-      await run(()=>refreshCustomerSender(this.db,workspace,brand.id));
-    await run(()=>this.hydrateInfrastructure(workspace));
-    await run(()=>this.infrastructure.tickWorkspace(workspace));
-    await run(()=>this.hydrateInfrastructure(workspace));
-    for(const brand of brands) {
-      await run(()=>this.audience.tick(workspace,brand.id));
+    if(maintenance){
+      const brands=await this.db.tenant(workspace,async sql=>(await sql.query<{id:string}>('SELECT id FROM brands ORDER BY id LIMIT 5')).rows);
+      for(const brand of brands)if(this.settings.infrastructure==='aws'||externalDelivery(this.settings.delivery))
+        await run(()=>refreshCustomerSender(this.db,workspace,brand.id));
+      await run(()=>this.senderSetup.tick(workspace));
+      await run(()=>this.hydrateInfrastructure(workspace));
+      await run(()=>this.infrastructure.tickWorkspace(workspace));
+      await run(()=>this.hydrateInfrastructure(workspace));
+      for(const brand of brands) {
+        await run(()=>this.audience.tick(workspace,brand.id));
+      }
+      await run(()=>this.team.tickWorkspace(workspace));
+      await run(()=>this.support.tickWorkspace(workspace));
+      await run(()=>this.retention.tickWorkspace(workspace));
     }
-    await run(()=>this.team.tickWorkspace(workspace));
-    await run(()=>this.support.tickWorkspace(workspace));
-    await run(()=>this.retention.tickWorkspace(workspace));
-    for(let i=0;i<8&&!this.closing;i++) {
-      try{if(!(await this.delivery.worker.tick(workspace)).processed)break;}
-      catch{failure='delivery_job_requires_review';break;}
+    // Give every due workspace a turn. Active delivery keeps its short deadlines independently
+    // of slower maintenance (domain checks, customer support, and other saved jobs).
+    let delay=idleDelay;
+    const deadline=Date.now()+1000;
+    for(let i=0;i<32&&!this.closing;i++) {
+      try{
+        const tick=await this.delivery.worker.tick(workspace);
+        if(!tick.processed){
+          delay=tick.retryAt?Math.max(15,new Date(tick.retryAt).getTime()-Date.now()+1):idleDelay;
+          break;
+        }
+        delay=1;
+        if(Date.now()>=deadline)break;
+      }catch{failure='delivery_job_requires_review';delay=idleDelay;break;}
     }
-    await this.db.tenant(workspace,sql=>sql.query('SELECT flockletter_customer_jobs.record_pass($1,$2)',[workspace,failure]));
-    if(this.observe)await this.observe({workspaceId:workspace,status:await this.status(workspace)});
+    if(maintenance||failure){
+      await this.db.tenant(workspace,sql=>sql.query('SELECT flockletter_customer_jobs.record_pass($1,$2)',[workspace,failure]));
+      if(this.observe)await this.observe({workspaceId:workspace,status:await this.status(workspace)});
+    }
+    return delay;
   }
   async run(signal:AbortSignal) {
     if(this.running)throw Error('The customer worker is already running.');
@@ -289,17 +341,27 @@ export class CustomerWorkflows {
     const heartbeatStop=new AbortController();
     const heartbeat=runWorkerHeartbeat(this.db,this.settings.dedicated?'dedicated':'embedded',
       AbortSignal.any([signal,heartbeatStop.signal])).catch(()=>console.error('The customer worker heartbeat stopped unexpectedly.'));
+    const maintenanceDue=new Map<string,number>();
     try {
       while(!signal.aborted) {
+        let nextPoll=3000;
         try {
           const scopes=(await this.db.pool.query<{workspace_id:string}>('SELECT * FROM flockletter_customer_jobs.due_scopes()')).rows;
           for(const scope of scopes.slice(0,10)) {
             if(signal.aborted)break;
-            await this.processWorkspace(scope.workspace_id);
-            await this.db.tenant(scope.workspace_id,sql=>sql.query("SELECT flockletter_customer_jobs.snooze($1,now()+interval '15 seconds')",[scope.workspace_id]));
+            const workspace=scope.workspace_id;
+            // Snooze first so an approval arriving during the pass can still wake the queue.
+            await this.db.tenant(workspace,sql=>sql.query("SELECT flockletter_customer_jobs.snooze($1,now()+interval '15 seconds')",[workspace]));
+            const maintenance=(maintenanceDue.get(workspace)??0)<=Date.now();
+            if(maintenance)maintenanceDue.set(workspace,Date.now()+15000);
+            const delay=await this.processWorkspace(workspace,maintenance);
+            if(delay<15000)await this.db.tenant(workspace,sql=>sql.query("SELECT flockletter_customer_jobs.wake($1,clock_timestamp()+$2*interval '1 millisecond')",[workspace,delay]));
+            nextPoll=Math.min(nextPoll,delay);
           }
+          if(scopes.length>10)nextPoll=1;
+          for(const [workspace,due] of maintenanceDue)if(due<Date.now())maintenanceDue.delete(workspace);
         }catch{console.error('The customer scheduler needs review.');}
-        try{await pause(3000,undefined,{signal});}catch{if(!signal.aborted)throw Error('Worker timer failed.');}
+        try{await pause(Math.max(15,nextPoll),undefined,{signal});}catch{if(!signal.aborted)throw Error('Worker timer failed.');}
       }
     }finally{this.running=false;heartbeatStop.abort();await heartbeat;}
   }
@@ -309,9 +371,10 @@ export class CustomerWorkflows {
       'SELECT * FROM flockletter_customer_jobs.scope_status($1)',[workspace])).rows[0]);
     const queue=await this.db.tenant(workspace,async sql=>{
       const count=async(text:string)=>(await sql.query<{count:number}>(text)).rows[0]!.count;
-      let confirmations=0,confirmationUnknown=0;
+      let confirmations=0,confirmationUnknown=0,senderQueued=0,senderUnknown=0;
       for(const brand of (await sql.query<{id:string}>('SELECT id FROM brands')).rows) {
         await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[brand.id]);
+        senderQueued+=await count("SELECT count(*)::int count FROM customer_resend_senders WHERE state IN ('queued','creating','configuring','awaiting_dns')");senderUnknown+=await count("SELECT count(*)::int count FROM customer_resend_senders WHERE state='uncertain'");
         confirmationUnknown+=await count("SELECT count(*)::int count FROM customer_audience_confirmations WHERE state='uncertain'");
         confirmations+=await count("SELECT count(*)::int count FROM customer_audience_confirmations WHERE state IN ('queued','submitting','uncertain')");
       }
@@ -321,8 +384,8 @@ export class CustomerWorkflows {
         team:await count("SELECT count(*)::int count FROM customer_team_intents WHERE state IN ('submitting','uncertain')"),
         support:await count("SELECT count(*)::int count FROM customer_support_dispatches WHERE state IN ('queued','submitting')"),
         retention:await count("SELECT count(*)::int count FROM customer_retention_jobs WHERE state IN ('awaiting_operator','authorized')"),
-        infrastructure:await count("SELECT count(*)::int count FROM customer_infrastructure_intents WHERE state IN ('queued','provisioning','awaiting_dns','uncertain')"),
-        unknown:confirmationUnknown+await count("SELECT ((SELECT count(*) FROM customer_delivery_recipients WHERE state='uncertain')+(SELECT count(*) FROM customer_support_dispatches WHERE state='uncertain')+(SELECT count(*) FROM customer_team_intents WHERE state='uncertain')+(SELECT count(*) FROM customer_infrastructure_intents WHERE state='uncertain')+(SELECT count(*) FROM customer_trial_setups WHERE state='activation_pending'))::int count"),
+        infrastructure:senderQueued+await count("SELECT count(*)::int count FROM customer_infrastructure_intents WHERE state IN ('queued','provisioning','awaiting_dns','uncertain')"),
+        unknown:confirmationUnknown+senderUnknown+await count("SELECT ((SELECT count(*) FROM customer_delivery_recipients WHERE state='uncertain')+(SELECT count(*) FROM customer_support_dispatches WHERE state='uncertain')+(SELECT count(*) FROM customer_team_intents WHERE state='uncertain')+(SELECT count(*) FROM customer_infrastructure_intents WHERE state='uncertain')+(SELECT count(*) FROM customer_trial_setups WHERE state='activation_pending'))::int count"),
       };
     });
     const modes=this.settings,gaps:CustomerOperationsStatus['gaps']=[];

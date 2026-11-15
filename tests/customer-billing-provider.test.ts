@@ -1,7 +1,8 @@
+import {locationDigest} from '../src/server/customer-billing/tax-policy.js';
 import { randomUUID } from 'node:crypto';
 import Stripe from 'stripe';
 import { expect, it } from 'vitest';
-import { stripeCustomerProvider, type ProviderNotice } from '../src/server/customer-billing/provider.js';
+import { stripeCustomerProvider, stripeCustomerEventProvider, UnsupportedTrialPaymentMethod, type ProviderNotice } from '../src/server/customer-billing/provider.js';
 import type { CustomerPlan } from '../src/shared/customer-billing.js';
 
 const environment = {
@@ -20,6 +21,16 @@ const environment = {
   FLOCKLETTER_CUSTOMER_PRO_PRICE: 'price_pro',
 };
 const base = 1804777200;
+const receiptEnvironment = {
+  APP_ENV: 'staging',
+  FLOCKLETTER_CUSTOMER_BILLING: 'off',
+  FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT: 'acct_fixture',
+  FLOCKLETTER_CUSTOMER_STRIPE_KEY: 'rk_test_SYNTHETIC',
+  FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK: 'whsec_fixture',
+  FLOCKLETTER_CUSTOMER_STARTER_PRICE: 'price_starter',
+  FLOCKLETTER_CUSTOMER_GROWTH_PRICE: 'price_growth',
+  FLOCKLETTER_CUSTOMER_PRO_PRICE: 'price_pro',
+};
 function billingPrice(plan: CustomerPlan) {
   const amounts = { starter: 1500, growth: 2500, pro: 3900 };
   return {
@@ -30,6 +41,7 @@ function billingPrice(plan: CustomerPlan) {
     unit_amount: amounts[plan],
     unit_amount_decimal: null,
     billing_scheme: 'per_unit',
+    tax_behavior:'exclusive',
     metadata: { fl_application: 'flockletter', fl_plan: plan },
     recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
     product: {
@@ -37,6 +49,7 @@ function billingPrice(plan: CustomerPlan) {
       active: true,
       livemode: false,
       metadata: { fl_application: 'flockletter' },
+      tax_code:'txcd_10103001',
     },
   };
 }
@@ -94,14 +107,14 @@ function subscription(price = 'price_growth', quantity = 1) {
     },
   };
 }
-function fixture(respond: (url: URL, body: URLSearchParams) => object) {
-  const calls: { url: URL; body: URLSearchParams }[] = [];
+function fixture(respond: (url: URL, body: URLSearchParams) => object, extra:NodeJS.ProcessEnv={}) {
+  const calls: { url: URL; body: URLSearchParams; method: string }[] = [];
   const stripe = new Stripe('sk_test_SYNTHETIC', {
     maxNetworkRetries: 0,
     httpClient: Stripe.createFetchHttpClient(async (input, init) => {
       const url = new URL(String(input)),
         body = new URLSearchParams(String(init?.body ?? ''));
-      calls.push({ url, body });
+      calls.push({ url, body, method: init?.method ?? 'GET' });
       return new Response(JSON.stringify(respond(url, body)), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -110,11 +123,76 @@ function fixture(respond: (url: URL, body: URLSearchParams) => object) {
   });
   const provider = stripeCustomerProvider(
     'https://flockletter.example.test',
-    environment,
+    {...environment,...extra},
     () => stripe,
   )!;
   return { stripe, provider, calls };
 }
+it('receives and reconciles signed events with billing off through a GET-only capability', async () => {
+  const site = fixture((url) => {
+    if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
+    if (url.pathname === '/v1/subscriptions/sub_fixture') return subscription();
+    throw Error('Unexpected request');
+  });
+  let selectedKey = '';
+  const receiver = stripeCustomerEventProvider('https://flockletter.example.test', receiptEnvironment, (key) => {
+    selectedKey = key;
+    return site.stripe;
+  })!;
+  expect(selectedKey).toBe(receiptEnvironment.FLOCKLETTER_CUSTOMER_STRIPE_KEY);
+  expect(stripeCustomerProvider('https://flockletter.example.test', receiptEnvironment)).toBeUndefined();
+  expect(Object.keys(receiver).sort()).toEqual(['account','close','live','lookupCheckout','resolve','verify']);
+  const raw = Buffer.from(JSON.stringify({
+    id: 'evt_receipt', object: 'event', livemode: false, type: 'customer.subscription.updated',
+    data: { object: { id: 'sub_fixture' } },
+  }));
+  const signature = site.stripe.webhooks.generateTestHeaderString({ payload: raw.toString(), secret: 'whsec_fixture' });
+  const notice = receiver.verify(raw, signature)!;
+  expect(await receiver.resolve(notice)).toMatchObject({ subscription: { id:'sub_fixture', plan:'growth' } });
+  expect(site.calls.every(call => call.method === 'GET')).toBe(true);
+  expect(() => receiver.verify(raw, 'invalid')).toThrow();
+});
+
+it('requires matching event mode and complete credentials without requiring live outbound approval or mutation settings', () => {
+  expect(stripeCustomerEventProvider('https://flockletter.example.test', { APP_ENV:'production' })).toBeUndefined();
+  for (const invalid of [
+    { ...receiptEnvironment, APP_ENV:'production' },
+    { ...receiptEnvironment, FLOCKLETTER_CUSTOMER_STRIPE_KEY:'rk_live_SYNTHETIC' },
+    { ...receiptEnvironment, FLOCKLETTER_CUSTOMER_STRIPE_WEBHOOK:'' },
+    { ...receiptEnvironment, FLOCKLETTER_CUSTOMER_GROWTH_PRICE:'' },
+    { ...receiptEnvironment, APP_ENV:'unknown' },
+  ]) expect(() => stripeCustomerEventProvider('https://flockletter.example.test', invalid)).toThrow('could not be verified');
+  const live = stripeCustomerEventProvider('https://flockletter.example.test', {
+    ...receiptEnvironment, APP_ENV:'production', FLOCKLETTER_CUSTOMER_STRIPE_KEY:'rk_live_SYNTHETIC',
+  });
+  expect(live?.live).toBe(true);
+  expect(live).not.toHaveProperty('checkout');
+  expect(live).not.toHaveProperty('createTrial');
+  expect(live).not.toHaveProperty('portal');
+});
+
+it('ignores clearly unrelated shared-merchant subscriptions and payment Checkout while rejecting partial Flockletter facts', async () => {
+  let partial = false;
+  const site = fixture((url) => {
+    if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
+    if (url.pathname === '/v1/subscriptions/sub_other') return {
+      ...subscription('price_other_application'), metadata: partial ? {fl_workspace:'org_fixture'} : {},
+    };
+    if (url.pathname === '/v1/checkout/sessions/cs_other') return {
+      id:'cs_other',livemode:false,mode:'payment',metadata:{},
+    };
+    throw Error('Unexpected request');
+  });
+  const receiver = stripeCustomerEventProvider('https://flockletter.example.test',receiptEnvironment,()=>site.stripe)!;
+  const notice = { id:'evt_other',kind:'customer.subscription.updated',checkout:null,subscription:'sub_other',risk:false };
+  expect(await receiver.resolve(notice)).toMatchObject({subscription:null});
+  expect(await receiver.resolve({...notice,kind:'checkout.session.completed',subscription:null,checkout:'cs_other'})).toEqual({
+    subscription:null,checkoutId:null,intentId:null,workspace:null,
+  });
+  partial = true;
+  await expect(receiver.resolve(notice)).rejects.toThrow('The Flockletter billing provider could not be verified.');
+  expect(site.calls.every(call=>call.method==='GET')).toBe(true);
+});
 it('requires complete isolated settings and explicit production activation for live billing', () => {
   expect(stripeCustomerProvider('https://mail.example.test', {})).toBeUndefined();
   expect(() =>
@@ -318,7 +396,7 @@ it('resolves a dispute through its charge, invoice payment and subscription inst
 it('collects a card in setup-only Checkout and obtains its fingerprint only from authenticated provider facts', async () => {
   const id = randomUUID(),
     workspace = 'org_fixture';
-  let fingerprint = 'synthetic_fingerprint',
+  let methodType = 'card', fingerprint = 'synthetic_fingerprint',
     methodCustomer = 'cus_fixture';
   const site = fixture((url, body) => {
     if (url.pathname === '/v1/account') return { id: 'acct_fixture' };
@@ -353,7 +431,7 @@ it('collects a card in setup-only Checkout and obtains its fingerprint only from
         metadata: { fl_workspace: workspace, fl_intent: id },
         payment_method: {
           id: 'pm_fixture',
-          type: 'card',
+          type: methodType,
           livemode: false,
           customer: methodCustomer,
           card: { fingerprint },
@@ -367,6 +445,9 @@ it('collects a card in setup-only Checkout and obtains its fingerprint only from
   const afterSetup = Date.now();
   const posted = site.calls.find((c) => c.url.pathname === '/v1/checkout/sessions')!.body;
   expect(posted.get('mode')).toBe('setup');
+  expect(posted.get('allowed_payment_method_types[0]')).toBe('card');
+  expect(posted.has('payment_method_configuration')).toBe(false);
+  expect(posted.get('wallet_options[link][display]')).toBe('never');
   expect(posted.get('managed_payments[enabled]')).toBe('false');
   expect(posted.get('currency')).toBe('usd');
   expect(Number(posted.get('expires_at'))).toBeGreaterThanOrEqual(
@@ -393,7 +474,8 @@ it('collects a card in setup-only Checkout and obtains its fingerprint only from
   await expect(site.provider.inspectSetup!({ ...intent, reference: 'cs_setup' })).rejects.toThrow(
     'could not be verified',
   );
-  fingerprint = 'synthetic';
+  methodType = 'link';
+  await expect(site.provider.inspectSetup!({ ...intent, reference: 'cs_setup' })).rejects.toBeInstanceOf(UnsupportedTrialPaymentMethod);
   methodCustomer = 'cus_wrong';
   await expect(site.provider.inspectSetup!({ ...intent, reference: 'cs_setup' })).rejects.toThrow(
     'could not be verified',
@@ -597,3 +679,101 @@ it.each(['foreign customer','wrong mode','multiple items','unknown price','missi
     await expect(site.provider.portal('cus_fixture','guard_operation','starter',reason==='missing subscription'?undefined:'sub_fixture')).rejects.toThrow('could not be verified');
     expect(site.calls.filter(call=>call.url.pathname==='/v1/billing_portal/sessions')).toHaveLength(0);
   });
+
+it('tax-enabled card setup collects a US address without requiring unsupported setup-mode automatic tax',async()=>{
+ const id=randomUUID(),workspace='org_tax_fixture';
+ const intent={id,workspace,plan:'starter' as const,createdAt:new Date(),reference:null};
+ let address={country:'US',state:'CO',city:'Castle Rock',line1:'100 Synthetic Way',line2:null,postal_code:'80109'};
+ const site=fixture((url,body)=>{
+  if(url.pathname==='/v1/account')return {id:'acct_fixture'};
+  if(url.pathname==='/v1/checkout/sessions')return {id:'cs_setup',mode:'setup',livemode:false,managed_payments:{enabled:false},status:'open',client_reference_id:workspace,metadata:{fl_workspace:workspace,fl_intent:body.get('metadata[fl_intent]')},url:'https://checkout.stripe.com/setup'};
+  if(url.pathname==='/v1/checkout/sessions/cs_setup')return {id:'cs_setup',mode:'setup',livemode:false,managed_payments:{enabled:false},status:'complete',client_reference_id:workspace,metadata:{fl_workspace:workspace,fl_intent:id},setup_intent:'seti_fixture',customer:'cus_fixture'};
+  if(url.pathname==='/v1/setup_intents/seti_fixture')return {id:'seti_fixture',status:'succeeded',livemode:false,usage:'off_session',customer:'cus_fixture',metadata:{fl_workspace:workspace,fl_intent:id},payment_method:{id:'pm_fixture',type:'card',livemode:false,customer:'cus_fixture',card:{fingerprint:'synthetic'}}};
+  if(url.pathname==='/v1/customers/cus_fixture')return {id:'cus_fixture',address};
+  throw Error('Unexpected SDK request');
+ },{FLOCKLETTER_BILLING_TAX:'stripe-automatic'});
+ await site.provider.setupCheckout!(intent);
+ const posted=site.calls.find(c=>c.url.pathname==='/v1/checkout/sessions')!.body;
+ expect(posted.get('billing_address_collection')).toBe('required');expect(posted.get('customer_creation')).toBe('always');expect(posted.has('automatic_tax[enabled]')).toBe(false);
+ expect(await site.provider.inspectSetup!({...intent,reference:'cs_setup'})).toMatchObject({locationDigest:locationDigest(address)});
+ address={...address,country:'CA'};await expect(site.provider.inspectSetup!({...intent,reference:'cs_setup'})).rejects.toThrow('US business billing address');
+});
+it('tax-enabled paid Checkout freezes exclusive business SaaS prices and requests automatic tax',async()=>{
+ const id=randomUUID(),workspace='org_tax_paid';let taxCode='txcd_10103001';
+ const site=fixture((url,body)=>{
+  if(url.pathname==='/v1/account')return {id:'acct_fixture'};
+  if(url.pathname==='/v1/prices/price_starter')return {...billingPrice('starter'),tax_behavior:'exclusive',product:{...billingPrice('starter').product,tax_code:taxCode}};
+  if(url.pathname==='/v1/checkout/sessions')return {id:'cs_paid',mode:'subscription',livemode:false,managed_payments:{enabled:false},status:'open',automatic_tax:{enabled:true},client_reference_id:workspace,metadata:{fl_workspace:workspace,fl_intent:body.get('metadata[fl_intent]'),fl_tax_mode:'stripe-automatic'},url:'https://checkout.stripe.com/paid'};
+  throw Error('Unexpected SDK request');
+ },{FLOCKLETTER_BILLING_TAX:'stripe-automatic'});
+ const intent={id,workspace,plan:'starter' as const,createdAt:new Date(),reference:null,trialDays:0 as const,taxMode:'stripe-automatic' as const};
+ await site.provider.checkout(intent);const posted=site.calls.find(c=>c.url.pathname==='/v1/checkout/sessions')!.body;
+ expect(posted.get('automatic_tax[enabled]')).toBe('true');expect(posted.get('billing_address_collection')).toBe('required');
+ taxCode='txcd_10000000';await expect(site.provider.checkout({...intent,id:randomUUID()})).rejects.toThrow('catalogue');
+ expect(site.calls.filter(c=>c.url.pathname==='/v1/checkout/sessions')).toHaveLength(1);
+});
+it('refuses live Pro enrollment before any provider request',async()=>{
+ const site=fixture(()=>{throw Error('No request allowed');},{APP_ENV:'production',FLOCKLETTER_CUSTOMER_BILLING:'stripe_live',FLOCKLETTER_CUSTOMER_STRIPE_KEY:'sk_live_SYNTHETIC',FLOCKLETTER_LIVE_BILLING_APPROVED:'true',FLOCKLETTER_BILLING_TAX:'stripe-automatic'});
+ const intent={id:randomUUID(),workspace:'org_fixture',plan:'pro' as const,createdAt:new Date(),reference:null};
+ await expect(site.provider.setupCheckout!(intent)).rejects.toThrow('Pro enrollment is paused');
+ await expect(site.provider.checkout(intent)).rejects.toThrow();await expect(site.provider.portal('cus_fixture',randomUUID(),'pro','sub_fixture')).rejects.toThrow();expect(site.calls).toHaveLength(0);
+});
+
+it.each(['staging','production'] as const)('supports explicit no-tax paid Checkout in %s without inheriting Managed Payments',async environmentName=>{
+ const live=environmentName==='production',id=randomUUID(),workspace='org_no_tax';
+ let actualTax=false;
+ const site=fixture((url,body)=>{
+  if(url.pathname==='/v1/account')return{id:'acct_fixture'};
+  if(url.pathname==='/v1/prices/price_starter')return{...billingPrice('starter'),livemode:live,product:{...billingPrice('starter').product,livemode:live}};
+  if(url.pathname==='/v1/checkout/sessions')return{id:'cs_no_tax',mode:'subscription',status:'open',livemode:live,managed_payments:{enabled:false},automatic_tax:{enabled:actualTax},total_details:{amount_tax:0},client_reference_id:workspace,metadata:{fl_workspace:workspace,fl_intent:body.get('metadata[fl_intent]'),fl_tax_mode:'off'},url:'https://checkout.stripe.com/no-tax'};
+  throw Error('Unexpected SDK request');
+ },{APP_ENV:environmentName,FLOCKLETTER_CUSTOMER_BILLING:live?'stripe_live':'stripe_test',FLOCKLETTER_CUSTOMER_STRIPE_KEY:live?'rk_live_SYNTHETIC':'rk_test_SYNTHETIC',FLOCKLETTER_LIVE_BILLING_APPROVED:'true',FLOCKLETTER_BILLING_TAX:'off'});
+ const intent={id,workspace,plan:'starter' as const,createdAt:new Date(),reference:null,trialDays:0 as const,taxMode:'off' as const};
+ expect(await site.provider.checkout(intent)).toMatchObject({id:'cs_no_tax'});
+ const posted=site.calls.find(call=>call.url.pathname==='/v1/checkout/sessions')!.body;
+ expect(posted.get('automatic_tax[enabled]')).toBe('false');expect(posted.get('managed_payments[enabled]')).toBe('false');
+ expect(posted.get('billing_address_collection')).toBe('required');expect([...posted.keys()].some(key=>key.includes('tax_rates'))).toBe(false);
+ expect(posted.get('subscription_data[metadata][fl_tax_mode]')).toBe('off');expect(posted.has('customer_update[tax_exempt]')).toBe(false);
+ const before=site.calls.length;
+ await expect(site.provider.checkout({...intent,taxMode:'stripe-automatic'})).rejects.toThrow('current tax collection terms');expect(site.calls).toHaveLength(before);
+ actualTax=true;await expect(site.provider.checkout({...intent,id:randomUUID()})).rejects.toThrow('could not be verified');
+});
+
+it.each(['staging','production'] as const)('funds a card-backed no-tax trial in %s only after verified US location and approved mode',async environmentName=>{
+ const live=environmentName==='production',id=randomUUID(),activationKey=randomUUID(),workspace='org_no_tax_trial';
+ const address={country:'US',state:'CO',city:'Synthetic City',line1:'100 Synthetic Way',line2:null,postal_code:'80109'};
+ const trialEnd=new Date((base+14*86400)*1000);
+ const current={...subscription('price_starter'),livemode:live,status:'trialing',automatic_tax:{enabled:false},managed_payments:null,default_tax_rates:[],trial_start:base,trial_end:base+14*86400,
+  metadata:{fl_workspace:workspace,fl_intent:id,fl_trial_activation:activationKey,fl_tax_mode:'off'},
+  latest_invoice:{id:'in_no_tax',status:'paid',automatic_tax:{enabled:false},default_tax_rates:[],total_taxes:[]},
+  items:{has_more:false,data:[{...subscription().items.data[0]!,tax_rates:[],price:{...billingPrice('starter'),livemode:live}}]},
+ };
+ const site=fixture((url,body)=>{
+  if(url.pathname==='/v1/account')return{id:'acct_fixture'};
+  if(url.pathname==='/v1/customers/cus_fixture')return{id:'cus_fixture',address};
+  if(url.pathname==='/v1/prices/price_starter')return{...billingPrice('starter'),livemode:live,product:{...billingPrice('starter').product,livemode:live}};
+  if(url.pathname==='/v1/checkout/sessions')return{id:'cs_no_tax_setup',mode:'setup',livemode:live,status:'open',managed_payments:{enabled:false},client_reference_id:workspace,metadata:{fl_workspace:workspace,fl_intent:body.get('metadata[fl_intent]')},url:'https://checkout.stripe.com/no-tax-setup'};
+  if(url.pathname==='/v1/checkout/sessions/cs_no_tax_setup')return{id:'cs_no_tax_setup',mode:'setup',livemode:live,status:'complete',managed_payments:{enabled:false},client_reference_id:workspace,metadata:{fl_workspace:workspace,fl_intent:id},setup_intent:'seti_no_tax',customer:'cus_fixture'};
+  if(url.pathname==='/v1/setup_intents/seti_no_tax')return{id:'seti_no_tax',livemode:live,status:'succeeded',usage:'off_session',customer:'cus_fixture',metadata:{fl_workspace:workspace,fl_intent:id},payment_method:{id:'pm_fixture',type:'card',livemode:live,customer:'cus_fixture',card:{fingerprint:'synthetic_card'}}};
+  if(url.pathname==='/v1/subscriptions')return{id:'sub_fixture'};
+  if(url.pathname==='/v1/subscriptions/sub_fixture')return current;
+  throw Error('Unexpected SDK request');
+ },{APP_ENV:environmentName,FLOCKLETTER_CUSTOMER_BILLING:live?'stripe_live':'stripe_test',FLOCKLETTER_CUSTOMER_STRIPE_KEY:live?'rk_live_SYNTHETIC':'rk_test_SYNTHETIC',FLOCKLETTER_LIVE_BILLING_APPROVED:'true',FLOCKLETTER_BILLING_TAX:'off'});
+ const setup={id,workspace,plan:'starter' as const,createdAt:new Date(),reference:null};
+ await site.provider.setupCheckout!(setup);
+ const setupBody=site.calls.find(call=>call.url.pathname==='/v1/checkout/sessions')!.body;
+ expect(setupBody.get('managed_payments[enabled]')).toBe('false');expect(setupBody.get('billing_address_collection')).toBe('required');expect(setupBody.has('automatic_tax[enabled]')).toBe(false);
+ const proof=await site.provider.inspectSetup!({...setup,reference:'cs_no_tax_setup'});
+ expect(proof).toMatchObject({taxMode:'off',locationDigest:locationDigest(address)});
+ expect(await site.provider.createTrial!({...setup,customer:'cus_fixture',paymentMethod:'pm_fixture',activationKey,trialEnd,taxMode:'off',locationDigest:proof!.locationDigest})).toMatchObject({taxMode:'off',state:'trialing'});
+ const posted=site.calls.find(call=>call.url.pathname==='/v1/subscriptions')!.body;
+ expect(posted.get('automatic_tax[enabled]')).toBe('false');expect(posted.get('default_tax_rates')).toBe('');expect(posted.get('metadata[fl_tax_mode]')).toBe('off');
+ expect(posted.has('managed_payments[enabled]')).toBe(false); // Not a supported Subscriptions.create parameter in Stripe 23.1.0.
+ expect(site.calls.filter(call=>call.method!=='GET').map(call=>call.url.pathname)).toEqual(['/v1/checkout/sessions','/v1/subscriptions']);
+});
+
+it.each([undefined,'false',''])('keeps missing/invalid live tax policy %s closed before any provider client',value=>{
+ let clients=0;
+ expect(()=>stripeCustomerProvider('https://flockletter.example.test',{...environment,APP_ENV:'production',FLOCKLETTER_CUSTOMER_BILLING:'stripe_live',FLOCKLETTER_CUSTOMER_STRIPE_KEY:'rk_live_SYNTHETIC',FLOCKLETTER_LIVE_BILLING_APPROVED:'true',FLOCKLETTER_BILLING_TAX:value},()=>{clients++;throw Error('Unexpected client');})).toThrow('explicit supported Flockletter tax collection mode');
+ expect(clients).toBe(0);
+});

@@ -173,6 +173,15 @@ it.each([
   await expect(provider.submit(validEnvelope())).resolves.toEqual({ outcome: 'unknown' });
 });
 
+it.each([
+ ['rate_limit_exceeded','4',4],
+ ['rate_limit_exceeded','bad',2],
+ ['daily_quota_exceeded','1',3600],
+ ['monthly_quota_exceeded','999999',86400],
+] as const)('retains bounded provider backoff for a confirmed %s refusal',async(name,header,seconds)=>{
+ const provider=makeProvider(async()=>new Response(JSON.stringify({name}),{status:429,headers:{'retry-after':header}}));
+ expect(await provider.submit(validEnvelope())).toEqual({outcome:'not_submitted',retryAfterSeconds:seconds});
+});
 it('returns rejected on HTTP 422', async () => {
   const send = vi.fn(async () => new Response('', { status: 422 }));
   const provider = makeProvider(send);

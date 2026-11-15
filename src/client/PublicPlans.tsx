@@ -1,3 +1,4 @@
+import {publicSubscriptionOffers,proEnrollmentNotice} from '../shared/subscription-offers.js';
 import { useEffect, useId, useState } from 'react';
 import {sitePresentation} from '../shared/site-presentation.js';
 import './public-plans.css';
@@ -81,7 +82,7 @@ export function PlanCards({
                 <dd>{formatUsers(plan.users)}</dd>
               </div>
             </dl>
-            {signupLinks && <a className="btn secondary" href={subscriptionSignupUrl(plan.id)}>Choose {plan.name}</a>}
+            {signupLinks && (publicSubscriptionOffers[plan.id]?<a className="btn secondary" href={subscriptionSignupUrl(plan.id)}>Choose {plan.name}</a>:<p className="notice">{proEnrollmentNotice}</p>)}
           </article>
         );
       })}
@@ -90,21 +91,21 @@ export function PlanCards({
 }
 
 export function PublicPricingPage() {
-  const [environment,setEnvironment]=useState<unknown>();
+  const [settings,setSettings]=useState<{environment?:unknown;customerWorkflows?:{billing?:unknown}}>();
   useEffect(()=>{
     const controller=new AbortController();
     void fetch('/api/config',{signal:controller.signal}).then(async response=>{
       if(!response.ok) return;
-      const config=await response.json() as {environment?:unknown};
-      if(!controller.signal.aborted) setEnvironment(config.environment);
+      const config=await response.json() as typeof settings;
+      if(!controller.signal.aborted) setSettings(config);
     }).catch(()=>{/* Unknown availability never becomes a paid-service claim. */});
     return ()=>controller.abort();
   },[]);
-  return <PublicPlans environment={environment}/>;
+  return <PublicPlans environment={settings?.environment} billingMode={settings?.customerWorkflows?.billing}/>;
 }
 
-export function PublicPlans({environment}:{environment?:unknown}) {
-  const presentation=sitePresentation(environment);
+export function PublicPlans({environment,billingMode}:{environment?:unknown;billingMode?:unknown}) {
+  const presentation=sitePresentation(environment,billingMode);
   return (
     <main id="main" className="public-plans">
       <header>
@@ -130,6 +131,7 @@ export function PublicPlans({environment}:{environment?:unknown}) {
         </div>
       </header>
       <PlanCards signupLinks />
+      <p className="notice">A new workspace can queue its first newsletter for up to 2,500 confirmed contacts after verifying its sending domain. Daily and trial allowances are shared across brands. You can close the page once your newsletter is queued and follow its progress in Delivery.</p>
       <section className="card public-trial" aria-labelledby="trial-heading">
         <h2 id="trial-heading">{formatCount(hostedTrial.days)}-day hosted trial</h2>
         <p>

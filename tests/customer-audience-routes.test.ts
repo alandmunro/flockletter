@@ -299,7 +299,7 @@ it('backfills existing forms and never routes a duplicate brand name to the firs
     await customer.execute('audienceOnboarding.configure',{...a.input,operationKey:randomUUID(),enabled:false},a.actor);
     await expect(customer.publicForm(await customer.resolveSignupSlug(a.slug))).rejects.toMatchObject({status:410});
     await admin.pool.query('DELETE FROM flockletter_customer_jobs.signup_routes WHERE form_token=$1',[a.token]);
-    const migration=await (await import('node:fs/promises')).readFile('migrations/035_signup_routes.sql','utf8');
+    const migration=await (await import('node:fs/promises')).readFile('migrations/039_signup_routes.sql','utf8');
     await admin.pool.query(migration);
     expect(await customer.resolveSignupSlug(a.slug)).toBe(a.token);
     await admin.pool.query('DELETE FROM public.customer_audience_settings WHERE workspace_id=$1',[a.actor.workspaceId]);

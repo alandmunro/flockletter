@@ -1,11 +1,12 @@
 import type { CustomerAllowance, CustomerBillingState, CustomerPlan } from '../../shared/customer-billing.js';
+import { hostedTrial } from '../../shared/trial.js';
 import { plans } from '../../shared/contracts.js';
 
 export const trialAllowance: CustomerAllowance = {
-  contacts: 250,
-  recipients: 250,
+  contacts: hostedTrial.activeContacts,
+  recipients: hostedTrial.activeContacts,
   campaigns: 2,
-  emails: 500,
+  emails: hostedTrial.totalEmails,
   companies: 1,
   brands: 1,
   users: 1,

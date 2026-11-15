@@ -1,3 +1,4 @@
+import {publicSubscriptionOffers} from '../shared/subscription-offers.js';
 import {externalDelivery} from '../shared/customer-delivery.js';
 import express, { type ErrorRequestHandler } from 'express';
 import helmet from 'helmet';
@@ -5,6 +6,7 @@ import { rateLimit } from 'express-rate-limit';
 import { ZodError } from 'zod';
 import path from 'node:path';
 import { isCommand, commands, plans } from '../shared/contracts.js';
+import { importLimits } from '../shared/import-preview.js';
 import { AppError } from './errors.js';
 import { configurationGaps, type Config } from './config.js';
 import type { Authenticator } from './auth.js';
@@ -61,7 +63,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
       testSendingEnabled:externalDelivery(service?.customer?.settings.delivery??'off') });
   });
   platformRoutes(app,config,platform);
-  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), operatorMfaPolicy:config.operatorMfaPolicy??'required', platformMode:platform?.options.mode??'off', plans,
+  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), operatorMfaPolicy:config.operatorMfaPolicy??'required', platformMode:platform?.options.mode??'off', plans,subscriptionOffers:publicSubscriptionOffers,
     sendingEnabled: externalDelivery(service?.customer?.settings.delivery??'off')&&service?.customer?.settings.deliveryScope==='all',
     testSendingEnabled:externalDelivery(service?.customer?.settings.delivery??'off'),
     customerWorkflows:service?.customer?{billing:service.customer.settings.billing,delivery:service.customer.settings.delivery,deliveryScope:service.customer.settings.deliveryScope,audience:service.customer.settings.audience,team:service.customer.settings.team,support:service.customer.settings.support,retention:service.customer.settings.retention}:null }));
@@ -111,7 +113,8 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     await service.customer.support.receiveResend(req.body,Object.fromEntries(['svix-id','svix-timestamp','svix-signature'].map(name=>[name,req.get(name)??''])));
     res.sendStatus(204);
   });
-  app.post('/api/v1/customer-delivery/resend-events',rateLimit({windowMs:60000,limit:240,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'16kb'}),async(req,res)=>{
+  // Four submissions/s generate up to 480 ordinary sent/delivered events per minute, plus retries.
+  app.post('/api/v1/customer-delivery/resend-events',rateLimit({windowMs:60000,limit:960,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'16kb'}),async(req,res)=>{
     const feedback=service?.customer?.resendFeedback;
     if(!feedback)throw new AppError(503,'delivery_feedback_unavailable','Resend customer delivery feedback is not configured.');
     if(!Buffer.isBuffer(req.body))throw new AppError(400,'invalid_feedback','Use the raw signed event payload.');
@@ -152,7 +155,9 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
       const release = () => { if (!released) { activeUploads--; released = true; } };
       res.once('finish', release); res.once('close', release);
     }
-    const limit = name==='asset.uploadBatch' ? '29mb' : (name==='audience.previewImport'||name==='audience.applyPracticeImport'||name==='audienceOnboarding.import') ? '350kb' : (name==='campaign.create'||name==='campaign.update') ? '160kb' : name.startsWith('audience.') ? '4kb' : '64kb';
+    // Base64 CSV payload plus the bounded metadata fields and their JSON encoding.
+    const csvRequestBytes = 4 * Math.ceil(importLimits.bytes / 3) + 8192;
+    const limit = name==='asset.uploadBatch' ? '29mb' : (name==='audience.previewImport'||name==='audience.applyPracticeImport'||name==='audienceOnboarding.import') ? csvRequestBytes : (name==='campaign.create'||name==='campaign.update') ? '160kb' : name.startsWith('audience.') ? '4kb' : '64kb';
     express.json({ limit, strict: true })(req, res, error => {
       if (error) return next(error);
       void service!.execute(name, req.body, actor).then(result => res.json({ result })).catch(next);

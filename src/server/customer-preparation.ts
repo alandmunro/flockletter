@@ -34,6 +34,8 @@ export function customerPreparation(env:NodeJS.ProcessEnv):CustomerPreparationCh
     }
     return {area,state:'settings_recorded',detail:'This configuration group is recorded. Additional sender routes, receiving, operator and hosting setup may still be needed. Settings do not verify permissions, provider acceptance, history, legal/tax readiness or approval to activate.'};
   });
+  if(env.FLOCKLETTER_CUSTOMER_BILLING==='stripe_live')checks.push({area:'Address-based subscription tax',state:env.FLOCKLETTER_BILLING_TAX==='stripe-automatic'?'settings_recorded':'settings_missing',detail:'Live subscriptions require automatic tax, the exact business SaaS product code, tax-exclusive prices and independently verified registrations. Recorded settings do not verify local taxability.'});
+  if(env.FLOCKLETTER_RESEND_SELF_SERVICE==='approved')checks.push({area:'Customer sender setup',state:env.FLOCKLETTER_RESEND_PROVISION_KEY&&env.FLOCKLETTER_RESEND_PROVISION_KEY!==env.FLOCKLETTER_CUSTOMER_RESEND_KEY&&env.FLOCKLETTER_RESEND_PROVISION_KEY!==env.FLOCKLETTER_CUSTOMER_RESEND_RETRIEVE_KEY?'settings_recorded':'settings_missing',detail:'Owned customer domains require a separate provisioning key, available domain capacity and a matching multi-domain sending key. No plan upgrade or message follows from setup.'});
   if(env.FLOCKLETTER_OPERATOR_MFA_POLICY==='pre-revenue')checks.push({area:'Administrator sign-in',state:'settings_recorded',detail:'Temporary single-factor exception: named operators still need the separate operator organization, current admin membership and a sign-in verified within five minutes. Restore MFA once paying customers arrive; hosted erasure signing stays disabled. This setting does not activate operator access.'});
   return checks;
 }

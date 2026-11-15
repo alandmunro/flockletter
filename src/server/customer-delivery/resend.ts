@@ -8,6 +8,12 @@ import {customerDeliveryScope,deliveryPurposeAllowed,requireMailingActivation} f
 import {parseResendRoute,type ResendRoute} from './resend-route.js';
 
 export const resendEvents=['email.sent','email.delivered','email.bounced','email.complained','email.failed','email.delivery_delayed'] as const;
+// Retrieval includes HTML and plain text; retain only routing fields after bounding the response.
+export const resendReceiptMaxBytes=4*1024*1024;
+function retryAfterSeconds(header:string|null,fallback:number){
+ const delay=header&&/^\d+$/.test(header)?Number(header):header?Math.ceil((Date.parse(header)-Date.now())/1000):NaN;
+ return Math.min(86400,Math.max(fallback,Number.isFinite(delay)?delay:0));
+}
 // Resend returns null for absent recipient lists on real receipts. Nonempty lists still fail closed.
 const noAdditionalRecipients=z.array(z.string()).max(0).nullish().transform(value=>value??[]);
 export const resendReceipt=z.object({id:z.uuid(),from:z.string().max(420),to:z.array(z.email()).length(1),cc:noAdditionalRecipients,bcc:noAdditionalRecipients,tags:z.array(z.object({name:z.string().max(256),value:z.string().max(256)})).max(100)});
@@ -40,7 +46,12 @@ export class CustomerResendProvider implements CustomerProvider {
      ...(message.sender?{reply_to:message.sender.replyTo}:{}),headers:{'List-Unsubscribe':'<'+unsubscribe+'>','List-Unsubscribe-Post':'List-Unsubscribe=One-Click'},
      tags:[{name:'fl_kind',value:'customer'},{name:'fl_operation',value:message.operationKey},{name:'fl_workspace',value:this.route.workspaceId},{name:'fl_brand',value:this.route.brandId},{name:'fl_route',value:this.fingerprint}],
      attachments:originals.map(a=>({filename:a.FileName,content:Buffer.from(a.RawContent).toString('base64'),content_type:a.ContentType,content_id:a.ContentId}))})});
-   if(!response.ok){await response.body?.cancel();return {outcome:response.status>=500||[408,409,429].includes(response.status)?'unknown':'rejected'};}
+   if(response.status===429){
+    const error=z.object({name:z.enum(['rate_limit_exceeded','daily_quota_exceeded','monthly_quota_exceeded'])}).safeParse(await boundedJson(response,4096,429));
+    if(!error.success)return {outcome:'unknown'};
+    return {outcome:'not_submitted',retryAfterSeconds:retryAfterSeconds(response.headers.get('retry-after'),error.data.name==='rate_limit_exceeded'?2:3600)};
+   }
+   if(!response.ok){await response.body?.cancel();return {outcome:response.status>=500||[408,409].includes(response.status)?'unknown':'rejected'};}
    const result=z.object({id:z.uuid()}).safeParse(await boundedJson(response,16384));
    return result.success?{outcome:'accepted',messageId:result.data.id}:{outcome:'unknown'};
   }catch{return {outcome:'unknown'};}
@@ -51,7 +62,7 @@ export class CustomerResendProvider implements CustomerProvider {
   try {
    const response=await this.send('https://api.resend.com/emails/'+messageId,{redirect:'error',signal:AbortSignal.timeout(8000),headers:{authorization:'Bearer '+this.retrieveKey}});
    if(!response.ok){await response.body?.cancel();return {outcome:'unknown'};}
-   const receipt=resendReceipt.safeParse(await boundedJson(response,65536));
+   const receipt=resendReceipt.safeParse(await boundedJson(response,resendReceiptMaxBytes));
    return receipt.success&&receipt.data.id===messageId&&routeReceipt(receipt.data,this.route)&&receiptTag(receipt.data.tags,'fl_operation')===operation?{outcome:'accepted',messageId:receipt.data.id}:{outcome:'unknown'};
   }catch{return {outcome:'unknown'};}
  }
@@ -75,7 +86,7 @@ export function customerResendRuntime(origin:string,env:NodeJS.ProcessEnv,send:t
  }
  const read=async(path:string)=>{const response=await send('https://api.resend.com/'+path,{redirect:'error',signal:AbortSignal.timeout(8000),headers:{authorization:'Bearer '+retrieveKey}});
   if(!response.ok){await response.body?.cancel();throw Error('Provider inspection unavailable.');}return boundedJson(response,65536);};
- const entries=routes.map(route=>{
+ const makeEntry=(route:ResendRoute)=>{
   let cached:{until:number;value:Promise<boolean>}|undefined;
   const inspect=async()=>{
    try{const [domain,hook]=await Promise.all([read('domains/'+route.domainId),read('webhooks/'+route.webhookId)]);
@@ -87,6 +98,23 @@ export function customerResendRuntime(origin:string,env:NodeJS.ProcessEnv,send:t
   };
   const ready=()=>{if(mode!=='ses'&&mode!=='resend')return Promise.resolve(false);if(!cached||Date.now()>=cached.until)cached={until:Date.now()+60000,value:inspect()};return cached.value;};
   return {route,provider:new CustomerResendProvider(route,origin,key,ready,scope,send,retrieveKey)};
- });
- return {entries,webhookSecret,retrieveKey,send,provider:(workspace:string,brand:string)=>entries.find(e=>e.route.workspaceId===workspace&&e.route.brandId===brand)?.provider};
+ };
+ const entries=routes.map(makeEntry);
+ const active=new Map(routes.map(route=>[route.workspaceId+'/'+route.brandId,route.fingerprint]));
+ const register=(route:ResendRoute,activate=true)=>{
+  const parsed=parseResendRoute({workspaceId:route.workspaceId,brandId:route.brandId,from:route.from,domainId:route.domainId,webhookId:route.webhookId,region:route.region});
+  if(parsed.fingerprint!==route.fingerprint)throw Error('Invalid stored Resend route.');
+  if(!entries.some(e=>e.route.fingerprint===parsed.fingerprint)){
+   if(entries.length>=2000||entries.some(e=>e.route.workspaceId!==parsed.workspaceId&&(e.route.domainId===parsed.domainId||e.route.from.split('@')[1]===parsed.from.split('@')[1])))throw Error('Resend route capacity or workspace conflict.');
+   entries.push(makeEntry(parsed));
+  }
+  if(activate)active.set(parsed.workspaceId+'/'+parsed.brandId,parsed.fingerprint);
+ };
+ // A reviewed setup that loses verification must also lose its cached sending route.
+ // Keep historical entries available for late signed receipts.
+ const restoreConfiguredRoute=(workspace:string,brand:string)=>{
+  const key=workspace+'/'+brand,configured=routes.find(route=>route.workspaceId===workspace&&route.brandId===brand);
+  if(configured)active.set(key,configured.fingerprint);else active.delete(key);
+ };
+ return {entries,register,restoreConfiguredRoute,webhookSecret,retrieveKey,send,provider:(workspace:string,brand:string)=>entries.find(e=>e.route.fingerprint===active.get(workspace+'/'+brand))?.provider};
 }

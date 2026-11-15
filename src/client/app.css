@@ -23,3 +23,5 @@
 .logout-control{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
 .logout-control .btn{white-space:nowrap}
 .logout-error{max-width:260px;margin:0;color:#741c18;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+
+.sender-dns-table{overflow-x:auto;max-width:100%}.sender-dns-table td{max-width:400px;overflow-wrap:anywhere;vertical-align:top;padding:8px}.sender-dns-table th{text-align:left;padding:8px}

@@ -33,8 +33,8 @@ export function configuredSupportWriter(config: SupportWriterConfig, send: typeo
     return parsed.choices[0]!.message.content;
   };
 }
-export async function boundedJson(response: Response, limit: number): Promise<unknown> {
-  if (!response.ok || Number(response.headers.get('content-length') ?? 0) > limit || !response.body) {
+export async function boundedJson(response: Response, limit: number, expectedErrorStatus?:number): Promise<unknown> {
+  if ((!response.ok && response.status!==expectedErrorStatus) || Number(response.headers.get('content-length') ?? 0) > limit || !response.body) {
     await response.body?.cancel();
     throw Error('The support provider response is unavailable or exceeds its limit.');
   }

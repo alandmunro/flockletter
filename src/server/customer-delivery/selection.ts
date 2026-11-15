@@ -8,6 +8,18 @@ export async function selectedDelivery(sql:Sql,options:DeliveryOptions,workspace
  const mode=externalDelivery(options.mode)?choice?.provider??options.mode:options.mode;
  return {mode,revision:choice?.revision??0,provider:externalDelivery(mode)?options.provider?.(workspace,brand,mode):undefined};
 }
+/** Apply the same current consent test to the selected, confirmed population in preflight and review. */
+export async function eligibleBroadcastContacts<T extends {id:string}>(sql:Sql,options:DeliveryOptions,mode:DeliveryOptions['mode'],contacts:T[]):Promise<T[]> {
+ if(!externalDelivery(mode))return contacts;
+ if(options.liveConsentBatch){
+  const eligible=new Set(await options.liveConsentBatch(sql,contacts.map(contact=>contact.id)));
+  return contacts.filter(contact=>eligible.has(contact.id));
+ }
+ const eligible:T[]=[];
+ for(const contact of contacts)if(await options.liveConsent?.(sql,contact.id))eligible.push(contact);
+ return eligible;
+}
+
 export async function deliveryProviders(sql:Sql,options:DeliveryOptions,workspace:string,brand:string):Promise<DeliveryProviders> {
  const selected=await selectedDelivery(sql,options,workspace,brand);
  const choices=await Promise.all((['ses','resend'] as const).map(async provider=>{

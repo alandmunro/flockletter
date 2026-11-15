@@ -21,6 +21,7 @@ export const customerDeliveryCommands = {
     fromEmail:normalizedEmail,replyTo:normalizedEmail,organization:z.string().trim().min(1).max(150).regex(/^[^\p{Cc}\p{Cf}]+$/u),
     postalAddress:z.string().trim().min(10).max(500).regex(/^[^\p{Cc}\p{Cf}]+$/u),
   }),
+  'delivery.trust':command('Inspect current workspace sending safeguards; plan changes never clear holds or increase trust.','campaign:send',false,{}),
   'delivery.status': command('View delivery mode and allowed sending scope, workspace usage and current sender checks for an optional authorized brand. Test-only scope never permits broadcasts.', 'campaign:send', false, {brandId:id.optional()}),
   'delivery.list': command('List this brand’s reviewed campaigns and delivery outcomes.', 'campaign:send', false, {brandId:id,purpose:z.enum(['broadcast','test']).optional()}),
   'delivery.review': command('Freeze the saved draft and confirmed audience before approval.', 'campaign:send', true, {

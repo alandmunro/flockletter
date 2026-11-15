@@ -14,7 +14,7 @@ import type { CustomerOperationsStatus,CustomerWorkerHeartbeat } from '../../sha
 
 const stagingCriticalAlerts = new Set(['security_incident','migration_failed','deployment_failure_persistent','worker_failure_persistent']);
 
-type Options={environment:Config['environment'];mode:'capture'|'live';identity:OperatorIdentity;support:CustomerSupport;databaseName:string;workerHeartbeat?:()=>Promise<CustomerWorkerHeartbeat>;plan?:(workspace:string,jobId:string)=>Promise<RetentionPlan>;signing?:{keyId:string;privateKey:string};gaps?:string[];alerts?:{provider:SupportProvider;from:string;to:string};now?:()=>Date};
+type Options={sendingSafeguards?:import('../customer-delivery/safeguards.js').SendingSafeguards;environment:Config['environment'];mode:'capture'|'live';identity:OperatorIdentity;support:CustomerSupport;databaseName:string;workerHeartbeat?:()=>Promise<CustomerWorkerHeartbeat>;plan?:(workspace:string,jobId:string)=>Promise<RetentionPlan>;signing?:{keyId:string;privateKey:string};gaps?:string[];alerts?:{provider:SupportProvider;from:string;to:string};now?:()=>Date};
 export class PlatformService {
  constructor(readonly db:Database,readonly store:PlatformStore,readonly options:Options){}
  private now(){return this.options.now?.()??new Date();}
@@ -126,6 +126,23 @@ export class PlatformService {
   }
   const p=input as {caseId:string};const review=await this.case(actor,p.caseId);
   if(name==='platform.case')return review;
+  if(name==='platform.sendingTrust'||name==='platform.reviewSendingTrust'){
+   requireCondition(['abuse','delivery'].includes(review.kind),403,'case_scope_mismatch','Open a delivery or abuse review case.');
+   requireCondition(this.options.sendingSafeguards,503,'sending_policy_unconfigured','Configure the sending safeguards.');
+   const status=await this.db.read(review.workspaceId,sql=>this.options.sendingSafeguards!.status(sql,review.workspaceId));
+   if(name==='platform.sendingTrust')return status;
+   const p=platformCommands['platform.reviewSendingTrust'].schema.parse(input);
+   requireCondition(status.revision===p.expectedRevision,409,'sending_review_changed','Refresh the exact current incident before review.');
+   requireCondition(!status.held||p.phase==='limited',409,'limited_restart_required','An incident can restart only at the limited daily allowance.');
+   requireCondition(p.phase==='limited'||p.phase==='established'&&status.ageDays>=7&&status.delivered>=100||p.phase==='full'&&status.ageDays>=14&&status.delivered>=500,409,'sending_trust_not_earned','This workspace has not yet met the age and verified-delivery requirements.');
+   return this.store.transaction(review.workspaceId,async records=>{
+    await this.current(actor);requireCondition((await records.get<PlatformCase>('case',review.id))?.requestHash===review.requestHash&&Date.parse(review.expiresAt)>this.now().getTime(),403,'operator_case_required','Reopen the exact case.');
+    const hash=digest(JSON.stringify([p,actor.userId]));const old=await records.get<{hash:string;result:unknown}>('ack',p.operationKey);
+    if(old){requireCondition(old.hash===hash,409,'operation_conflict','Retry the original sending-trust review.');return old.result;}
+    const result={phase:p.phase,resume:true,incidentRevision:status.revision,operatorId:actor.userId,caseId:review.id,reason:p.reason,reviewedAt:this.now().toISOString()};
+    await records.put('approval','sending-trust',result);await records.put('ack',p.operationKey,{hash,result},true);return result;
+   });
+  }
   if(name==='platform.abuseHold'){
    const p=platformCommands[name].schema.parse(input);requireCondition(review.kind==='abuse',403,'case_scope_mismatch','Open a workspace abuse review case.');
    return this.store.transaction(review.workspaceId,async records=>{await this.current(actor);requireCondition((await records.get<PlatformCase>('case',review.id))?.requestHash===review.requestHash&&Date.parse(review.expiresAt)>this.now().getTime(),403,'operator_case_required','Reopen the current exact case.');const hash=digest(JSON.stringify([p,actor.userId]));const old=await records.get<{hash:string;result:unknown}>('ack',p.operationKey);if(old){requireCondition(old.hash===hash,409,'operation_conflict','Retry the original review hold.');return old.result;}const result={held:p.held,reason:p.reason,operatorId:actor.userId,caseId:review.id,changedAt:this.now().toISOString()};await records.put('hold','current',result);await records.put('ack',p.operationKey,{hash,result},true);return result;});

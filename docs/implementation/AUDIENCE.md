@@ -14,7 +14,7 @@ Changing brands clears the current contact and search. Search addresses go in an
 
 ## Preview a CSV
 
-Open **Preview a contact CSV** in the selected brand's **Audience** screen. Choose a UTF-8 comma-separated file with a header, up to 256 KiB, 1,000 data rows and 64 columns. The browser reads the headings locally. Select the email column by its position and use **Preview CSV** to send the file to Flockletter for comparison. **Clear file** removes the selection and result from the screen.
+Open **Preview a contact CSV** in the selected brand's **Audience** screen. Choose a UTF-8 comma-separated file with a header, up to 1 MiB, 2,500 data rows and 64 columns. The browser reads the headings locally. Select the email column by its position and use **Preview CSV** to send the file to Flockletter for comparison. **Clear file** removes the selection and result from the screen.
 
 The report counts rows that are new to the brand, already confirmed, pending, suppressed, duplicated within the file or invalid. It shows the first ten row numbers that need attention. Row one is the header. Quoted line breaks are part of one row. A repeated valid address counts as a duplicate after its first occurrence.
 

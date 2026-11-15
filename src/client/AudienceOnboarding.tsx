@@ -1,13 +1,13 @@
 import { CampaignPreview } from './CampaignPreview.js';
 import { SignupDesignStudio } from './SignupDesignStudio.js';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { base64, operationKey, type Api } from './api.js';
 import { AudienceImportResults, type AudienceImportRow } from './AudienceImportResults.js';
-import { readImportCsv, type ImportPreviewResult } from '../shared/import-preview.js';
+import { importLimits, readImportCsv, type ImportPreviewResult } from '../shared/import-preview.js';
 import type { AudienceSettingsView } from '../shared/customer-audience.js';
 import { PendingContactApproval } from './PendingContactApproval.js';
 
-type ImportResult = { rows: AudienceImportRow[] };
+type ImportResult = { id: string; rows: AudienceImportRow[] };
 type Capture = {
   id: string;
   to: string;
@@ -30,6 +30,7 @@ export function AudienceOnboarding({
   brandId: string;
   onChanged?: () => void;
 }) {
+  const consentFieldId = useId();
   const [view, setView] = useState<AudienceSettingsView>();
   const [revision, setRevision] = useState(0),
     [error, setError] = useState(''),
@@ -66,7 +67,7 @@ export function AudienceOnboarding({
         setEnabled(next.enabled);
         setPurpose(next.purpose);
         setVersion(next.policyVersion);
-        setConsent(next.consentText);
+        setConsent(next.consentText || `Email me newsletters and offers from ${next.brandName}. I can unsubscribe at any time.`);
         setDomain(next.sourceDomain);
         setConfirmationMode(next.confirmationMode ?? 'double_opt_in');
       })
@@ -125,6 +126,7 @@ export function AudienceOnboarding({
     setReading(Boolean(file));
     if (!file) return;
     try {
+      if (file.size > importLimits.bytes) throw new Error('Choose a CSV file of 1 MiB or less.');
       const parsed = readImportCsv(new Uint8Array(await file.arrayBuffer()));
       const encoded = await base64(file);
       if (request !== selection.current) return;
@@ -240,8 +242,6 @@ export function AudienceOnboarding({
           {notice}
         </p>
       )}
-      <SignupDesignStudio key={brandId} api={api} view={view}/>
-      <PendingContactApproval key={brandId} api={api} brandId={brandId} policyVersion={view.policyVersion} enabled={view.enabled && view.mode !== 'off'} onChanged={() => { setRevision(n => n + 1); onChanged?.(); }}/>
       <details open={!view.enabled}>
         <summary>1. Signup page and consent</summary>
         <form
@@ -272,16 +272,15 @@ export function AudienceOnboarding({
               Consent version
               <input required maxLength={80} value={version} onChange={(e) => setVersion(e.target.value)} />
             </label>
-            <label>
-              Consent shown next to the signup checkbox
-              <textarea
-                required
-                minLength={20}
-                maxLength={2000}
-                value={consent}
-                onChange={(e) => setConsent(e.target.value)}
-              />
-            </label>
+            <label htmlFor={consentFieldId}>Consent shown next to the signup checkbox</label>
+            <textarea
+              id={consentFieldId}
+              required
+              minLength={20}
+              maxLength={2000}
+              value={consent}
+              onChange={(e) => setConsent(e.target.value)}
+            />
             <p className="help">
               Name the brand and what subscribers will receive. Change the version whenever the wording or
               purpose or confirmation choice changes.
@@ -320,8 +319,8 @@ export function AudienceOnboarding({
       <details>
         <summary>2. Import contacts</summary>
         <p>
-          Import as pending, or record existing permission and subscribe immediately. Up to 1,000 rows and
-          256 KiB per file. Recipient allowance is shared across brands.
+          Import up to 2,500 rows (1 MiB) from a list that opted in to newsletters from {view.brandName}.
+          Record where people signed up, then choose immediate subscription or keep them pending for email confirmation.
         </p>
         <form
           onSubmit={(event) =>
@@ -353,6 +352,8 @@ export function AudienceOnboarding({
                   onChange={(e) => {
                     setColumn(Number(e.target.value));
                     setPreview(undefined);
+                    setPermission(false);
+                    setConfirmImport(false);
                   }}
                 >
                   {headers.map((header, index) => (
@@ -401,7 +402,9 @@ export function AudienceOnboarding({
             <label><input type="checkbox" checked={confirmImport} disabled={!view.enabled} onChange={e => setConfirmImport(e.target.checked)}/>{' '}
               Subscribe imported contacts immediately without a confirmation email
             </label>
-            <p className="help">Uses the saved consent policy ({view.policyVersion}) and your recorded permission source. Existing unsubscribes and suppression stay in effect.</p>
+            <p className="help">{view.enabled
+              ? <>Your certification uses {view.brandName}’s saved consent policy ({view.policyVersion}). Previously unsubscribed, bounced or complained addresses stay excluded.</>
+              : 'To certify contacts during import, save and enable this brand’s consent policy in step 1 first.'}</p>
             <button className="btn" disabled={!csv || !permission || !preview || (confirmImport && !view.enabled)} type="submit">
               {confirmImport ? 'Import and subscribe without email' : 'Import as pending'}
             </button>
@@ -429,6 +432,7 @@ export function AudienceOnboarding({
         )}
         {result && (
           <AudienceImportResults
+            key={result.id}
             rows={result.rows}
             disabled={busy || !view.enabled}
             onRequestConfirmation={(subscriberId) =>
@@ -441,6 +445,8 @@ export function AudienceOnboarding({
           />
         )}
       </details>
+      <PendingContactApproval key={brandId} api={api} brandId={brandId} policyVersion={view.policyVersion} enabled={view.enabled && view.mode !== 'off'} onChanged={() => { setRevision(n => n + 1); onChanged?.(); }}/>
+      <SignupDesignStudio key={brandId} api={api} view={view}/>
       {view.mode === 'exercise' && (
         <details>
           <summary>3. Exercise signup and confirmation</summary>
