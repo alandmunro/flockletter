@@ -221,7 +221,13 @@ export class CustomerDelivery {
     requireCondition(assets.length===draft.content.assetIds.length,422,'image_unavailable','A selected original photo is unavailable.');
     const ordered=draft.content.assetIds.map(id=>assets.find(a=>a.id===id)!);
     const snapshot=purpose==='test'?{...campaign,content:{...campaign.content,subject:'[TEST] '+campaign.content.subject}}:campaign;
-    const preview=renderPreview(snapshot,ordered),rendered=legalFooter(preview.html,preview.text,profile),id=randomUUID();
+    const signupSlug = this.options.signupPagesEnabled
+      ? (await sql.query<{slug:string|null}>(`SELECT public.flockletter_signup_slug(form_token) AS slug
+          FROM customer_audience_settings WHERE workspace_id=$1 AND brand_id=$2 AND enabled`,
+          [actor.workspaceId,input.brandId])).rows[0]?.slug
+      : null;
+    const signupUrl = signupSlug ? new URL('/signup/' + signupSlug, this.options.origin).href : null;
+    const preview=renderPreview(snapshot,ordered),rendered=legalFooter(preview.html,preview.text,profile,signupUrl),id=randomUUID();
     await sql.query(`INSERT INTO customer_deliveries(workspace_id,brand_id,id,campaign_id,version,actor_id,creator_id,mode,state,
       content,rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded,sender_profile,purpose,provider_revision)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,

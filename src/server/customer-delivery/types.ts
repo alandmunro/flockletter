@@ -30,6 +30,7 @@ export type CustomerProvider = {
 export type DeliveryOptions = {
   safeguards?:import('./safeguards.js').SendingSafeguards;
   mode:DeliveryMode; origin:string; environment:'local'|'test'|'staging'|'production';
+  signupPagesEnabled?:boolean;
   scope?:DeliveryScope;
   billing:Pick<CustomerBilling,'eligibility'|'reserve'|'settle'|'release'>;
   eligibilitySql?:(sql:Sql,workspace:string)=>Promise<CustomerBillingStatus>;
