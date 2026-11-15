@@ -4,7 +4,7 @@ import {beforeAll,afterAll,it,expect,vi} from 'vitest';
 import {startDatabase} from '../scripts/database-fixture.js';
 import {Database} from '../src/server/db.js';
 import {CommandService,type Actor,authorize} from '../src/server/service.js';
-import {ResendSenderSetup,capturedSenderSetupPort,type ResendDomainFacts} from '../src/server/customer-delivery/sender-setup.js';
+import {ResendSenderSetup,resendSenderSetupPort,capturedSenderSetupPort,type ResendDomainFacts} from '../src/server/customer-delivery/sender-setup.js';
 import type {SenderSetupView} from '../src/shared/sender-setup.js';
 let fixture:Awaited<ReturnType<typeof startDatabase>>,db:Database,admin:pg.Client;
 beforeAll(async()=>{fixture=await startDatabase();db=new Database(fixture.url);admin=new pg.Client({connectionString:fixture.adminUrl});await admin.connect();});
@@ -74,4 +74,28 @@ it('captured staging setup needs no provider credential and is identified as an 
 
 it('rejects a non-public sender domain before any provider creation',async()=>{
  const f=await factory('trail.example.test');await expect(f.review()).rejects.toThrow('public domain name');expect(f.port.create).not.toHaveBeenCalled();
+});
+
+it('accepts the Resend creation receipt before checking tracking on inspection',async()=>{
+ const f=await factory();
+ const {open_tracking,click_tracking,...receipt}=await f.port.inspect();
+ const send=vi.fn().mockResolvedValueOnce(Response.json(receipt,{status:201}))
+  .mockResolvedValueOnce(Response.json({...receipt,open_tracking,click_tracking}));
+ const port=resendSenderSetupPort('fixture',send);
+ expect(await port.create(f.domain)).toEqual({id:f.id,name:f.domain,region:'us-east-1'});
+ expect(await port.inspect(f.id,f.domain)).toMatchObject({open_tracking:false,click_tracking:false});
+});
+it('recovers only a matching domain for the uncertain operation and safely replays',async()=>{
+ const f=await factory(),review=await f.review();
+ f.port.create.mockRejectedValueOnce(new Error('response lost'));
+ await f.approve(review);
+ const input={brandId:f.brand,setupId:review.setup!.id,domainId:f.id,operationKey:randomUUID()};
+ await expect(f.setup.execute('senderSetup.recover',{...input,domainId:randomUUID()},f.a)).rejects.toMatchObject({code:'provider_facts_invalid'});
+ expect((await f.setup.status(f.a,f.brand)).setup?.state).toBe('uncertain');
+ const recover=()=>f.setup.execute('senderSetup.recover',input,f.a);
+ expect(await recover()).toMatchObject({setup:{state:'awaiting_dns'}});
+ expect(await recover()).toMatchObject({setup:{state:'awaiting_dns'}});
+ f.setVerified();await f.age();await f.setup.tick(f.a.workspaceId);
+ expect((await f.setup.status(f.a,f.brand)).setup?.state).toBe('verified');
+ expect(f.port.create).toHaveBeenCalledTimes(1);
 });

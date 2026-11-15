@@ -5,6 +5,7 @@ export const senderSetupCommands={
  'senderSetup.status':commandDefinition('Read this brand’s sender setup, domain proof, provider DNS records and actionable gaps.','sender:configure',false,{brandId}),
  'senderSetup.review':commandDefinition('Prepare an exact server-owned Resend domain setup for the saved sender; creates no provider resource.','sender:configure',true,{operationKey,brandId,senderRevision:z.number().int().positive()}),
  'senderSetup.approve':commandDefinition('Approve the exact reviewed sender setup; never changes a provider plan or enables mailing.','sender:configure',true,{operationKey,brandId,setupId:z.uuid(),senderRevision:z.number().int().positive()}),
+ 'senderSetup.recover':commandDefinition('Reconnect an existing Resend domain to this exact approved sender setup.','sender:configure',true,{operationKey,brandId,setupId:z.uuid(),domainId:z.uuid()}),
  'senderSetup.process':commandDefinition('Process or inspect the existing approved sender setup; never repeats uncertain domain creation.','sender:configure',true,{operationKey,brandId,setupId:z.uuid()}),
 };
 export type SenderSetupState='reviewed'|'queued'|'creating'|'configuring'|'awaiting_dns'|'verified'|'uncertain'|'held';
