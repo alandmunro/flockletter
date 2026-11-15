@@ -26,6 +26,7 @@ import type { CustomerBillingEvents, CustomerBillingProvider, ProviderIntent } f
 import { TrialEnrollment, trialSetupStatus, trialEligibility } from './trial-enrollment.js';
 import type { TrialRegistry } from '../customer-abuse/registry.js';
 import { plans } from '../../shared/contracts.js';
+import type {BillingTaxMode} from '../../shared/billing-tax.js';
 
 export type BillingOptions = {
   environment: 'local' | 'test' | 'staging' | 'production';
@@ -229,6 +230,7 @@ export async function customerEligibility(
   }
   return {
     mode: source === 'stripe' || options?.gateway ? 'stripe' : exerciseEnabled ? 'exercise' : 'off',
+    ...(options?.gateway?.taxMode?{taxMode:options.gateway.taxMode}:{}),
     source,
     state,
     plan,
@@ -731,7 +733,7 @@ export class CustomerBilling {
   }
   private async checkout(
     actor: Actor,
-    input: { operationKey: string; plan: CustomerPlan },
+    input: { operationKey: string; plan: CustomerPlan; taxMode?:BillingTaxMode },
     restartExpired = false,
     paidAcceptance?: { priceMinor: number; currency: 'USD'; acceptedAt: string; policyVersion:string },
   ) {
@@ -784,7 +786,7 @@ export class CustomerBilling {
           provider_account: string;
           provider_reference: string | null;
           created_at: Date;
-          result: { plan: CustomerPlan; checkoutExpired?: boolean; trialDays?: 0 | 14 };
+          result: { plan: CustomerPlan; checkoutExpired?: boolean; trialDays?: 0 | 14; taxMode?:BillingTaxMode };
         }>(
           `SELECT * FROM customer_billing_intents WHERE command='customerBilling.checkout'
           ORDER BY (actor_id=$1 AND operation_key=$2) DESC, coalesce(result->>'checkoutExpired','false'),created_at DESC,id LIMIT 1`,
@@ -802,7 +804,7 @@ export class CustomerBilling {
                 JSON.stringify(
                   prior.result.trialDays === undefined
                     ? [prior.result.plan, actor.actorId]
-                    : [prior.result.plan, actor.actorId, trialDays],
+                    : [prior.result.plan, actor.actorId, trialDays,...(prior.result.taxMode?[prior.result.taxMode]:[])],
                 ),
               ) &&
             prior.provider_account === gateway.account,
@@ -824,6 +826,7 @@ export class CustomerBilling {
           createdAt: prior.created_at,
           reference: prior.provider_reference,
           trialDays,
+          ...(prior.result.taxMode?{taxMode:prior.result.taxMode}:{}),
         } satisfies ProviderIntent;
         if (!restartExpired || prior.operation_key === input.operationKey)
           return { fresh: false, intent };
@@ -849,6 +852,7 @@ export class CustomerBilling {
         'checkout_missing',
         'Start the initial checkout first.',
       );
+      requireCondition(!gateway.taxMode||input.taxMode===gateway.taxMode,409,'tax_policy_changed','Review the current tax collection terms before continuing.');
       const intent: ProviderIntent = {
         id: randomUUID(),
         workspace,
@@ -858,8 +862,9 @@ export class CustomerBilling {
         // Only pre-existing legacy intents may retain their saved trial agreement.
         // Every new ordinary Checkout is explicitly selected paid service.
         trialDays: 0,
+        ...(gateway.taxMode?{taxMode:gateway.taxMode}:{}),
       };
-      const requestHash = digest(JSON.stringify([input.plan, actor.actorId, intent.trialDays]));
+      const requestHash = digest(JSON.stringify([input.plan, actor.actorId, intent.trialDays,...(intent.taxMode?[intent.taxMode]:[])]));
       await sql.query(
         `INSERT INTO customer_billing_intents(workspace_id,id,actor_id,operation_key,command,request_hash,state,provider_account,created_at,result)
         VALUES($1,$2,$3,$4,'customerBilling.checkout',$5,'unknown',$6,$7,$8)`,
@@ -874,6 +879,7 @@ export class CustomerBilling {
           JSON.stringify({
             plan: input.plan,
             trialDays: intent.trialDays,
+            ...(intent.taxMode?{taxMode:intent.taxMode}:{}),
             ...(intent.trialDays===0?{policyVersion:hostedPolicies.version}:{}),
             ...(paidAcceptance ? { paidAcceptance } : {}),
           }),
@@ -895,7 +901,7 @@ export class CustomerBilling {
   }
   private async rejoin(
     actor: Actor,
-    input: { operationKey: string; plan: CustomerPlan; expectedRevision: number },
+    input: { operationKey: string; plan: CustomerPlan; expectedRevision: number; taxMode?:BillingTaxMode },
   ) {
     const gateway = this.provider(),
       workspace = actor.workspaceId;
@@ -918,7 +924,7 @@ export class CustomerBilling {
           provider_account: string;
           provider_reference: string | null;
           created_at: Date;
-          result: { plan: CustomerPlan; trialDays: 0; rejoin: RejoinBinding; rejoinApplied?: boolean };
+          result: { plan: CustomerPlan; trialDays: 0; rejoin: RejoinBinding; rejoinApplied?: boolean; taxMode?:BillingTaxMode };
         }>(
           `SELECT * FROM customer_billing_intents WHERE command='customerBilling.rejoin'
         AND ((result->>'rejoinApplied' IS DISTINCT FROM 'true' AND result->>'checkoutExpired' IS DISTINCT FROM 'true') OR (actor_id=$1 AND operation_key=$2))
@@ -946,6 +952,7 @@ export class CustomerBilling {
                   binding.subscription,
                   binding.revision,
                   0,
+                  ...(prior.result.taxMode?[prior.result.taxMode]:[]),
                 ]),
               ),
           409,
@@ -968,6 +975,7 @@ export class CustomerBilling {
           workspace,
           plan: prior.result.plan,
           trialDays: 0,
+          ...(prior.result.taxMode?{taxMode:prior.result.taxMode}:{}),
           customer: binding.customer,
           previousSubscription: binding.subscription,
           previousRevision: binding.revision,
@@ -1037,11 +1045,13 @@ export class CustomerBilling {
         subscription: current.provider_subscription,
         revision: current.revision,
       };
+      requireCondition(!gateway.taxMode||input.taxMode===gateway.taxMode,409,'tax_policy_changed','Review the current tax collection terms before continuing.');
       const intent: ProviderIntent = {
         id: randomUUID(),
         workspace,
         plan: input.plan,
         trialDays: 0,
+        ...(gateway.taxMode?{taxMode:gateway.taxMode}:{}),
         customer: binding.customer,
         previousSubscription: binding.subscription,
         previousRevision: binding.revision,
@@ -1058,6 +1068,7 @@ export class CustomerBilling {
           binding.subscription,
           binding.revision,
           0,
+          ...(intent.taxMode?[intent.taxMode]:[]),
         ]),
       );
       await sql.query(
@@ -1071,7 +1082,7 @@ export class CustomerBilling {
           hash,
           gateway.account,
           intent.createdAt,
-          JSON.stringify({ plan: input.plan, trialDays: 0, rejoin: binding, policyVersion:hostedPolicies.version }),
+          JSON.stringify({ plan: input.plan, trialDays: 0, rejoin: binding, policyVersion:hostedPolicies.version,...(intent.taxMode?{taxMode:intent.taxMode}:{}) }),
         ],
       );
       await sql.query(
@@ -1111,6 +1122,8 @@ export class CustomerBilling {
       ),
     );
     await this.requireOwner(actor);
+    if(result.url&&prepared.intent.taxMode!==gateway.taxMode)
+      return {state:'tax_policy_changed',url:null};
     return {
       state:
         result.state === 'expired'
@@ -1320,12 +1333,14 @@ export class CustomerBilling {
           plan: CustomerPlan;
           trial_days: string | null;
           rejoin: RejoinBinding | null;
+          tax_mode: BillingTaxMode | null;
         }>(
-          `SELECT id,command,provider_reference,created_at,result->>'plan' AS plan,result->>'trialDays' AS trial_days,result->'rejoin' AS rejoin
+          `SELECT id,command,provider_reference,created_at,result->>'plan' AS plan,result->>'trialDays' AS trial_days,result->'rejoin' AS rejoin,result->>'taxMode' AS tax_mode
         FROM customer_billing_intents WHERE command IN ('customerBilling.checkout','customerBilling.rejoin','customerBilling.activateTrial') AND provider_account=$1 AND id=$2`,
           [gateway.account, resolved.intentId ?? snapshot.intentHint],
         )
       ).rows[0];
+      requireCondition(!binding?.tax_mode||binding.tax_mode===snapshot.taxMode,409,'billing_tax_changed','The saved billing tax agreement requires review.');
       const mapped = (
         await sql.query(
           "SELECT 1 FROM customer_subscriptions WHERE source='stripe' AND provider_account=$1 AND provider_subscription=$2 AND provider_customer=$3",
@@ -1398,6 +1413,7 @@ export class CustomerBilling {
               workspace,
               plan: binding.plan,
               trialDays: 0,
+              ...(binding.tax_mode?{taxMode:binding.tax_mode}:{}),
               customer: previous.customer,
               previousSubscription: previous.subscription,
               previousRevision: previous.revision,

@@ -9,6 +9,8 @@ import { TrialRegistry } from '../src/server/customer-abuse/registry.js';
 import { OperatorStore } from '../src/server/platform/store.js';
 import { simulatedTrialProvider as provider } from './helpers/trial-provider.js';
 import type { CustomerBillingStatus, TrialReview } from '../src/shared/customer-billing.js';
+import type {BillingTaxMode} from '../src/shared/billing-tax.js';
+import { UnsupportedTrialPaymentMethod } from '../src/server/customer-billing/provider.js';
 let f: Awaited<ReturnType<typeof startBillingFixture>>, admin: pg.Client;
 beforeAll(async () => {
   f = await startBillingFixture();
@@ -84,6 +86,33 @@ async function review(s: Awaited<ReturnType<typeof shop>>) {
     }
   ).review;
 }
+it('recovers only an authenticated unsupported method and preserves the original trial reservation', async () => {
+  const p = provider(), s = await shop(p), checkoutKey = randomUUID();
+  await s.call('customerBilling.checkout', { plan: 'starter', operationKey: checkoutKey });
+  const status = await s.call('customerBilling.status') as CustomerBillingStatus;
+  const id = status.trialSetup!.id, inspect = p.g.inspectSetup!;
+  p.g.inspectSetup = async () => { throw Error('Provider unavailable'); };
+  await expect(s.call('customerBilling.trialReview', { setupId: id })).rejects.toThrow('Provider unavailable');
+  expect(await s.call('customerBilling.status')).toMatchObject({trialSetup: {id, state: 'pending'}});
+  p.g.inspectSetup = async () => { throw new UnsupportedTrialPaymentMethod(); };
+  const first = await s.call('customerBilling.trialReview', {setupId: id}) as {state: string; retryAt: string};
+  expect(first.state).toBe('trial_card_required');
+  expect(await s.call('customerBilling.trialReview', {setupId: id})).toEqual(first);
+  expect(await s.call('customerBilling.checkout', {plan:'starter', operationKey: checkoutKey})).toEqual(first);
+  expect(await s.call('customerBilling.checkout', {plan:'starter'})).toEqual(first);
+  expect(p.posts()).toBe(1);
+  expect(p.trialPosts()).toBe(0);
+  expect(await s.call('customerBilling.status')).toMatchObject({eligible:false, trialSetup:{id, state:'expired', cardRetryAt:first.retryAt}});
+  // Advance both the application clock and the isolated registry's reservation.
+  s.setNow(new Date(Date.parse(first.retryAt) + 1000));
+  await admin.query("UPDATE flockletter_customer_jobs.trial_claims SET expires_at=now()-interval '1 second' WHERE intent_id=$1", [id]);
+  await admin.query("UPDATE flockletter_customer_jobs.trial_attempts SET expires_at=now()-interval '1 second' WHERE intent_id=$1", [id]);
+  p.g.inspectSetup = inspect;
+  const next = await review(s);
+  expect(next.setupId).not.toBe(id);
+  expect(p.posts()).toBe(2);
+  expect(p.trialPosts()).toBe(0);
+});
 it('card-only setup and review never create a recurring agreement; exact explicit approval does', async () => {
   const p = provider(),
     s = await shop(p),
@@ -458,4 +487,34 @@ it('allows independently verified pending agreement management without granting 
     source: 'preparation',
     eligible: false,
   });
+});
+
+it('requires a new trial review before a tax-mode change and preserves accepted unknown work for lookup only',async()=>{
+ const p=provider();let selected:BillingTaxMode='off';
+ Object.defineProperty(p.g,'taxMode',{get:()=>selected});
+ const inspect=p.g.inspectSetup!;
+ p.g.inspectSetup=async intent=>{const proof=await inspect(intent);return proof?{...proof,taxMode:selected}:null;};
+ const s=await shop(p),first=await review(s);
+ expect(first.taxMode).toBe('off');
+ selected='stripe-automatic';
+ await expect(s.call('customerBilling.activateTrial',{setupId:first.setupId,expectedRevision:first.revision,reviewHash:first.hash,accepted:true})).rejects.toMatchObject({code:'card_setup_changed'});
+ expect(p.trialPosts()).toBe(0);
+ expect((await admin.query("SELECT count(*)::int n FROM flockletter_customer_jobs.trial_claims WHERE namespace=$1 AND state='consumed'",[s.billing.options.trialRegistry!.namespace])).rows[0].n).toBe(0);
+ const second=(await s.call('customerBilling.trialReview',{setupId:first.setupId}) as {review:TrialReview}).review;
+ expect(second.taxMode).toBe('stripe-automatic');expect(second.hash).not.toBe(first.hash);
+ const key=randomUUID(),approved={operationKey:key,setupId:second.setupId,expectedRevision:second.revision,reviewHash:second.hash,accepted:true};
+ p.setLoseReply(true);
+ expect(await s.call('customerBilling.activateTrial',approved)).toMatchObject({state:'awaiting_reconciliation'});
+ expect(p.trialPosts()).toBe(1);
+ selected='off';
+ await s.call('customerBilling.activateTrial',approved);
+ expect(p.trialPosts()).toBe(1);
+ await s.billing.webhook(Buffer.from('evt_saved_tax_agreement'),'valid');
+ expect(await s.billing.status(s.actor.workspaceId)).toMatchObject({source:'stripe',state:'trialing',eligible:true});
+ const saved=(await f.db.read(s.actor.workspaceId,sql=>sql.query("SELECT result->>'taxMode' mode FROM customer_billing_intents WHERE command='customerBilling.activateTrial'"))).rows;
+ expect(saved).toEqual([{mode:'stripe-automatic'}]);
+ const revision=(await s.billing.status(s.actor.workspaceId)).revision,resolve=p.g.resolve;
+ p.g.resolve=async notice=>{const result=await resolve(notice);return{...result,subscription:result.subscription?{...result.subscription,taxMode:'off'}:null};};
+ await expect(s.billing.webhook(Buffer.from('evt_changed_tax_agreement'),'valid')).rejects.toMatchObject({code:'billing_tax_changed'});
+ expect((await s.billing.status(s.actor.workspaceId)).revision).toBe(revision);
 });

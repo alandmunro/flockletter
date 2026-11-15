@@ -12,9 +12,10 @@ import {locked,brandScope,audit} from './storage.js';
 import {boundedJson} from '../customer-support/writer.js';
 import {parseResendRoute,type ResendRoute} from './resend-route.js';
 
-const domainSchema=z.object({id:z.uuid(),name:z.string(),region:z.string(),status:z.string(),open_tracking:z.boolean(),click_tracking:z.boolean(),capabilities:z.object({sending:z.string()}),records:z.array(z.object({name:z.string().min(1).max(512),type:z.enum(['TXT','MX','CNAME']),value:z.string().min(1).max(4096),priority:z.number().int().nonnegative().optional()})).max(30)});
+const createdDomainSchema=z.object({id:z.uuid(),name:z.string(),region:z.string()});
+const domainSchema=createdDomainSchema.extend({status:z.string(),open_tracking:z.boolean(),click_tracking:z.boolean(),capabilities:z.object({sending:z.string()}),records:z.array(z.object({name:z.string().min(1).max(512),type:z.enum(['TXT','MX','CNAME']),value:z.string().min(1).max(4096),priority:z.number().int().nonnegative().optional()})).max(30)});
 export type ResendDomainFacts=z.infer<typeof domainSchema>;
-export type SenderSetupPort={usage:()=>Promise<{available:boolean}>;create:(domain:string)=>Promise<ResendDomainFacts>;inspect:(id:string,domain:string)=>Promise<ResendDomainFacts>;configure:(id:string)=>Promise<void>;verify:(id:string)=>Promise<void>};
+export type SenderSetupPort={usage:()=>Promise<{available:boolean}>;create:(domain:string)=>Promise<z.infer<typeof createdDomainSchema>>;inspect:(id:string,domain:string)=>Promise<ResendDomainFacts>;configure:(id:string)=>Promise<void>;verify:(id:string)=>Promise<void>};
 export function resendSenderSetupPort(key:string,send:typeof fetch=fetch):SenderSetupPort {
  const call=async(path:string,method='GET',body?:unknown)=>{
   const response=await send('https://api.resend.com/'+path,{method,redirect:'error',signal:AbortSignal.timeout(8000),headers:{authorization:'Bearer '+key,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
@@ -23,7 +24,7 @@ export function resendSenderSetupPort(key:string,send:typeof fetch=fetch):Sender
  };
  return {
   usage:async()=>{const raw=z.object({domains:z.object({used:z.number().int().nonnegative(),limit:z.number().int().nonnegative()})}).parse(await call('usage'));return {available:raw.domains.used<raw.domains.limit};},
-  create:async domain=>domainSchema.parse(await call('domains','POST',{name:domain,region:'us-east-1',capabilities:{sending:'enabled',receiving:'disabled'}})),
+  create:async domain=>createdDomainSchema.parse(await call('domains','POST',{name:domain,region:'us-east-1',capabilities:{sending:'enabled',receiving:'disabled'}})),
   inspect:async id=>domainSchema.parse(await call('domains/'+z.uuid().parse(id))),
   configure:async id=>{await call('domains/'+z.uuid().parse(id),'PATCH',{open_tracking:false,click_tracking:false});},
   verify:async id=>{await call('domains/'+z.uuid().parse(id)+'/verify','POST');},
@@ -46,14 +47,13 @@ export class ResendSenderSetup {
   const ownership=profile&&(this.options.captured||Boolean((await sql.query("SELECT FROM sender_domains WHERE domain=$1 AND verified_at>clock_timestamp()-interval '24 hours'",[profile.fromEmail.split('@')[1]])).rowCount));
   const gaps:string[]=[];if(!this.options.enabled||!this.options.port)gaps.push('Self-service sender setup is not configured. Contact support; no provider resource or mailing was created.');
   if(!profile)gaps.push('Save the legal sender profile on Delivery first.');else if(!ownership)gaps.push('Save your sending domain and check its ownership TXT record on Delivery.');
-  if(row?.state==='uncertain')gaps.push('The domain-creation outcome is unknown. Support must reconcile the original request; do not create a replacement.');
-  if(row?.reason)gaps.push(({provider_domain_capacity:'The current provider domain allowance is full. Contact support; this setup will not buy an add-on or upgrade.',provider_request_rejected:'The provider rejected this setup. Check the saved domain and ask support to inspect the existing request before retrying.',provider_outcome_unknown:'The provider response was uncertain. Support must reconcile the existing setup before any replacement.',provider_facts_invalid:'Provider domain facts do not match the approved sender, region or disabled-tracking policy. Contact support.',sender_or_service_changed:'The approving owner, sender, ownership proof or subscription changed. Refresh those checks and review the sender again.',provider_setup_unavailable:'Sender setup could not complete. Refresh this saved setup; contact support if it stays held.',domain_creation_unknown:'Support must reconcile the original domain creation. Do not create another domain.'} as Record<string,string>)[row.reason]??'Sender setup needs support review of the existing request.');
+  if(row?.reason && row.state!=='uncertain')gaps.push(({provider_domain_capacity:'The current provider domain allowance is full. Contact support; this setup will not buy an add-on or upgrade.',provider_request_rejected:'The provider rejected this setup. Check the saved domain and ask support to inspect the existing request before retrying.',provider_outcome_unknown:'The provider response was uncertain. Support must reconcile the existing setup before any replacement.',provider_facts_invalid:'Provider domain facts do not match the approved sender, region or disabled-tracking policy. Contact support.',sender_or_service_changed:'The approving owner, sender, ownership proof or subscription changed. Refresh those checks and review the sender again.',provider_setup_unavailable:'Sender setup could not complete. Refresh this saved setup; contact support if it stays held.',domain_creation_unknown:'Support must reconcile the original domain creation. Do not create another domain.'} as Record<string,string>)[row.reason]??'Sender setup needs support review of the existing request.');
   return {enabled:this.options.enabled&&!!this.options.port,captured:this.options.captured??false,alreadyConfigured:this.options.configured?.(actor.workspaceId,brand,profile?.fromEmail)??false,brandId:brand,ownershipVerified:!!ownership,senderRevision:profile?.revision??null,
    setup:row?{id:row.operation_id,domain:row.domain,fromEmail:row.from_email,senderRevision:row.sender_revision,state:row.state,reason:row.reason,dns:row.dns}:null,gaps};
  });}
  async execute(name:string,raw:unknown,actor:Actor){
   if(!(name in senderSetupCommands))return undefined;const command=senderSetupCommands[name as keyof typeof senderSetupCommands];authorize(actor,name as keyof typeof senderSetupCommands);
-  const input=command.schema.parse(raw) as {brandId:string;operationKey?:string;senderRevision?:number;setupId?:string};
+  const input=command.schema.parse(raw) as {brandId:string;operationKey?:string;senderRevision?:number;setupId?:string;domainId?:string};
   await this.owner(actor);if(name==='senderSetup.status')return this.status(actor,input.brandId);
   requireCondition(this.options.enabled&&this.options.port&&this.options.webhookId,503,'sender_setup_unconfigured','The operator must configure self-service sender setup.');
   await locked(this.db,actor.workspaceId,async sql=>{
@@ -70,7 +70,14 @@ export class ResendSenderSetup {
      ON CONFLICT(workspace_id,brand_id) DO UPDATE SET operation_id=excluded.operation_id,actor_id=excluded.actor_id,creator_id=excluded.creator_id,domain=excluded.domain,from_email=excluded.from_email,sender_revision=excluded.sender_revision,state='reviewed',domain_id=excluded.domain_id,dns='[]',reason=NULL,captured=excluded.captured,updated_at=now()`,[actor.workspaceId,input.brandId,randomUUID(),actor.actorId,actor.userId,domain,profile.fromEmail,profile.revision,owned??null,this.options.captured??false]);
    }else{
     requireCondition(row&&row.operation_id===input.setupId,409,'sender_setup_changed','Use this brand’s current exact setup.');await this.current(sql,row);
-    if(name==='senderSetup.approve'){
+    if(name==='senderSetup.recover'){
+     requireCondition(row.state==='uncertain' && !row.domain_id && row.captured===(this.options.captured??false),409,'sender_setup_changed','Refresh the current sender setup before reconnecting.');
+     requireCondition((await this.options.eligible(actor.workspaceId,sql)).eligible,403,'service_activation_required','Activate eligible service before reconnecting the domain.');
+     const domainId=input.domainId!;
+     const facts=await this.options.port!.inspect(domainId,row.domain);
+     requireCondition(facts.id===domainId && facts.name===row.domain && facts.region==='us-east-1' && facts.capabilities.sending==='enabled',409,'provider_facts_invalid','Choose the Resend domain for this exact sender and region.');
+     await this.bindDomain(sql,row,domainId,'queued');
+    }else if(name==='senderSetup.approve'){
      requireCondition(row.state==='reviewed'&&row.sender_revision===input.senderRevision,409,'sender_setup_changed','Review the exact current sender setup.');
      requireCondition((await this.options.eligible(actor.workspaceId,sql)).eligible,403,'service_activation_required','Activate eligible service before provider provisioning.');
      requireCondition((await sql.query<{allowed:boolean}>('SELECT flockletter_customer_jobs.claim_resend_domain($1,$2,$3,$4) allowed',[actor.workspaceId,input.brandId,row.operation_id,row.domain])).rows[0]?.allowed,409,'sender_domain_claimed','This domain has another setup in progress or belongs to another workspace.');
@@ -82,6 +89,10 @@ export class ResendSenderSetup {
   });
   if(name!=='senderSetup.review')await this.tick(actor.workspaceId,input.brandId);
   return this.status(actor,input.brandId);
+ }
+ private async bindDomain(sql:Sql,row:Row,id:string,state:'queued'|'configuring'){
+  await sql.query("UPDATE customer_resend_senders SET domain_id=$2,state=$3,reason=NULL,updated_at=now() WHERE brand_id=$1 AND operation_id=$4",[row.brand_id,id,state,row.operation_id]);
+  await sql.query('SELECT flockletter_customer_jobs.bind_resend_domain($1,$2,$3,$4)',[row.workspace_id,row.brand_id,row.operation_id,id]);
  }
  async tick(workspace:string,brand?:string){
   if(!this.options.enabled||!this.options.port)return;
@@ -100,10 +111,16 @@ export class ResendSenderSetup {
   try{
    if(!work.domain_id){
     if(!(await this.options.port.usage()).available){await this.save(workspace,work,'held','provider_domain_capacity');return;}
-    creating=true;facts=await this.options.port.create(work.domain);
-    requireCondition(facts.name===work.domain&&facts.region==='us-east-1',503,'provider_facts_invalid','The provider returned mismatched domain facts.');
-    await locked(this.db,workspace,async sql=>{await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[work.brand_id]);await sql.query("UPDATE customer_resend_senders SET domain_id=$2,state='configuring',updated_at=now() WHERE brand_id=$1 AND operation_id=$3",[work.brand_id,facts.id,work.operation_id]);await sql.query('SELECT flockletter_customer_jobs.bind_resend_domain($1,$2,$3,$4)',[workspace,work.brand_id,work.operation_id,facts.id]);});work.domain_id=facts.id;
-   }else facts=await this.options.port.inspect(work.domain_id,work.domain);
+    creating=true;
+    const created=await this.options.port.create(work.domain);
+    requireCondition(created.name===work.domain&&created.region==='us-east-1',503,'provider_facts_invalid','The provider returned mismatched domain facts.');
+    await locked(this.db,workspace,async sql=>{
+     await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[work.brand_id]);
+     await this.bindDomain(sql,work,created.id,'configuring');
+    });
+    work.domain_id=created.id;
+   }
+   facts=await this.options.port.inspect(work.domain_id,work.domain);
    requireCondition(facts.id===work.domain_id&&facts.name===work.domain&&facts.region==='us-east-1',503,'provider_facts_invalid','The provider returned mismatched domain facts.');
    if(facts.open_tracking||facts.click_tracking){await this.options.port.configure(facts.id);facts=await this.options.port.inspect(facts.id,work.domain);}
    requireCondition(facts.open_tracking===false&&facts.click_tracking===false&&facts.capabilities.sending==='enabled',503,'provider_facts_invalid','Disable tracking and enable this sender at the provider.');
@@ -125,5 +142,8 @@ export class ResendSenderSetup {
 /** Synthetic transport for the isolated staging database; never installed in production. */
 export function capturedSenderSetupPort():SenderSetupPort {
  const facts=(id:string,domain:string,status:string):ResendDomainFacts=>({id,name:domain,region:'us-east-1',status,open_tracking:false,click_tracking:false,capabilities:{sending:'enabled'},records:[{name:'_dkim.'+domain+'.invalid',type:'TXT',value:'captured-example-only'}]});
- return {usage:async()=>({available:true}),create:async domain=>facts(randomUUID(),domain,'not_started'),inspect:async(id,domain)=>facts(id,domain,'verified'),configure:async()=>{},verify:async()=>{}};
+ const pending=new Set<string>();
+ return {usage:async()=>({available:true}),create:async domain=>{
+  const id=randomUUID();pending.add(id);return facts(id,domain,'not_started');
+ },inspect:async(id,domain)=>facts(id,domain,pending.delete(id)?'not_started':'verified'),configure:async()=>{},verify:async()=>{}};
 }

@@ -1,5 +1,7 @@
 # Customer billing and usage
 
+
+D-062 additionally permits explicit temporary `FLOCKLETTER_BILLING_TAX=off` for new Flockletter agreements after ordinary verification; missing/invalid live policy fails closed. Read [the no-collection runbook](NO_TAX_COLLECTION.md) for frozen acceptance, pending-operation handling and external checks. It is not a tax-exempt determination or a change to shared merchant defaults.
 This implements FL-BIL-001/002/003/004/005/007/008, FL-USG-001/002/003, the billing portions of FL-ONB-003/004 and FL-API-001, and the environment separation in FL-OPS-004. It is implementation evidence, not acceptance of real charges or public commercial operation.
 
 ## One reusable lifecycle

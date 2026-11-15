@@ -1,5 +1,7 @@
 # Production launch preparation
 
+
+D-062 additionally permits explicit temporary `FLOCKLETTER_BILLING_TAX=off` for new Flockletter agreements after ordinary verification; missing/invalid live policy fails closed. Read [the no-collection runbook](NO_TAX_COLLECTION.md) for frozen acceptance, pending-operation handling and external checks. It is not a tax-exempt determination or a change to shared merchant defaults.
 Applicable requirements: FL-PROD-004, FL-ONB-002/004, FL-BIL-002–008, FL-DEL-001–008 and FL-OPS-001–007. Production setup authorization does not establish legal facts, signed card acceptance or verified external outcomes. The application can open an isolated preparation workspace while live integrations remain off.
 
 ## Environment-correct customer information
