@@ -1,4 +1,5 @@
-export type PaletteKind = 'paragraph' | 'heading' | 'image' | 'button' | 'divider' | 'spacer' | 'columns';
+export type PaletteKind =
+  'list' | 'callout' | 'paragraph' | 'heading' | 'image' | 'button' | 'divider' | 'spacer' | 'columns';
 
 type BlockPaletteProps = {
   onAdd: (kind: PaletteKind) => void;
@@ -79,6 +80,18 @@ export function BlockPalette({ onAdd, disabled, allowColumns, hasImages, atImage
         Spacer
       </button>
 
+      {(['list', 'callout'] as const).map((kind) => (
+        <button
+          key={kind}
+          type="button"
+          className="studio-palette-button"
+          disabled={disabled}
+          onClick={() => onAdd(kind)}
+          aria-label={'Add ' + kind}
+        >
+          {kind === 'list' ? 'List' : 'Callout'}
+        </button>
+      ))}
       {allowColumns && (
         <button
           type="button"

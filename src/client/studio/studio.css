@@ -322,3 +322,5 @@ p.studio-sample-text {
     min-height: 44px;
   }
 }
+
+.studio-callout { border-inline-start: 4px solid #813a53; background: #faf2f4; padding: 12px 16px; }

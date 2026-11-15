@@ -51,6 +51,7 @@ jobs:
       - run: node --import tsx scripts/prove-platform.ts
       - run: node --import tsx scripts/prove-team-ui.ts
       - run: node --import tsx scripts/prove-studio.ts
+      - run: node --import tsx scripts/prove-newsletter-import.ts
       - run: node --import tsx scripts/prove-studio-email.ts
       - run: node --import tsx scripts/prove-marketing-unsubscribe.ts
       - run: node --import tsx scripts/generate-api.ts && git diff --exit-code -- docs/api/openapi.json

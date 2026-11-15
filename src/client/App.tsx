@@ -1,7 +1,7 @@
 import {browserSubscriptionEntry,subscriptionUrl} from './subscription-navigation.js';
 import {hostedTrial} from '../shared/trial.js';
 import {sitePresentation} from '../shared/site-presentation.js';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FormEvent } from 'react';
 import { emptyContent, type AssetSummary, type Brand, type Campaign, type Capability, type Connection, type Workspace } from '../shared/contracts.js';
 import { client, operationKey, type Api, type TokenGetter } from './api.js';
 import {useBrandImages} from './useBrandImages.js';
@@ -28,6 +28,8 @@ import { SupportPortal } from './SupportPortal.js';
 import { DataRetention } from './DataRetention.js';
 import { CustomerOperations } from './CustomerOperations.js';
 import { InfrastructureSetup } from './InfrastructureSetup.js';
+
+const NewsletterImport = lazy(async () => ({default:(await import('./NewsletterImport.js')).NewsletterImport}));
 
 export function Header({ account }: { account?: ReactNode }) {
   return <header className="app-header"><a className="wordmark" href="/">flockletter<span>Good things, delivered.</span></a><div className="header-account">{account}</div><img className="software-logo" src="/brand/frosty-flamingo-software.png" alt="Frosty Flamingo Software" width="88" height="64" /></header>;
@@ -77,13 +79,14 @@ function Overview({ workspace, navigate }: { workspace: Workspace; navigate: (pa
 }
 function Campaigns({ api, brands, open,canWrite=true }: { api: Api; brands: Brand[]; open: (campaign: Campaign) => void;canWrite?:boolean }) {
   const [items, setItems] = useState<Campaign[]>([]); const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [loaded, setLoaded] = useState(false);
+  const [importing,setImporting]=useState(false);
   const createKey = useRef(operationKey());
   const [brandId,setBrandId]=useState(brands[0]?.id??'');
   const chosen=brands.find(b=>b.id===brandId)??brands[0];
   const load = useCallback(() => api.call<Campaign[]>('campaign.list', {}).then(setItems).catch(e => setError(message(e))).finally(() => setLoaded(true)), [api]);
   useEffect(() => { void load(); }, [load]);
   async function create() { setBusy(true); setError(''); try { const draft = await api.call<Campaign>('campaign.create', { operationKey: createKey.current, brandId: chosen!.id, content: { ...emptyContent(), title: 'Untitled campaign', fromName: chosen!.name, studio: emptyStudio() } }); createKey.current = operationKey(); open(draft); } catch (e) { setError(message(e)); } finally { setBusy(false); } }
-  return <><div className="actions"><div><span className="eyebrow">One idea at a time</span><h1 className="page-heading">Campaigns</h1></div>{canWrite && brands.length>1 && <div className="editor-brand-select"><label htmlFor="new-campaign-brand">Brand for new campaign</label><select id="new-campaign-brand" value={chosen?.id??''} disabled={busy} onChange={e=>{setBrandId(e.target.value);createKey.current=operationKey();}}>{brands.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></div>}{canWrite && <button className="btn" disabled={busy || !chosen} onClick={() => void create()}>{busy ? 'Creating…' : '+ New campaign'}</button>}</div><Alert error={error} />{canWrite && <Authoring api={api} brands={brands} open={open} />}<section className="card">{!loaded ? <p>Loading campaigns…</p> : items.length === 0 ? <div className="empty"><h2>Your next newsletter starts here.</h2><p>{canWrite?'Create a draft and add your images. Drafts never use a campaign allowance.':'No drafts are available for your brands.'}</p></div> : items.map(c => <article className="campaign-row" key={c.id}><div><h2>{c.content.title || 'Untitled campaign'}</h2><p className="muted">{c.content.subject || 'Add a subject'} · Saved {new Date(c.updatedAt).toLocaleDateString()}</p></div><span className="badge">Draft · v{c.version}</span><button className="btn secondary" onClick={() => open(c)} aria-label={`${canWrite?'Edit':'View'} ${c.content.title || 'untitled campaign'}`}>Open draft</button></article>)}</section></>;
+  return <><div className="actions"><div><span className="eyebrow">One idea at a time</span><h1 className="page-heading">Campaigns</h1></div>{canWrite && brands.length>1 && <div className="editor-brand-select"><label htmlFor="new-campaign-brand">Brand for new campaign</label><select id="new-campaign-brand" value={chosen?.id??''} disabled={busy || importing} onChange={e=>{setBrandId(e.target.value);createKey.current=operationKey();}}>{brands.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></div>}{canWrite && !importing && <button className="btn secondary" disabled={busy || !chosen} onClick={()=>setImporting(true)}>Import newsletter</button>}{canWrite && !importing && <button className="btn" disabled={busy || !chosen} onClick={() => void create()}>{busy ? 'Creating…' : '+ New campaign'}</button>}</div><Alert error={error} />{importing&&chosen&&<Suspense fallback={<p role="status">Loading newsletter import…</p>}><NewsletterImport key={chosen.id} api={api} brand={chosen} drafts={items} open={open} cancel={()=>setImporting(false)}/></Suspense>} {!importing && canWrite && <Authoring api={api} brands={brands} open={open} />}<section className="card">{!loaded ? <p>Loading campaigns…</p> : items.length === 0 ? <div className="empty"><h2>Your next newsletter starts here.</h2><p>{canWrite?'Create a draft and add your images. Drafts never use a campaign allowance.':'No drafts are available for your brands.'}</p></div> : items.map(c => <article className="campaign-row" key={c.id}><div><h2>{c.content.title || 'Untitled campaign'}</h2><p className="muted">{c.content.subject || 'Add a subject'} · Saved {new Date(c.updatedAt).toLocaleDateString()}</p></div><span className="badge">Draft · v{c.version}</span><button className="btn secondary" onClick={() => open(c)} aria-label={`${canWrite?'Edit':'View'} ${c.content.title || 'untitled campaign'}`}>Open draft</button></article>)}</section></>;
 }
 function ImageTile({ asset, api }: { asset: AssetSummary; api: Api }) {
   const [url, setUrl] = useState('');

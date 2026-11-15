@@ -1,3 +1,4 @@
+import { prepareNewsletterImport } from './newsletter-import.js';
 import {lockWorkspace} from './workspace-lock.js';
 import { studioProblem } from '../shared/studio.js';
 import { withStudio } from '../shared/studio-legacy.js';
@@ -343,6 +344,25 @@ export class CommandService {
         return listRehearsals(sql,campaignId,actor.kind==='session'||actor.scopes.includes('audience:summary'));
       }
       case 'campaign.get': return campaign(sql, actor, commands[name].schema.parse(raw).id);
+      case 'campaign.previewImport':
+      case 'campaign.commitImport': {
+        const request = commands[name].schema.parse(raw);
+        await brand(sql, actor, request.brandId);
+        if (request.replace) {
+          const target = await campaign(sql, actor, request.replace.id);
+          requireCondition(target.brandId === request.brandId, 404, 'not_found', 'Choose a draft from this brand.');
+          requireCondition(target.version === request.replace.expectedVersion, 409, 'version_conflict', 'Review the current draft revision before replacing it.');
+        }
+        const review = prepareNewsletterImport(w, request);
+        await checkImages(sql, actor, request.brandId, review.content.assetIds);
+        if (name === 'campaign.previewImport') return review;
+        const {digest: reviewedDigest, operationKey} = commands[name].schema.parse(raw);
+        requireCondition(review.digest === reviewedDigest, 409, 'import_changed', 'Preview these changes before creating the draft.');
+        if (request.replace) {
+          return this.perform('campaign.update', { ...request.replace, content: review.content, operationKey }, actor, sql);
+        }
+        return this.perform('campaign.create', { brandId: request.brandId, content: review.content, operationKey }, actor, sql);
+      }
       case 'campaign.create': {
         const input = commands[name].schema.parse(raw);
         await checkImages(sql, actor, input.brandId, input.content.assetIds);
@@ -360,6 +380,7 @@ export class CommandService {
           const problem=studioProblem(current.content.studio);
           requireCondition(!problem,409,'studio_unsupported',problem??'This saved Studio revision is unsupported.');
           requireCondition(input.content.studio,409,'studio_required','This draft uses Newsletter Studio. Preserve its full block document when editing.');
+          requireCondition(input.content.studio.version >= current.content.studio.version,409,'studio_version_downgrade','Open this draft in an editor that supports its saved Studio version.');
         }
         const content=input.content.studio ? withStudio(input.content,input.content.studio) : input.content;
         if(current.content.studio && input.content.studio){

@@ -8851,6 +8851,330 @@
         }
       }
     },
+    "/api/v1/commands/campaign.previewImport": {
+      "post": {
+        "operationId": "campaign_previewImport",
+        "summary": "Convert the reviewed newsletter and validate photo mappings within this brand. Returns editable content and its digest.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "draft:write",
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "source": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 65536
+                  },
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "markdown",
+                      "html"
+                    ]
+                  },
+                  "acceptMetadata": {
+                    "type": "boolean"
+                  },
+                  "buttonLinks": {
+                    "maxItems": 60,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 2048
+                    }
+                  },
+                  "photoMapping": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
+                    },
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "subject": {
+                    "type": "string",
+                    "maxLength": 150
+                  },
+                  "preheader": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "fromName": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "replyTo": {
+                    "type": "string",
+                    "maxLength": 254
+                  },
+                  "replace": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "expectedVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "expectedVersion"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "brandId",
+                  "source",
+                  "format",
+                  "acceptMetadata",
+                  "buttonLinks",
+                  "photoMapping",
+                  "title",
+                  "subject",
+                  "preheader",
+                  "fromName",
+                  "replyTo"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/campaign.commitImport": {
+      "post": {
+        "operationId": "campaign_commitImport",
+        "summary": "Create an editable draft from the exact reviewed import, or explicitly replace the specified revision. Retry an identical request with its original operation key.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "draft:write",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "source": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 65536
+                  },
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "markdown",
+                      "html"
+                    ]
+                  },
+                  "acceptMetadata": {
+                    "type": "boolean"
+                  },
+                  "buttonLinks": {
+                    "maxItems": 60,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 2048
+                    }
+                  },
+                  "photoMapping": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
+                    },
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "subject": {
+                    "type": "string",
+                    "maxLength": 150
+                  },
+                  "preheader": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "fromName": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "replyTo": {
+                    "type": "string",
+                    "maxLength": 254
+                  },
+                  "replace": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "expectedVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "expectedVersion"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "digest": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  }
+                },
+                "required": [
+                  "brandId",
+                  "source",
+                  "format",
+                  "acceptMetadata",
+                  "buttonLinks",
+                  "photoMapping",
+                  "title",
+                  "subject",
+                  "preheader",
+                  "fromName",
+                  "replyTo",
+                  "digest",
+                  "operationKey"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
     "/api/v1/commands/campaign.fromTemplate": {
       "post": {
         "operationId": "campaign_fromTemplate",
@@ -10065,7 +10389,7 @@
     "/api/v1/commands/campaign.create": {
       "post": {
         "operationId": "campaign_create",
-        "summary": "Prepare a draft in an authorized brand. Optional Studio v1 blocks own the visual content, and assetIds lists their distinct IDs in order.",
+        "summary": "Prepare a draft in an authorized brand. Optional versioned Studio blocks own the visual content, and assetIds lists their distinct IDs in order.",
         "security": [
           {
             "bearerAuth": []
@@ -10105,14 +10429,117 @@
                         "type": "object",
                         "properties": {
                           "version": {
-                            "type": "number",
-                            "const": 1
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "const": 1
+                              },
+                              {
+                                "type": "number",
+                                "const": 2
+                              }
+                            ]
                           },
                           "blocks": {
                             "maxItems": 60,
                             "type": "array",
                             "items": {
                               "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "list"
+                                    },
+                                    "ordered": {
+                                      "type": "boolean"
+                                    },
+                                    "items": {
+                                      "minItems": 1,
+                                      "maxItems": 60,
+                                      "type": "array",
+                                      "items": {
+                                        "maxItems": 200,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "text": {
+                                              "type": "string",
+                                              "maxLength": 12000
+                                            },
+                                            "bold": {
+                                              "type": "boolean"
+                                            },
+                                            "italic": {
+                                              "type": "boolean"
+                                            },
+                                            "href": {
+                                              "type": "string",
+                                              "maxLength": 2048
+                                            }
+                                          },
+                                          "required": [
+                                            "text"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "ordered",
+                                    "items"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "callout"
+                                    },
+                                    "icon": {
+                                      "type": "string",
+                                      "maxLength": 32
+                                    },
+                                    "runs": {
+                                      "maxItems": 200,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "text": {
+                                            "type": "string",
+                                            "maxLength": 12000
+                                          },
+                                          "bold": {
+                                            "type": "boolean"
+                                          },
+                                          "italic": {
+                                            "type": "boolean"
+                                          },
+                                          "href": {
+                                            "type": "string",
+                                            "maxLength": 2048
+                                          }
+                                        },
+                                        "required": [
+                                          "text"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "runs"
+                                  ],
+                                  "additionalProperties": false
+                                },
                                 {
                                   "type": "object",
                                   "properties": {
@@ -10322,6 +10749,101 @@
                                                 "properties": {
                                                   "type": {
                                                     "type": "string",
+                                                    "const": "list"
+                                                  },
+                                                  "ordered": {
+                                                    "type": "boolean"
+                                                  },
+                                                  "items": {
+                                                    "minItems": 1,
+                                                    "maxItems": 60,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "maxItems": 200,
+                                                      "type": "array",
+                                                      "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                          "text": {
+                                                            "type": "string",
+                                                            "maxLength": 12000
+                                                          },
+                                                          "bold": {
+                                                            "type": "boolean"
+                                                          },
+                                                          "italic": {
+                                                            "type": "boolean"
+                                                          },
+                                                          "href": {
+                                                            "type": "string",
+                                                            "maxLength": 2048
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "text"
+                                                        ],
+                                                        "additionalProperties": false
+                                                      }
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "ordered",
+                                                  "items"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "callout"
+                                                  },
+                                                  "icon": {
+                                                    "type": "string",
+                                                    "maxLength": 32
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
                                                     "const": "paragraph"
                                                   },
                                                   "runs": {
@@ -10514,6 +11036,101 @@
                                           "type": "array",
                                           "items": {
                                             "oneOf": [
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "list"
+                                                  },
+                                                  "ordered": {
+                                                    "type": "boolean"
+                                                  },
+                                                  "items": {
+                                                    "minItems": 1,
+                                                    "maxItems": 60,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "maxItems": 200,
+                                                      "type": "array",
+                                                      "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                          "text": {
+                                                            "type": "string",
+                                                            "maxLength": 12000
+                                                          },
+                                                          "bold": {
+                                                            "type": "boolean"
+                                                          },
+                                                          "italic": {
+                                                            "type": "boolean"
+                                                          },
+                                                          "href": {
+                                                            "type": "string",
+                                                            "maxLength": 2048
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "text"
+                                                        ],
+                                                        "additionalProperties": false
+                                                      }
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "ordered",
+                                                  "items"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "callout"
+                                                  },
+                                                  "icon": {
+                                                    "type": "string",
+                                                    "maxLength": 32
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
                                               {
                                                 "type": "object",
                                                 "properties": {
@@ -10878,14 +11495,117 @@
                         "type": "object",
                         "properties": {
                           "version": {
-                            "type": "number",
-                            "const": 1
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "const": 1
+                              },
+                              {
+                                "type": "number",
+                                "const": 2
+                              }
+                            ]
                           },
                           "blocks": {
                             "maxItems": 60,
                             "type": "array",
                             "items": {
                               "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "list"
+                                    },
+                                    "ordered": {
+                                      "type": "boolean"
+                                    },
+                                    "items": {
+                                      "minItems": 1,
+                                      "maxItems": 60,
+                                      "type": "array",
+                                      "items": {
+                                        "maxItems": 200,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "text": {
+                                              "type": "string",
+                                              "maxLength": 12000
+                                            },
+                                            "bold": {
+                                              "type": "boolean"
+                                            },
+                                            "italic": {
+                                              "type": "boolean"
+                                            },
+                                            "href": {
+                                              "type": "string",
+                                              "maxLength": 2048
+                                            }
+                                          },
+                                          "required": [
+                                            "text"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "ordered",
+                                    "items"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "callout"
+                                    },
+                                    "icon": {
+                                      "type": "string",
+                                      "maxLength": 32
+                                    },
+                                    "runs": {
+                                      "maxItems": 200,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "text": {
+                                            "type": "string",
+                                            "maxLength": 12000
+                                          },
+                                          "bold": {
+                                            "type": "boolean"
+                                          },
+                                          "italic": {
+                                            "type": "boolean"
+                                          },
+                                          "href": {
+                                            "type": "string",
+                                            "maxLength": 2048
+                                          }
+                                        },
+                                        "required": [
+                                          "text"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "type",
+                                    "runs"
+                                  ],
+                                  "additionalProperties": false
+                                },
                                 {
                                   "type": "object",
                                   "properties": {
@@ -11095,6 +11815,101 @@
                                                 "properties": {
                                                   "type": {
                                                     "type": "string",
+                                                    "const": "list"
+                                                  },
+                                                  "ordered": {
+                                                    "type": "boolean"
+                                                  },
+                                                  "items": {
+                                                    "minItems": 1,
+                                                    "maxItems": 60,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "maxItems": 200,
+                                                      "type": "array",
+                                                      "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                          "text": {
+                                                            "type": "string",
+                                                            "maxLength": 12000
+                                                          },
+                                                          "bold": {
+                                                            "type": "boolean"
+                                                          },
+                                                          "italic": {
+                                                            "type": "boolean"
+                                                          },
+                                                          "href": {
+                                                            "type": "string",
+                                                            "maxLength": 2048
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "text"
+                                                        ],
+                                                        "additionalProperties": false
+                                                      }
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "ordered",
+                                                  "items"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "callout"
+                                                  },
+                                                  "icon": {
+                                                    "type": "string",
+                                                    "maxLength": 32
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
                                                     "const": "paragraph"
                                                   },
                                                   "runs": {
@@ -11287,6 +12102,101 @@
                                           "type": "array",
                                           "items": {
                                             "oneOf": [
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "list"
+                                                  },
+                                                  "ordered": {
+                                                    "type": "boolean"
+                                                  },
+                                                  "items": {
+                                                    "minItems": 1,
+                                                    "maxItems": 60,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "maxItems": 200,
+                                                      "type": "array",
+                                                      "items": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                          "text": {
+                                                            "type": "string",
+                                                            "maxLength": 12000
+                                                          },
+                                                          "bold": {
+                                                            "type": "boolean"
+                                                          },
+                                                          "italic": {
+                                                            "type": "boolean"
+                                                          },
+                                                          "href": {
+                                                            "type": "string",
+                                                            "maxLength": 2048
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "text"
+                                                        ],
+                                                        "additionalProperties": false
+                                                      }
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "ordered",
+                                                  "items"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "type": {
+                                                    "type": "string",
+                                                    "const": "callout"
+                                                  },
+                                                  "icon": {
+                                                    "type": "string",
+                                                    "maxLength": 32
+                                                  },
+                                                  "runs": {
+                                                    "maxItems": 200,
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "text": {
+                                                          "type": "string",
+                                                          "maxLength": 12000
+                                                        },
+                                                        "bold": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "italic": {
+                                                          "type": "boolean"
+                                                        },
+                                                        "href": {
+                                                          "type": "string",
+                                                          "maxLength": 2048
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "text"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "type",
+                                                  "runs"
+                                                ],
+                                                "additionalProperties": false
+                                              },
                                               {
                                                 "type": "object",
                                                 "properties": {

@@ -77,6 +77,16 @@ async function editorJourney(page: Page, site: Awaited<ReturnType<typeof startSt
   await linkForm.getByLabel('Link address', { exact: true }).fill('https://retailer.example.com/archive');
   await button(page, 'Apply link').click();
   const add = (name: string) => palette(page).getByRole('button', { name, exact: true }).click();
+  await add('Add list');
+  await page.getByLabel('List type').selectOption('ordered');
+  await editText(page,'List item 1','Temporary item');
+  await button(page,'Add item').click();
+  await editText(page,'List item 2','Lake access');
+  await button(page,'Remove list item 1').click();
+  assert.equal(await page.getByRole('textbox',{name:'List item 1'}).innerText(),'Lake access');
+  await add('Add callout');
+  await page.getByLabel('Callout icon (optional)').fill('📌');
+  await editText(page,'Callout text','Book ahead');
   await add('Add image');
   await page.getByRole('combobox', { name: /^Brand image/ }).selectOption(site.front.asset.id);
   await page.getByLabel('Image description', { exact: true }).fill('Front view of the sample');
@@ -129,8 +139,9 @@ async function editorJourney(page: Page, site: Awaited<ReturnType<typeof startSt
   const before = structuredClone(persisted.content.studio);
   assert.deepEqual(
     before?.blocks.map((b) => b.type),
-    ['heading', 'paragraph', 'image', 'button', 'divider', 'spacer', 'columns'],
+    ['heading', 'paragraph', 'list', 'callout', 'image', 'button', 'divider', 'spacer', 'columns'],
   );
+  assert.equal(before?.version, 2);
   assert(!JSON.stringify(before).includes('Unapproved HTML marker'));
   assert(JSON.stringify(before).includes('Pasted marker.'));
   const paraBlock = before?.blocks.find((block) => block.type === 'paragraph');
@@ -158,6 +169,8 @@ async function editorJourney(page: Page, site: Awaited<ReturnType<typeof startSt
   );
   await frame.getByText('Alpine layer', { exact: true }).waitFor();
   await frame.getByText('Forest layer', { exact: true }).waitFor();
+  await frame.locator('ol > li').filter({hasText:'Lake access'}).waitFor();
+  await frame.getByText('📌 Book ahead', {exact:true}).waitFor();
   await page.getByText('Plain-text version', { exact: true }).click();
   const plain = page
     .locator('details')

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { StudioLeaf } from '../../shared/studio.js';
+import type { StudioLeaf, StudioRun } from '../../shared/studio.js';
 import type { AssetSummary } from '../../shared/contracts.js';
 import type { Api } from '../api.js';
 
@@ -46,6 +46,19 @@ export function BrandImage({
   );
 }
 
+function previewRuns(runs: StudioRun[]) {
+  return runs.map((run, index) => {
+    let content: ReactNode = run.text;
+    if (run.bold) content = <strong>{content}</strong>;
+    if (run.italic) content = <em>{content}</em>;
+    return (
+      <span key={index} className={run.href ? 'studio-link-preview' : undefined}>
+        {content}
+      </span>
+    );
+  });
+}
+
 export function BlockPreview({
   block,
   assets,
@@ -60,16 +73,7 @@ export function BlockPreview({
     return (
       <Element className="studio-sample-text">
         {block.runs.length ? (
-          block.runs.map((run, index) => {
-            let content: ReactNode = run.text;
-            if (run.bold) content = <strong>{content}</strong>;
-            if (run.italic) content = <em>{content}</em>;
-            return (
-              <span key={index} className={run.href ? 'studio-link-preview' : undefined}>
-                {content}
-              </span>
-            );
-          })
+          previewRuns(block.runs)
         ) : (
           <span className="studio-placeholder">
             {block.type === 'heading' ? 'Write a heading' : 'Write a paragraph'}
@@ -79,6 +83,23 @@ export function BlockPreview({
     );
   }
   switch (block.type) {
+    case 'list': {
+      const List = block.ordered ? 'ol' : 'ul';
+      return (
+        <List>
+          {block.items.map((runs, i) => (
+            <li key={i}>{previewRuns(runs)}</li>
+          ))}
+        </List>
+      );
+    }
+    case 'callout':
+      return (
+        <aside className="studio-callout">
+          {block.icon && <span>{block.icon} </span>}
+          {previewRuns(block.runs)}
+        </aside>
+      );
     case 'button':
       return <span className="studio-button-preview">{block.label || 'Button text'}</span>;
     case 'image':

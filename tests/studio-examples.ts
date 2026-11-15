@@ -40,7 +40,7 @@ export function malformedStudio(original: StudioDocument): { name: string; docum
       name: 'unknown root block mixed with otherwise good text',
       document: insert({ type: 'unknown', runs: [{ text: 'good' }] }),
     },
-    { name: 'future document version', document: { ...original, version: 2 } },
+    { name: 'future document version', document: { ...original, version: 3 } },
     {
       name: 'nested unknown child',
       document: insert({

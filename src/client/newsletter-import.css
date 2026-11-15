@@ -1,0 +1,57 @@
+.newsletter-import {
+  max-width: 56rem;
+}
+.newsletter-import > fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.newsletter-import .field {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.85rem 0;
+}
+.newsletter-import .field input:not([type='checkbox']),
+.newsletter-import select,
+.newsletter-import textarea {
+  width: 100%;
+  min-width: 0;
+}
+.import-preview {
+  padding: clamp(0.8rem, 3vw, 2rem);
+  border: 1px solid var(--border, #dccfd2);
+  border-radius: 0.65rem;
+  overflow-wrap: anywhere;
+}
+.import-photo {
+  border-block: 1px solid var(--border, #dccfd2);
+  padding: 0.5rem 0;
+}
+.import-photo small,
+.import-choice {
+  overflow-wrap: anywhere;
+}
+.import-thumb,
+.import-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 14rem;
+  object-fit: contain;
+}
+.import-choice {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.6rem 0;
+}
+.import-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+@media (max-width: 38rem) {
+  .import-columns {
+    grid-template-columns: 1fr;
+  }
+}
