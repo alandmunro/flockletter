@@ -1,5 +1,12 @@
 import type { CommandName } from '../shared/contracts.js';
 export type TokenGetter = (refresh?: boolean) => Promise<string | null>;
+export class ApiError extends Error {
+  readonly code:string;
+  constructor(readonly status:number,code:unknown,message:string){
+    super(message);this.name='ApiError';
+    this.code=typeof code==='string'&&/^[a-z][a-z0-9_]{0,79}$/.test(code)?code:'request_failed';
+  }
+}
 export function client(getToken: TokenGetter) {
   async function request(path: string, options: RequestInit = {}) {
     const token = await getToken();
@@ -20,8 +27,8 @@ export function client(getToken: TokenGetter) {
   return {
     async call<T>(name: CommandName, input: unknown): Promise<T> {
       const response = await request(`/api/v1/commands/${name}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
-      const data = await response.json() as { result: T; error?: { message: string; details?: { path: string; message: string }[] } };
-      if (!response.ok) throw new Error([data.error?.message ?? 'Request failed.', ...data.error?.details?.map(d => `${d.path}: ${d.message}`) ?? []].join(' '));
+      const data = await response.json() as { result: T; error?: { code?:unknown;message: string; details?: { path: string; message: string }[] } };
+      if (!response.ok) throw new ApiError(response.status,data.error?.code,[data.error?.message ?? 'Request failed.', ...data.error?.details?.map(d => `${d.path}: ${d.message}`) ?? []].join(' '));
       return data.result;
     },
     async asset(id: string) {

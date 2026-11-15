@@ -9,10 +9,10 @@ import {operationKey} from './api.js';
 import {ConfirmedTestRecipientPicker} from './ConfirmedTestRecipientPicker.js';
 import {TestSendReview} from './TestSendReview.js';
 import {CampaignPreview} from './CampaignPreview.js';
+import {explainDeliveryError as explain} from './delivery-error.js';
 
 type Captured={to:string;subject:string;html:string;text:string;images:{sha256:string;mime:string;base64:string}[]};
 type Props={api:Api;brandId:string;draft:Campaign|null;restoreId?:string|null;onSelectTest?:(campaignId:string,id:string)=>void;onRestoreConsumed?:()=>void;onChanged?:()=>Promise<void>};
-const explain=(error:unknown)=>error instanceof Error?error.message:'The test could not finish. Refresh its original status before trying again.';
 function capturedHtml(message:Captured){
   const images=new Map(message.images.filter(image=>['image/png','image/jpeg','image/webp','image/gif'].includes(image.mime)&&/^[a-f0-9]{64}$/.test(image.sha256))
     .map(image=>[image.sha256,'data:'+image.mime+';base64,'+image.base64]));
