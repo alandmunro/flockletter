@@ -127,7 +127,8 @@ try {
       .locator('pre')
       .innerText();
     assert.match(plain, /• Lakeside trail/);
-    assert.ok(plain.includes(booking) && plain.includes('The lodge team 🦩'));
+    assert.ok(plain.split('\n').includes('Book a stay — ' + booking));
+    assert.match(plain, /The lodge team 🦩/);
     const drafts = await site.command<Campaign[]>('campaign.list', {});
     assert.equal(drafts.length, 1);
     const [draft] = drafts;
