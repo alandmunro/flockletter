@@ -2,6 +2,7 @@ import type { z } from "zod";
 import { commands, contentSchema, emptyContent } from "../shared/contracts.js";
 import {
   convertNewsletter,
+  hasPrivateNewsletterReference,
   resolveNewsletterPhotos,
 } from "../shared/newsletter-import.js";
 import { withStudio } from "../shared/studio-legacy.js";
@@ -31,6 +32,8 @@ export function prepareNewsletterImport(
       fromName,
       replyTo,
     } = request;
+    if ([title, subject, preheader, fromName, replyTo].some(hasPrivateNewsletterReference))
+      throw Error("Remove private or expiring URLs from the newsletter fields.");
     const conversion = convertNewsletter({
       source,
       format,

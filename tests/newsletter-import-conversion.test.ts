@@ -143,3 +143,39 @@ it("reports impossible conversions and document limits without clipping", () => 
     convertNewsletter({ format: "markdown", source: "a".repeat(65537) }),
   ).toThrow(/64 KiB/);
 });
+
+it("blocks private references in editable text and signed downloads in outgoing links", () => {
+  for (const link of [
+    "https://media.example.com/a?X-Amz-Signature=123",
+    "https://storage.example.com/a?X-Goog-Signature=abc",
+    "https://storage.example.com/a?sv=1&se=expiry&sig=abc",
+    "https://cdn.example.com/a?Expires=4&Signature=abc",
+    "https://chatgpt.com./share/private",
+  ]) {
+    expect(() =>
+      convertNewsletter({
+        format: "html",
+        source: '<a href="' + link + '">Download</a>',
+      }),
+    ).toThrow(/public HTTPS/);
+    expect(() =>
+      convertNewsletter({
+        format: "html",
+        source: "<p>File: " + link + "</p>",
+      }),
+    ).toThrow(/temporary URL/);
+  }
+  for (const markup of [
+    "<p>See blob:https://example.com/id</p>",
+    "<p>See library-<b>file:</b>id</p>",
+    "<p>Subject: page://private</p>",
+  ]) {
+    expect(() =>
+      convertNewsletter({
+        format: "html",
+        source: markup,
+        acceptMetadata: true,
+      }),
+    ).toThrow(/private or temporary/);
+  }
+});

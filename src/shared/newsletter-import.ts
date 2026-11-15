@@ -28,10 +28,44 @@ type Piece = StudioRun | NewsletterPhoto;
 const tag = (node: Tree.ChildNode) => ("tagName" in node ? node.tagName : "");
 const attr = (node: Tree.Element, key: string) =>
   node.attrs.find((a) => a.name === key)?.value ?? "";
-const privateLink = (href: string) =>
-  /^(?:library-file:|project-file:|page:|blob:|https?:\/\/(?:[^/]+\.)?(?:chatgpt\.com|chat\.openai\.com)(?:[/:?#]|$))/i.test(
-    href,
-  );
+function privateLink(href: string) {
+  if (/^(?:library-file|project-file|page|blob|data):/i.test(href)) return true;
+  try {
+    const url = new URL(href);
+    const host = url.hostname.toLowerCase().replace(/\.$/, "");
+    if (
+      /(^|\.)(?:chatgpt\.com|chat\.openai\.com|oaiusercontent\.com)$/.test(host)
+    )
+      return true;
+    const query = new Set(
+      Array.from(url.searchParams.keys(), (key) => key.toLowerCase()),
+    );
+    return (
+      query.has("x-amz-signature") ||
+      query.has("x-goog-signature") ||
+      (query.has("sig") && (query.has("se") || query.has("sv"))) ||
+      (query.has("signature") &&
+        ["expires", "awsaccesskeyid", "key-pair-id", "googleaccessid"].some(
+          (k) => query.has(k),
+        ))
+    );
+  } catch {
+    return false;
+  }
+}
+// Plain prose and metadata can also contain a pasted private URL without an anchor.
+export function hasPrivateNewsletterReference(value: string) {
+  if (
+    /(?:^|[^a-z0-9-])(?:library-file|project-file|page|blob):[^\s]+/i.test(
+      value,
+    )
+  )
+    return true;
+  return Array.from(
+    value.matchAll(/https?:\/\/[^\s<>"']+/gi),
+    (m) => m[0],
+  ).some(privateLink);
+}
 const contentTags = new Set([
   "p",
   "h1",
@@ -465,6 +499,29 @@ export function convertNewsletter(input: {
     flush();
   }
   blocks(root.childNodes);
+  // Check joined runs so markup cannot split a private URL across formatting boundaries.
+  for (const [index, block] of result.blocks.entries()) {
+    const strings =
+      block.type === "list"
+        ? block.items.map((item) => item.map((r) => r.text).join(""))
+        : "runs" in block
+          ? [block.runs.map((r) => r.text).join("")]
+          : block.type === "button"
+            ? [block.label]
+            : block.type === "photo"
+              ? [block.alt]
+              : [];
+    if (strings.some(hasPrivateNewsletterReference))
+      throw Error(
+        "Block " +
+          (index + 1) +
+          ": Remove the private or temporary URL from the text before importing.",
+      );
+  }
+  if (Object.values(result.suggestions).some(hasPrivateNewsletterReference))
+    throw Error(
+      "Metadata: Remove the private or temporary URL before importing.",
+    );
   const firstHeading = result.blocks.find((b) => b.type === "heading");
   if (firstHeading?.type === "heading")
     result.suggestions.title ??= firstHeading.runs.map((r) => r.text).join("");
