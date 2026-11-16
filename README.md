@@ -4,15 +4,30 @@ Flockletter is an open-source mailing SaaS for small retailers and general small
 
 ## Current status
 
-D-044 authorizes production and staging code parity. GitHub `main` and the deployed staging application now contain the complete tested platform. Production identity/database setup remains pending; deployment is separate from live email, charges and hosted deletion. [Release record and checklist](docs/implementation/RELEASE_PARITY.md)
+Flockletter is live in production at [flockletter.frostyflamingosoftware.com](https://flockletter.frostyflamingosoftware.com). Production serves an exact, staging-tested commit from GitHub `main`, promoted through the [release process](docs/implementation/RELEASE_PARITY.md). The running commit is public at `/api/health/version`.
 
-The project is an independent, public AGPLv3 small business newsletter application currently running on a free Render staging service that can sleep. A dedicated worker entrypoint exists for processing but is not automatically provisioned in this environment. Owner staging exercises cover subscription flows with a 14-day trial, caps of 2,500 contacts and 2,500 emails, and paid plan exercises at $15, $25, and $39. The system enforces per-brand public double opt-in, handles up to 2,500 CSV rows per import and preserves existing suppression, and maintains exact saved campaign reviews, approvals, schedules, and durable private Listmonk captures with original photos preserved.
+Production configuration as observed on November 16, 2026 (`/api/config`):
 
-Team management features such as invites, removals, and ownership changes are captured in the workflow but do not constitute real Clerk membership updates; while Clerk hosted identity is real, team changes operate in capture mode. The support inbox is protected and reviewed with captured replies, and the cancellation workflow enforces a 90-day retention period with captured zero-deletion outcomes. A separately privileged erasure executor is tested with disposable data and stays disabled for hosted customer data.
+| Workflow | Production mode |
+| --- | --- |
+| Billing | `stripe_live` |
+| Newsletter delivery | `resend`, scope `all` |
+| Audience and signup | `live` |
+| Team lifecycle | `off` |
+| Support inbox | `off` (help is by email) |
+| Hosted retention and erasure | `off` |
+| Platform operator console | `off` |
+| Operator MFA policy | `pre-revenue` (D-051 temporary exception) |
 
-Operations rely on durable queues and worker records that track captured sender infrastructure, ensuring state consistency across the staging environment. The private Listmonk renderer pool operates per workspace with original assets preserved in the database, and no tracking is enabled by default. Real provider adapters for AWS SES/SNS, Resend, Stripe, and Clerk are built and gated behind feature flags, with no live claims made regarding production traffic or financial transactions at this stage.
+This table records configuration, not customer traffic, provider acceptance or revenue. Under D-051 the operator MFA exception ends once paying customers arrive, and hosted retention stays off while it is in force. D-060 holds new Pro enrollment and D-062 selects the temporary no-tax-collection mode.
 
-Local model drafts are reviewed before integration. Real provider acceptance, commercial activation and production deployment remain separate release gates.
+The product offers a 14-day trial with caps of 2,500 contacts and 2,500 emails, and paid plans at $15, $25 and $39. It enforces per-brand public double opt-in by default, handles up to 2,500 CSV rows per import, preserves existing suppression, and requires an exact saved review and explicit approval before a campaign is queued. No tracking is enabled by default.
+
+Staging is a separate Render Free service that can sleep, with its own Clerk instance and logical database. Staging exercises use captured modes: team invites, removals and ownership changes are recorded without real Clerk membership updates, support replies are captured, and cancellation runs the 90-day retention workflow with captured zero-deletion outcomes. A separately privileged erasure executor is tested with disposable data and stays disabled for hosted customer data.
+
+Operations rely on durable queues and worker records. The private Listmonk renderer pool operates per workspace with original assets preserved in the database. Provider adapters exist for AWS SES/SNS, Resend, Stripe and Clerk; each is selected by explicit configuration.
+
+Local model drafts are reviewed before integration. Code approval, configuration, real provider evidence and activation remain separate facts; record each one only from its own evidence.
 
 - [Owner Testing Guide](docs/implementation/OWNER_TESTING_GUIDE.md)
 - [Customer Browser Proof](docs/implementation/CUSTOMER_BROWSER_PROOF.md)
@@ -25,7 +40,7 @@ Local model drafts are reviewed before integration. Real provider acceptance, co
 
 ## Working foundation
 
-The application uses TypeScript, React/Vite, Express and PostgreSQL. You can create a workspace and first brand, save campaign drafts, batch-upload original images, review HTML/plain-text previews and manage scoped connections. First-party intake has an independent worker, double opt-in and suppression. Campaign sending and paid activation remain gated.
+The application uses TypeScript, React/Vite, Express and PostgreSQL. You can create a workspace and first brand, save campaign drafts, batch-upload original images, review HTML/plain-text previews and manage scoped connections. First-party intake has an independent worker, double opt-in and suppression. Campaign sending and paid activation are selected by explicit configuration; see the current status above for production.
 
 [Newsletter Studio](docs/implementation/NEWSLETTER_STUDIO.md) covers visual editing, original brand images, versioned previews and captured rehearsals.
 
