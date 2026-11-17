@@ -125,6 +125,7 @@ These choices shape the full release SRD and remain subject to owner review. Sel
 | O-013 | Exact initial role/capability matrix and approval policy | Owner, editor, analyst and separate platform operator; send permission explicitly granted | Authorization implementation |
 | O-014 | Newsletter Studio editor licensing, draft fidelity and email client acceptance | Pin Resend’s `@react-email/editor` 1.8.1. Verify its actual copyright and permission text, dependency notices and independent self-hosting under FL-PROD-005. FL-AT-036 also covers legacy migration, safe HTML/plain-text rendering, Listmonk-compatible capture and representative Gmail, Outlook and mobile inboxes. Record desktop browser evidence and inbox evidence separately. [Editor license inventory](implementation/STUDIO_LICENSES.md) | Full release acceptance |
 | O-015 | SES Tenants plus Listmonk transport security, feedback, suppression and quota enforcement | Prove `X-SES-TENANT` and configuration-set assignment come from trusted workspace mappings, test cross-tenant rejection, provider acceptance/reconciliation, tenant-level pauses and account-wide risk; keep self-hosted and alternative providers portable | SES adapter implementation and live mailing |
+| O-016 | Whether to lift the SRD's SMS deferral and accept the texting and gifting proposal | [The proposal](implementation/PROPOSED_TEXTING_AND_GIFTING.md) lists its own conflicts with the SRD, D-049, D-054, D-062 and O-013. It records owner choices made outside this ledger; none is accepted here, and no texting, gifting or provider work is authorized | Any texting or gifting implementation |
 
 The owner can resolve these incrementally. Missing decisions must be exposed before dependent implementation starts. Under D-030, the assistant may resolve reasonable foundation choices and must record them explicitly; provider secrets, legal facts and live sending readiness cannot be invented.
 
@@ -132,6 +133,7 @@ The owner can resolve these incrementally. Missing decisions must be exposed bef
 
 | Date | Change |
 | --- | --- |
+| 2026-11-17 | Added O-016 and the public texting and gifting proposal for review. No decision accepted and no implementation authorized. |
 | 2026-11-09 | D-048/049/050 record explicit owner acceptance of the minimal lifetime trial-history exception, specified billing defaults and FFA Growth complimentary policy. Configuration, historical/provider evidence, exact customer agreement, legal/tax facts and actual grant issuance remain separate. Documentation only. |
 | 2026-11-06 | Established the product name, public-repository scope and phase 1 boundary; recorded open signup, included delivery and AGPLv3 choices; created the first draft requirements and review gates. |
 | 2026-11-06 | Draft 0.2 records the owner's market, tier limits, pricing direction, trial, login, privacy, retention, US/business, support, complimentary FFA and Render/core-stack decisions. Keeps unresolved numeric limits and detailed policy gates explicit. No implementation authorized. |
