@@ -15,6 +15,19 @@ export function WorkspaceSetupProgress({api,workspace,onNavigate}:{api:Api;works
     finally{if(current===request.current)setLoading(false);}
   },[api]);
   useEffect(()=>{void refresh();return()=>{request.current++;};},[refresh]);
-  return <OnboardingProgress workspace={workspace} hasDraft={workspace.hasDraft} readiness={readiness}
-    loading={loading} error={error} onRefresh={()=>void refresh()} onNavigate={onNavigate}/>;
+  const brands = readiness?.brands;
+  const confirmed = brands && brands.every(brand => brand.confirmed !== null)
+    ? brands.reduce((total, brand) => total + (brand.confirmed ?? 0), 0) : undefined;
+  const tiles: {label: string; value: number | undefined; page: SetupPage}[] = [
+    {label: 'Sending brands', value: workspace.brands.length, page: 'settings'},
+    {label: 'Confirmed contacts across brands', value: confirmed, page: 'audience'},
+    {label: 'Sender profiles configured', value: brands?.filter(brand => brand.senderProfileConfigured).length, page: 'delivery'},
+  ];
+  return <><div className="overview-tiles">{tiles.map(tile =>
+    <button type="button" key={tile.page} onClick={() => onNavigate(tile.page)}>
+      <span>{tile.label}</span><b>{tile.value?.toLocaleString() ?? (loading ? 'Checking…' : 'Unavailable')}</b>
+      <i aria-hidden="true">↗</i>
+    </button>
+  )}</div><OnboardingProgress workspace={workspace} hasDraft={workspace.hasDraft} readiness={readiness}
+    loading={loading} error={error} onRefresh={()=>void refresh()} onNavigate={onNavigate}/></>;
 }

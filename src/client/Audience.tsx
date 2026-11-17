@@ -92,10 +92,6 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
       <p className="eyebrow">{brand.name} / Audience</p>
       <h1 className="page-heading">Audience</h1>
       <Counts key={revision} api={api} brandId={brand.id} />
-      <AudienceOnboarding api={api} brandId={brand.id} onChanged={changed}/>
-      <Segments key={brand.id} api={api} brandId={brand.id} />
-      <ImportPreview api={api} brand={brand} onApplied={changed} />
-      <AudienceExport api={api} brand={brand} />
       <section className="card" aria-labelledby="contact-heading">
         <h2 id="contact-heading">Contacts</h2>
         <div className="audience-controls">
@@ -160,6 +156,10 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
           next={(value) => setPages((v) => [...v, value])}
         />
       </section>
+      <AudienceOnboarding api={api} brandId={brand.id} onChanged={changed}/>
+      <Segments key={brand.id} api={api} brandId={brand.id} />
+      <ImportPreview api={api} brand={brand} onApplied={changed} />
+      <AudienceExport api={api} brand={brand} />
       <button type="button" className="btn secondary" onClick={onSetup}>
         View signup connection settings
       </button>

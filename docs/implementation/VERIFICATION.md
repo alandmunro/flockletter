@@ -121,3 +121,9 @@ Live native email acceptance still needs one authorized receiving-provider verif
 ## D-051 temporary pre-revenue operator authentication
 
 The owner explicitly deferred production operator MFA until paid customers. Local full lint/typecheck/test/build checks passed: 119 files, 957 tests and two existing gated native-engine skips. After the final erasure-signing guard, the four focused identity/HTTP/service/preparation suites passed all 54 tests, lint/typecheck/build passed again. Clerk responses here are synthetic; actual hosted operator setup and real first-factor reverification remain separate evidence. The policy is production-only, explicit, defaults to MFA, and refuses hosted-retention/signing activation. No authentication protection is silently weakened by a missing setting. The later correction removes the initial billing interlock so this temporary policy cannot block the first paid customer; the owner must revisit MFA once paying customers arrive. See [policy and rollback](PRE_REVENUE_OPERATOR_AUTH.md).
+
+### November 17 · Application design refresh
+
+Compared the application with the checked-in source and desktop/mobile captures of the owner’s private Sites design review. The application now shares a centered canvas, crimson monogram, horizontal workspace navigation, compact controls and serif headings. Overview tiles use the existing authorized workspace and preflight responses. Audience prioritizes contacts, and subscriber pages retain the brand’s selected identity and consent controls. Clerk handles the sign-in form.
+
+Local Qwen supplied the envelope CSS draft. The primary assistant corrected its overflowing flap and palette, implemented the application changes and verified the disposable workspace setup and seven-workflow browser journeys at desktop and 390px widths.

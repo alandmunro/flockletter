@@ -1,7 +1,7 @@
 import { supportAnswer, supportAddress, type SupportTopic } from '../shared/support.js';
 export function Help() {
   return (
-    <main className="main" id="main">
+    <main className="main support-page" id="main">
       <section className="card">
         <h1 className="page-heading">Flockletter support</h1>
         <p>Email our support team for help with your account, billing or privacy requests.</p>
@@ -10,7 +10,7 @@ export function Help() {
           Email support
         </a>
       </section>
-      {(['plans', 'trial', 'audience', 'campaigns'] as SupportTopic[]).map((topic) => {
+      <div className="support-topics">{(['plans', 'trial', 'audience', 'campaigns'] as SupportTopic[]).map((topic) => {
         const answer = supportAnswer(topic)!;
         return (
           <section className="card" key={topic}>
@@ -18,7 +18,7 @@ export function Help() {
             <p>{answer.text}</p>
           </section>
         );
-      })}
+      })}</div>
       <a href="/pricing">Plans and limits</a> · <a href="/studio-notices.txt">Newsletter Studio software notices</a>
     </main>
   );
