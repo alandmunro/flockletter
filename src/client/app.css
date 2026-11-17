@@ -25,3 +25,134 @@
 .logout-error{max-width:260px;margin:0;color:#741c18;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
 
 .sender-dns-table{overflow-x:auto;max-width:100%}.sender-dns-table td{max-width:400px;overflow-wrap:anywhere;vertical-align:top;padding:8px}.sender-dns-table th{text-align:left;padding:8px}
+
+/* Shared application canvas from the design review. */
+:root {
+  --rule: #f0dce1;
+  --ink: #231b1e;
+  --display: Fraunces, Georgia, serif;
+  font-family: Geist, ui-sans-serif, system-ui, sans-serif;
+  color: var(--ink);
+}
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  min-height: 78px;
+  padding: 11px max(4vw, calc((100% - 1190px) / 2));
+  gap: 18px;
+  border-color: var(--rule);
+}
+.wordmark { display: inline-flex; align-items: center; gap: 10px; font-size: 29px; }
+.wordmark i {
+  display: grid; place-items: center;
+  width: 32px; height: 36px;
+  border-radius: 10px 10px 10px 3px;
+  background: var(--accent); color: white;
+  font: italic bold 27px var(--display);
+}
+.software-logo { width: 74px; margin: 0; }
+.header-account { margin-left: auto; }
+.workspace-nav {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  background: white;
+  padding-inline: max(4vw, calc((100% - 1190px) / 2));
+  border-bottom: 1px solid var(--rule);
+  gap: clamp(10px, 1.5vw, 24px);
+}
+.workspace-nav button {
+  flex: none; padding: 0 2px; min-height: 46px;
+  border: 0; border-bottom: 3px solid transparent;
+  background: transparent; color: var(--muted);
+  font-weight: 550; font-size: 13px;
+}
+.workspace-nav button[aria-current=page], .workspace-nav button:hover {
+  color: var(--accent); border-bottom-color: currentColor;
+}
+.workspace-nav button:focus-visible { outline-offset: -4px; }
+.main, .public-plans {
+  width: 100%; max-width: 1280px; margin: auto;
+  padding: clamp(22px, 3vw, 44px) max(4vw, calc((100% - 1190px) / 2));
+}
+/* Once the canvas reaches its maximum width it supplies its own gutters. */
+@media (min-width: 1280px) { .main, .public-plans { padding-inline: 45px; } }
+.main { overflow-wrap: anywhere; }
+h1, h2, h3 { font-family: var(--display); letter-spacing: -.035em; color: var(--ink); }
+h1, h2 { font-weight: 600; }
+.page-heading { font-size: clamp(32px, 3.3vw, 46px); line-height: 1.12; }
+.page-intro { margin-bottom: 24px; }
+.card { border-color: var(--rule); border-radius: 13px; padding: clamp(18px, 2vw, 28px); box-shadow: 0 3px 12px #4a0a1e04; }
+.card .card { box-shadow: none; }
+.actions { justify-content: flex-start; }
+.actions > div:has(> .page-heading) { margin-right: auto; }
+.environment-note {
+  color: var(--muted); font-size: 12px;
+  border-left: 2px solid var(--border); padding-left: 12px; margin-bottom: 24px;
+}
+.overview-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+.overview-heading h1, .overview-heading .eyebrow { margin: 0; }
+.overview-heading .eyebrow { margin-bottom: 8px; }
+.overview-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.overview-tiles button {
+  position: relative; text-align: left; min-width: 0; padding: 20px 32px 20px 22px;
+  background: white; color: var(--muted); border: 1px solid var(--rule); border-radius: 12px;
+}
+.overview-tiles button:hover { border-color: var(--accent); }
+.overview-tiles span { font-size: 13px; }
+.overview-tiles b { display: block; font: 600 clamp(23px, 2.8vw, 38px) var(--display); margin-top: 9px; color: var(--ink); }
+.overview-tiles i { position: absolute; right: 16px; top: 18px; font-style: normal; color: var(--accent); }
+.onboarding-progress .setup-steps { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr)); gap: 14px; }
+.setup-steps li > div { align-items: flex-start; flex-direction: column; gap: 3px; }
+.onboarding-progress section dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; }
+.onboarding-progress section dd { margin: 0; font-weight: 550; }
+.onboarding-progress section ul { list-style: none; padding: 0; }
+.onboarding-progress section li { border-top: 1px solid var(--rule); padding-top: 16px; }
+.onboarding-progress section li p { margin: 4px 0 10px; color: var(--muted); }
+.signin-layout { max-width: 960px; margin: 4vh auto; display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center; }
+.signin-intro { padding: clamp(20px, 4vw, 45px); background: #fae8ec; border-radius: 18px; }
+.signin-intro h1 { max-width: 12ch; margin-bottom: 22px; }
+.signin-form { min-width: 0; }
+.letter-art {
+  position: relative; width: 96px; height: 66px; overflow: hidden; margin: 0 auto 18px;
+  background: #fffdfa; border: 1.5px solid #945264; border-radius: 5px;
+  transform: rotate(-7deg); box-shadow: 4px 6px #efd4db;
+}
+.letter-art::before, .letter-art::after {
+  content: ''; position: absolute; left: 50%; width: 70px; height: 70px;
+  border: 1px solid #945264; transform: translateX(-50%) rotate(45deg);
+}
+.letter-art::before { top: 30px; }
+.letter-art::after { bottom: 38px; background: #fcf0f3; }
+.signin-intro .letter-art { margin: 18px 0 30px; }
+.plan-card { display: flex; flex-direction: column; }
+.plan-card dl { margin-bottom: auto; }
+.plan-card .btn { align-self: flex-start; }
+select:focus-visible { outline: 3px solid #af4d70; outline-offset: 3px; }
+@media (max-width: 720px) {
+  .app-header { gap: 10px; min-height: 64px; }
+  .header-account:not(:empty) { order: 1; width: 100%; }
+  .software-logo { width: 56px; margin-left: auto; }
+  .workspace-nav { gap: 18px; }
+  .overview-tiles { grid-template-columns: 1fr; gap: 7px; }
+  .overview-tiles button { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 42px 11px 16px; }
+  .overview-tiles b { font-size: 22px; margin: 0; }
+  .overview-tiles i { top: 50%; transform: translateY(-50%); }
+  .signin-layout { grid-template-columns: minmax(0,1fr); gap: 18px; margin: 0 auto; }
+  .signin-intro .letter-art { float: right; margin: 12px 5px; scale: .72; transform-origin: right; }
+}
+.main.policy-page { max-width: 850px; }
+.policy-page h2 { margin-top: 1.5em; }
+.support-topics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 350px), 1fr)); gap: 16px; margin-bottom: 24px; }
+.support-topics .card { margin: 0; }
+.support-page > section p { max-width: 66ch; }
+.audience-counts dd { font-family: var(--display); font-weight: 600; }
+.audience-table-scroll th, .operator-health th, .sender-dns-table th { background: #fff7f8; color: var(--muted); font-weight: 600; }
+.plan-card :is(.btn,.notice) { margin-top: 16px; }
+.cookie-notice { background: white; border-color: var(--rule); }
+.cookie-notice .cookie-choice { background: white; border: 1px solid var(--border); }
+.workspace-name { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.brand-snapshots, .onboarding-progress section ul { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit,minmax(min(100%,260px),1fr)); }
+.brand-snapshots { margin: 20px 0 28px; }
+.brand-snapshots section { padding: 18px; background: #fff8fa; border-radius: 10px; }
+.brand-snapshots h3, .brand-snapshots p:last-child { margin-bottom: 0; }

@@ -1,7 +1,7 @@
 .postcard-page { margin:0; background:#fff7f8 }
 .signup-postcard { padding:clamp(12px,4vw,32px) 12px; background:#fff7f8; color:#342b30; font:16px/1.55 Arial,Helvetica,sans-serif; overflow-wrap:anywhere }
 .signup-postcard * { box-sizing:border-box }
-.signup-postcard .postcard-sheet { margin:0 auto; max-width:600px; background:white; border:1px solid #eadbdf; border-radius:8px; overflow:hidden }
+.signup-postcard .postcard-sheet { margin:0 auto; max-width:600px; background:white; border:1px solid #eadbdf; border-radius:14px; box-shadow:0 6px 24px -18px #4a0a1e66; overflow:hidden }
 .signup-postcard .postcard-head, .signup-postcard .postcard-body, .signup-postcard .postcard-foot { padding:22px clamp(18px,5vw,34px) }
 .signup-postcard .postcard-head { display:flex; align-items:center; justify-content:space-between; gap:12px; background:#f5e8ea; border-bottom:1px solid #e5d1d7 }
 .signup-postcard .postcard-name { color:#4a0a1e; font:bold 25px/1.15 Georgia,serif }

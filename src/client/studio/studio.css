@@ -1,5 +1,5 @@
 .studio {
-  --studio-paper: #fffdfb;
+  --studio-paper: #fff;
   color: var(--wine);
   min-width: 0;
 }
@@ -32,10 +32,12 @@
 }
 .studio-sheet {
   border: 1px solid var(--border);
-  border-top: 3px solid var(--wine);
+  box-shadow: 0 10px 30px -20px #4a0a1e55;
+  max-width: 960px;
+  margin: 1rem auto;
   background: var(--studio-paper);
   padding: clamp(0.8rem, 2.5vw, 2rem);
-  border-radius: 3px 3px 10px 10px;
+  border-radius: 12px;
 }
 .studio-list {
   display: grid;

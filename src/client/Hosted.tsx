@@ -24,7 +24,7 @@ function Hosted({ environment,setupGaps }: SetupProps) {
   const logout = <LogoutButton signOut={() => clerk.signOut({ redirectUrl: '/' })} />;
   const account = <><OrganizationSwitcher hidePersonal afterSelectOrganizationUrl={returnUrl} afterCreateOrganizationUrl={returnUrl} /><UserButton />{logout}</>;
   if (!isLoaded) return <><Header /><main className="main">Loading sign-in…</main></>;
-  if (!isSignedIn) return <><Header /><main className="main"><section className="auth-card"><h1 className="page-heading">A thoughtful hello.</h1><p>Sign in to prepare your next newsletter.</p><a href="/pricing">See plans and limits</a> · <a href="/help">Email support</a>{window.location.pathname === '/sign-up' ? <SignUp routing="hash" signInUrl={returnUrl} forceRedirectUrl={returnUrl} /> : <SignIn routing="hash" signUpUrl={signupUrl} forceRedirectUrl={returnUrl} />}</section></main></>;
+  if (!isSignedIn) return <><Header /><main className="main"><section className="signin-layout"><div className="signin-intro"><div className="letter-art" aria-hidden="true"/><h1 className="page-heading">{window.location.pathname === '/sign-up' ? 'Create your account' : 'Sign in to your workspace'}</h1><a href="/pricing">See plans and limits</a> · <a href="/help">Email support</a></div><div className="signin-form">{window.location.pathname === '/sign-up' ? <SignUp routing="hash" signInUrl={returnUrl} forceRedirectUrl={returnUrl} /> : <SignIn routing="hash" signUpUrl={signupUrl} forceRedirectUrl={returnUrl} />}</div></section></main></>;
   if (setupGaps.length) {
     return <><Header account={<><UserButton />{logout}</>} /><main className="main"><SetupStatus environment={environment} gaps={setupGaps} signedIn /></main></>;
   }

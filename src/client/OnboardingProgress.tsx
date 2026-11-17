@@ -37,13 +37,13 @@ export function OnboardingProgress({workspace,hasDraft,readiness:observed,loadin
       <DeliveryScopeNotice mode={readiness.mode} scope={readiness.deliveryScope??'all'}/>
       <p className="help">Snapshot observed {readiness.observedAt??'at the last refresh'}. Refresh to check again. Private renderer: {readiness.rendererConfigured?'configured':'not configured'}.</p>
       {readiness.mode==='capture'&&<p className="help">Captured exercises do not verify external sending or inbox delivery.</p>}
-      {(readiness.brands??[]).map(brand=><section key={brand.id} aria-labelledby={'setup-brand-'+brand.id}>
+      <div className="brand-snapshots">{(readiness.brands??[]).map(brand=><section key={brand.id} aria-labelledby={'setup-brand-'+brand.id}>
         <h3 id={'setup-brand-'+brand.id}>{brand.name}</h3><dl>
           <dt>Sender identity</dt><dd>{brand.senderProfileConfigured?'Configured':'Needed'}</dd>
           <dt>Sender verification</dt><dd>{externalDelivery(readiness.mode)&&brand.senderVerified?'Current at this check':readiness.mode==='capture'?'Exercise only':'Needs verification'}</dd>
           <dt>Confirmed audience</dt><dd>{brand.confirmed===null?'Not available with this access':brand.confirmed+' confirmed contacts'}</dd>
         </dl><p className="help">Confirmed contacts still pass consent and suppression checks in the exact campaign review and at execution.</p>
-      </section>)}
+      </section>)}</div>
       {!!gaps.length&&<section aria-labelledby="setup-next-steps"><h3 id="setup-next-steps">Next steps</h3><ul>{gaps.map((gap,index)=><li key={gap.code+'-'+(gap.brandId??'workspace')+'-'+index}>
         <strong>{gap.title}</strong>{gap.brandId&&' · '+(readiness.brands?.find(brand=>brand.id===gap.brandId)?.name??'Selected brand')}<p>{gap.detail}</p>
         {actions[gap.action]&&<button type="button" className="btn secondary" onClick={()=>onNavigate(gap.action)}>{actions[gap.action]}</button>}
