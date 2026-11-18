@@ -182,3 +182,13 @@ Also: the adapter contract tests run the same cases against the real HTTP adapte
 3. **Twilio auth token.** Webhook signatures are verified with the **auth token** of the account that owns the number. The staging project lists an Account SID and API key, but no auth token. Please add `FLOCKLETTER_TWILIO_AUTH_TOKEN` for the staging subaccount before FL-AT-045. The mock doesn't need it.
 4. **Seeded defaults.** Should the migration seed only the non-fraud defaults already public in the requirements doc (quiet hours 9:00 a.m.–8:00 p.m., 4 texts per contact per month, 2-month link life, 7-day unconfirmed expiry, Spanish opt-out words)? The alternative is seeding nothing, so you set every value. Either way, the carrier daily limit, allowance, test-text limit and live-recipient allow-list stay unset until you set them, and sending fails closed until then.
 5. **Sign-up field switches.** FL-SMS-007 says "per workspace", but sign-up pages are per brand today. I plan per-workspace switches, applied to every brand's page.
+
+## 8. Owner answers (2026-11-18)
+
+The owner approved the plan with the recommended defaults:
+
+1. **Bitwarden client:** (a), a small in-house client. No new dependency.
+2. **Bitwarden access:** connect to both `flockletter-staging` and `flockletter-production`. Staging loads only from `flockletter-staging` and production only from `flockletter-production`. The loader refuses to run if the project doesn't match `NODE_ENV`. The machine account gets read-only access. Phase 2 reads no production value until FL-AT-045 is approved.
+3. **Auth token:** `FLOCKLETTER_TWILIO_AUTH_TOKEN` is in `flockletter-production`. Twilio is reported to sign each subaccount's webhooks with that subaccount's own auth token. So FL-AT-045 must confirm which account the token belongs to before it is used to verify staging-subaccount webhooks. Signature verification looks up the token by the `AccountSid` in the request and fails closed if none matches.
+4. **Seeded defaults:** yes, only the public non-fraud defaults. Fraud limits stay unset.
+5. **Sign-up switches:** per workspace, applied to every brand page.
