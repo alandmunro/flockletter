@@ -125,6 +125,7 @@ These choices shape the full release SRD and remain subject to owner review. Sel
 | O-013 | Exact initial role/capability matrix and approval policy | Owner, editor, analyst and separate platform operator; send permission explicitly granted | Authorization implementation |
 | O-014 | Newsletter Studio editor licensing, draft fidelity and email client acceptance | Pin Resend’s `@react-email/editor` 1.8.1. Verify its actual copyright and permission text, dependency notices and independent self-hosting under FL-PROD-005. FL-AT-036 also covers legacy migration, safe HTML/plain-text rendering, Listmonk-compatible capture and representative Gmail, Outlook and mobile inboxes. Record desktop browser evidence and inbox evidence separately. [Editor license inventory](implementation/STUDIO_LICENSES.md) | Full release acceptance |
 | O-015 | SES Tenants plus Listmonk transport security, feedback, suppression and quota enforcement | Prove `X-SES-TENANT` and configuration-set assignment come from trusted workspace mappings, test cross-tenant rejection, provider acceptance/reconciliation, tenant-level pauses and account-wide risk; keep self-hosted and alternative providers portable | SES adapter implementation and live mailing |
+| O-016 | Resolved by D-063 | The texting add-on is accepted with D-063's conflict resolutions; later phases need their own decisions | Closed |
 
 The owner can resolve these incrementally. Missing decisions must be exposed before dependent implementation starts. Under D-030, the assistant may resolve reasonable foundation choices and must record them explicitly; provider secrets, legal facts and live sending readiness cannot be invented.
 
@@ -132,6 +133,8 @@ The owner can resolve these incrementally. Missing decisions must be exposed bef
 
 | Date | Change |
 | --- | --- |
+| 2026-11-17 | Added O-016 and the public texting and gifting proposal for review. No decision accepted and no implementation authorized. |
+| 2026-11-17 | D-063 accepts the texting add-on with conflict resolutions, resolves O-016, adds FL-SMS-001–015 and FL-AT-041–045, and authorizes phase 2 only. |
 | 2026-11-09 | D-048/049/050 record explicit owner acceptance of the minimal lifetime trial-history exception, specified billing defaults and FFA Growth complimentary policy. Configuration, historical/provider evidence, exact customer agreement, legal/tax facts and actual grant issuance remain separate. Documentation only. |
 | 2026-11-06 | Established the product name, public-repository scope and phase 1 boundary; recorded open signup, included delivery and AGPLv3 choices; created the first draft requirements and review gates. |
 | 2026-11-06 | Draft 0.2 records the owner's market, tier limits, pricing direction, trial, login, privacy, retention, US/business, support, complimentary FFA and Render/core-stack decisions. Keeps unresolved numeric limits and detailed policy gates explicit. No implementation authorized. |
@@ -175,3 +178,26 @@ Keep the approved fourteen days, two campaigns, one user, one company, one brand
 ## D-062 · Explicit temporary Flockletter-only no tax collection (November 13, 2026)
 
 The owner explicitly instructed Flockletter to collect no tax temporarily, including live subscription signup, while the tax question remains unresolved. Implement exact `FLOCKLETTER_BILLING_TAX=off` alongside `stripe-automatic`; live signup has no implicit default. This is a collection-policy instruction, not a tax-exempt determination, legal conclusion, registration change or waiver of obligations. Scope it to new Flockletter agreements and their provider requests. Preserve other applications, shared merchant settings, existing accepted agreements, complimentary FFA, current prices, trial/card/history/US-location checks, customer acceptance, signed webhooks, Pro enrollment holds and staging-first release gates. Freeze the mode with each new agreement; changed unaccepted reviews require review again, and uncertain accepted work reconciles without a speculative new request. Never set `tax_exempt`, remove registrations or alter account-wide Tax/Managed Payments defaults. Managed Payments opt-out is per supported Checkout request; verify returned provider facts. [Implementation and verification](implementation/NO_TAX_COLLECTION.md)
+
+## D-063 · Texting add-on accepted; phase 2 authorized (November 17, 2026)
+
+The owner accepted the [texting and gifting requirements](implementation/PROPOSED_TEXTING_AND_GIFTING.md) and selected the recommended resolution for each conflict with earlier decisions. This lifts the SRD's SMS deferral for the texting add-on only; push and other channels stay deferred. Resolutions:
+
+- **Overage:** none at launch. Texts stop at the plan allowance with an upgrade offer; the SRD's deferral of automatic usage-overage billing stands.
+- **Tax:** D-062 applies; no tax is collected on texting fees until D-062 ends.
+- **Failed payment:** D-049's day-6 suspension and day-30 closure apply to texting and to negative gift balances.
+- **Refunds:** plan-fee refunds use D-049 manual review. Unused gift credit is always refunded on closure; review covers only its method and timing.
+- **Roles:** O-013's owner, editor and analyst roles apply. Sending texts requires an explicit send grant.
+- **Plan names:** the texting plans are Text 300, Text 1000 and Text 2500, distinct from the newsletter tiers. D-060's Pro hold is unchanged.
+- **Brands:** a carrier brand belongs to one legal entity or DBA and maps to one Flockletter company; that company's brands send under its carrier campaign and number.
+- **Email confirmation:** follows each brand's D-054 setting. Text consent always needs a confirming reply.
+- **Secrets:** stored in Bitwarden Secrets Manager. Render holds only a machine-account access token per environment.
+- **Staging:** Twilio no longer issues test credentials to new accounts. Staging uses a mock Twilio client by default and the platform's staging subaccount only for approved real-send checks to the owner's phone.
+
+The defaults added on November 17, 2026 are accepted as amended above. Fraud-control values stay in the owner's private requirements document and are loaded as operator settings, not published here.
+
+**Authorized now:** implementing FL-SMS-001–015 (phase 2, core sending) and verifying it in staging with two synthetic workspaces; then, after staging passes, operator-run carrier registration of the owner's first business and one real opted-in text to the owner's phone.
+
+**Not authorized:** self-serve onboarding, identity checks, customer billing or charges, gifting, coupons, events, outside customers, and texts to anyone other than the owner's opted-in test numbers. Each needs its own decision. D-046's approval threshold for any individual move above USD 25 still applies.
+
+**Already done outside the code (November 17):** the Twilio account is upgraded; its Primary Business Profile is approved as ISV Reseller or Partner; a platform Main API key and a staging subaccount with a Standard key exist; their secrets are in Bitwarden. Twilio support ticket 30421267 asks about hosted pages as tenant websites and API re-opt-in for 10DLC; phase 2 uses START-only re-enrollment until it is answered. [Requirements](SRD.md), [traceability](TRACEABILITY.md)

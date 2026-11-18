@@ -38,7 +38,7 @@ Under D-061, an eligible new customer with a verified sender can import a permis
 
 Release one is an MVP. It proposes public product/pricing pages; account signup and login; customer and platform administration; three hosted tiers; verified senders; subscriber import/export and confirmation forms; lists, basic segments, a Flockletter-branded visual Newsletter Studio with templates and media; previews, test sends, immediate and scheduled broadcasts; basic delivery reporting; email support with AI replies; and equivalent API/MCP operations. Account provisioning and included delivery must work for a new paying customer as well as complimentary FFA.
 
-The following are deferred: discussion lists and inbound mailboxes; running a general-purpose public SMTP relay; SMS or push; branching customer journeys; abandoned-cart automation; AI-generated campaigns; purchased audience acquisition; agency resale; bespoke enterprise contracts; and automatic usage-overage billing. A feature offered by an upstream engine is not automatically part of Flockletter's public product.
+The following are deferred: discussion lists and inbound mailboxes; running a general-purpose public SMTP relay; push, and SMS beyond the texting add-on accepted by D-063; branching customer journeys; abandoned-cart automation; AI-generated campaigns; purchased audience acquisition; agency resale; bespoke enterprise contracts; and automatic usage-overage billing. A feature offered by an upstream engine is not automatically part of Flockletter's public product.
 
 ## Product and open-source requirements
 
@@ -291,3 +291,38 @@ D-059 authorizes completing and promoting public subscriptions and general Resen
 ### Editable newsletter import (FL-IMP-001–006)
 
 In Campaigns, a brand editor can paste Markdown or formatted text, select an HTML or Markdown file, or open a newsletter ZIP with its original photos. Review detected metadata, formatting changes, editable sections, links and photo mappings before creating a draft (FL-IMP-001/002/004). Lists and callouts use Studio version 2. Existing version 1 documents remain editable (FL-IMP-003). The canonical preview and commit commands bind the selected brand, reviewed source, mappings, and optional replacement revision. Uploads use the existing asset authority and commit requires draft-write access (FL-IMP-005). The saved revision uses the Studio HTML, plain-text and CID renderers and the existing delivery review process (FL-IMP-006).
+
+### Texting add-on, phase 2 (FL-SMS-001–015)
+
+D-063 accepts the texting add-on and authorizes this phase only: core SMS sending for US recipients, with carrier registration run by a platform operator. Self-serve onboarding, billing, gifting, coupons and events are later phases in [the texting requirements](implementation/PROPOSED_TEXTING_AND_GIFTING.md), which also hold the background and source IDs cited below. Fraud-control values are operator settings whose values are kept out of this public repository.
+
+**FL-SMS-001 — Workspace isolation.** Every phone number, contact phone, SMS consent record, message and provider mapping SHALL belong to exactly one workspace. Browser, API, MCP, worker and webhook paths SHALL enforce it. (TEN-1, TEN-4)
+
+**FL-SMS-002 — Carrier brand mapping.** A carrier brand SHALL belong to exactly one legal entity or DBA and map to one Flockletter company. That company's brands send under its carrier campaign and number. (CMP-2)
+
+**FL-SMS-003 — Provider isolation.** Each sending workspace SHALL use its own Twilio subaccount, created and managed only by platform code holding the platform key. Subaccount credentials SHALL be stored per workspace. No customer role can see or use provider credentials. (SEC-5, TEN-3)
+
+**FL-SMS-004 — Operator-run registration.** A platform operator SHALL start brand registration, campaign registration and number purchase through the same registration code later used by self-serve onboarding. Durable intent and a stable operation key SHALL be recorded before each provider call, and unknown outcomes reconciled before any retry. Status changes arrive by signed webhook with polling as a fallback. Sending stays locked until the campaign is approved. (REG-2–6, ONB-2/3)
+
+**FL-SMS-005 — SMS consent.** A contact SHALL be texted only with a recorded opt-in for that workspace, storing time, source and the exact wording shown. The SMS checkbox is separate, optional and unchecked by default. A new number is confirmed by the contact's reply before any other message. Imported numbers never carry SMS consent. (CON-1–4, SUB-4, CMP-4)
+
+**FL-SMS-006 — Opt-out and re-enrollment.** STOP, HELP and START SHALL be handled automatically for the number that received them; HELP names the business and its contact. A contact re-added after opting out is pending and receives nothing until the contact texts START. Phase 2 SHALL NOT clear opt-outs through a provider API. (CON-5/6)
+
+**FL-SMS-007 — Sign-up page fields.** Flockletter-hosted brand sign-up pages SHALL offer optional phone, birthday (month and day) and anniversary fields, each switched on or off per workspace and none mandatory for email sign-up. Email confirmation follows the brand's D-054 setting. Forms on tenant sites cannot record SMS consent. (SUB-1–9)
+
+**FL-SMS-008 — Composing and sending.** A member with an explicit send grant SHALL compose a text, test-send it to their own verified phone, and send or schedule it to opted-in contacts, after a confirmation showing recipient count, segments and allowance use. Emoji and decorative symbols are blocked; letters of any language are allowed, and segment counts reflect each recipient's merged text. (MSG-1–4, WF-2–4)
+
+**FL-SMS-009 — Delivery controls.** Sends SHALL be queued per workspace and respect quiet hours in the recipient's time zone, the per-contact frequency limit and the carrier daily limit, spreading a large send over days after showing the tenant how long it will take. A restart or provider outage SHALL never lose a queued text or send one twice. Status and inbound webhooks are signature-checked and processed idempotently. (MSG-5/6/8, PAC-1–3, REL-3/5, SEC-4)
+
+**FL-SMS-010 — Links.** A link SHALL be sent only if it resolves to the workspace's verified domain or one of its Flockletter-hosted pages, through `flkl.cc/<workspace short name>/<case-sensitive code>`. Public URL shorteners are never used. (MSG-7)
+
+**FL-SMS-011 — Number quality.** Numbers SHALL be normalized to E.164 and limited to US numbers. A permanent delivery failure marks the number not textable; such contacts are skipped without using allowance and listed for the tenant. (NUM-1/3/5)
+
+**FL-SMS-012 — Allowance.** Texts SHALL be counted by segment against the workspace's configured allowance, and sending stops when it is used up. Phase 2 enables no charge and no overage. (PRC-1/2)
+
+**FL-SMS-013 — Operator settings.** Every texting limit and threshold SHALL be an operator setting with safe bounds, changeable without a deployment through the operator UI and the operator API and MCP, and audited with old value, new value, actor and interface. No customer role can reach them. (ADM-1–6)
+
+**FL-SMS-014 — Secrets and staging.** Provider secrets SHALL be loaded at start-up from Bitwarden Secrets Manager using a per-environment machine-account token. Staging SHALL use a mock Twilio client by default and the staging subaccount only for approved real-send checks to the owner's phone. (SEC-3, CHG-1)
+
+**FL-SMS-015 — Inbound and audit.** Inbound texts SHALL be stored against the contact; replies other than STOP, HELP, START and pending confirmations are forwarded to the workspace's notification email, and unknown numbers are never added as contacts. Sends, consent changes, registration actions and settings changes are audited. (INB-1/2/4/6, PLT-4)
+
