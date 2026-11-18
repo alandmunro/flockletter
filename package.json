@@ -25,6 +25,7 @@
     "support:draft": "node --import tsx scripts/support-draft.ts",
     "support:inbox": "node --experimental-sqlite --import tsx scripts/support-inbox.ts",
     "audience:verify": "node --import tsx scripts/prove-audience.ts",
+    "audit:check": "node --import tsx scripts/check-audit.ts",
     "customer:worker": "node dist/server/server/customer-worker-main.js"
   },
   "dependencies": {
