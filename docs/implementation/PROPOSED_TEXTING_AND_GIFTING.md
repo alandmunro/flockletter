@@ -1,6 +1,6 @@
-# Proposed texting and gifting requirements
+# Texting and gifting requirements
 
-Proposed November 16-17, 2026. **Status: proposal only.** Not accepted into the SRD, no decision recorded in the ledger and no implementation authorized. The SRD currently defers SMS; see O-016 in [decisions](../DECISIONS.md).
+Proposed November 16-17, 2026. **Status: accepted with resolutions by D-063 on November 17, 2026.** Only phase 2 (core sending) is authorized; each later phase needs its own decision. For phase 2, the SRD's FL-SMS requirements are canonical; this document is the background and the plan for later phases. See [decisions](../DECISIONS.md).
 
 This is the public copy. Fraud-control thresholds, cost-to-serve and margins, and details of the owner's own business registrations are withheld and kept in the owner's private requirements document.
 
@@ -16,21 +16,21 @@ The feature has three parts:
 
 ## Conflicts with accepted decisions
 
-These must be resolved before any of this is accepted. None is changed by this proposal.
+D-063 resolved each conflict as follows. Requirements below are already amended to match.
 
-| Proposal | Existing decision or requirement | Conflict |
+| Proposal | Existing decision | Resolution (D-063) |
 | --- | --- | --- |
-| Texting as a whole | SRD release scope | The SRD lists SMS among deferred features |
-| PRC-2 per-text overage | SRD release scope; O-001 | The SRD defers automatic usage-overage billing |
-| TAX-1 Stripe Tax | D-062 | Flockletter currently runs in explicit no-tax-collection mode |
-| OFF-5 and CBK-4 suspension after 14 days | D-049 | Failed payment suspends on day 6 and closes on day 30 |
-| PLN-4 and GFT-8 refunds | D-049 | Refunds require manual review, with no automatic guarantee |
-| PLN-1 immediate prorated upgrades | D-049 | Accepted only after actual provider and portal behavior is verified |
-| WF-1 roles Owner, Sender, Viewer | O-013 | Proposed roles are owner, editor and analyst |
-| Texting plan names Starter, Growth, Pro | D-024, D-049, D-050, D-060 | Growth and Pro already name newsletter tiers; new Pro enrollment is held |
-| Carrier "brand" registration | SRD terms | A Flockletter brand is a sending identity; a carrier brand is a legal entity or DBA. The mapping needs defining |
-| SUB-1 double opt-in only | D-054 | Owners may choose single opt-in for email |
-| SEC-3 Bitwarden Secrets Manager | Current deployment practice | The current credential store and how Render reads secrets need confirming |
+| Texting as a whole | SRD deferred SMS | Deferral lifted for this texting add-on only; push and other channels stay deferred |
+| PRC-2 per-text overage | SRD defers automatic overage billing | No overage at launch; texts stop at the plan allowance with an upgrade offer |
+| TAX-1 Stripe Tax | D-062 no tax collection | Follow D-062; no tax collected on texting until D-062 ends |
+| OFF-5 and CBK-4 suspension | D-049 day 6 and day 30 | Use D-049: suspend on day 6, close on day 30 after the first failure |
+| PLN-4 refunds | D-049 manual review | Plan-fee refunds use D-049 manual review; unused gift credit is always refunded (GFT-8) |
+| PLN-1 prorated upgrades | D-049 needs verified provider behavior | Unchanged: immediate upgrades only after provider and portal behavior is verified |
+| WF-1 roles | O-013 owner, editor, analyst | Use O-013 roles; sending texts needs an explicit send grant |
+| Plan names Growth and Pro | D-024, D-049, D-050, D-060 | Texting plans renamed Text 300, Text 1000 and Text 2500 |
+| Carrier brand | SRD terms | A carrier brand belongs to one legal entity or DBA and maps to one Flockletter company |
+| SUB-1 double opt-in only | D-054 | Email confirmation follows each brand's D-054 setting; texts always need a confirming reply |
+| SEC-3 Bitwarden | Current deployment practice | Render holds only a Bitwarden machine-account token and loads the other secrets at start-up |
 
 ## User story
 
@@ -77,6 +77,8 @@ Every sender is a workspace, and the platform operator is a separate role above 
 | Frosty Flamingo Software | Platform operator (reseller) | Holds the SMS provider account and files registrations for all tenants |
 | The owner's own businesses | Tenants | The first tenants, including Flockletter texting its own users; registration details withheld |
 | Realtor customers | Tenants | Target market: birthday, home-anniversary and event messages to past clients |
+
+A carrier brand belongs to exactly one legal entity or DBA and maps to one Flockletter company. That company's Flockletter brands send under its carrier campaign and number.
 
 Each of the owner's businesses is its own workspace, and none share contact lists.
 
@@ -164,7 +166,7 @@ EIN and legal name are checked by the carrier registry at brand registration. No
 
 Each workspace has a hosted sign-up page where its own customers subscribe. Email is required; everything else is optional and set by the business.
 
-- **SUB-1** Email uses double opt-in: the subscriber enters an address, receives a confirmation email, and is added to the list only after clicking the link in it.
+- **SUB-1** Email confirmation follows the brand's D-054 setting: double opt-in by default, single opt-in where the owner chose it. Text consent always needs a confirming reply (SUB-4).
 - **SUB-2** An unconfirmed address receives no newsletters and expires after a set period.
 - **SUB-3** The page can show an optional phone number field. A subscriber can sign up for email without giving a phone number.
 - **SUB-4** A phone number alone is not SMS consent. Texting requires the separate SMS checkbox (CON-4), and the number is confirmed by a text the subscriber replies to before any other message is sent.
@@ -194,7 +196,7 @@ Each workspace has a hosted sign-up page where its own customers subscribe. Emai
 
 - **DATE-6** Birthday and anniversary automations repeat every year on the stored date.
 - **DATE-7** Anniversary messages can use a years merge field (for example "your 3rd home anniversary"), available only when the date's year is known.
-- **DATE-8** **Default (pending):** a February 29 date sends on February 28 in non-leap years.
+- **DATE-8** **Default:** a February 29 date sends on February 28 in non-leap years.
 - **DATE-9** Each automation sends at the tenant's chosen time in the recipient's time zone, within quiet hours.
 
 ### Events
@@ -213,7 +215,7 @@ Each workspace has a hosted sign-up page where its own customers subscribe. Emai
 - **GFT-6** Gift message templates are thank-you wording only, with no mention of referrals.
 
 - **GFT-7** Each workspace has a gift credit ledger showing purchases, amounts reserved for open offers, claims, amounts returned from ended campaigns, and refunds. The tenant can see the available and reserved balance at any time.
-- **GFT-8** Unused gift credit does not expire. When a workspace closes, the remaining credit is refunded to the tenant.
+- **GFT-8** Unused gift credit does not expire. When a workspace closes, the remaining credit is refunded to the tenant. This refund is always owed, because the credit is the tenant's money; D-049 manual review covers only its method and timing.
 - **GFT-9** The platform keeps its Tremendous balance at or above the total of all open offers plus a buffer. It tops the balance up by bank transfer through the API when credit is bought, and alerts the operator if the balance falls below the threshold.
 - **GFT-10** If a claim cannot be fulfilled because of the platform's balance or a vendor outage, the recipient sees a try-again message, the claim is retried automatically, and the operator is alerted. The offer is not lost.
 
@@ -259,7 +261,7 @@ Each workspace has a dashboard showing how every campaign performed, including g
 - **DSH-8** List growth for the period: new subscribers, new SMS opt-ins and opt-outs.
 - **DSH-9** A recipient list for each campaign shows who was sent it, who claimed or redeemed and when, so the tenant can follow up with those contacts.
 - **DSH-10** Figures update within minutes of the underlying event, and any view can be exported as CSV.
-- **DSH-11** All workspace roles can view the dashboard, including Viewer (WF-1).
+- **DSH-11** All workspace roles can view the dashboard, including analyst (WF-1).
 
 A gift counts as claimed when the recipient taps Claim and the card is bought. Where the vendor reports that the recipient went on to open the redemption link, that is shown as a separate figure. Whether the card was later spent at the store is not available.
 
@@ -292,7 +294,7 @@ Items marked **Default** in this and the following sections were accepted by the
 
 ### Sending workflow
 
-- **WF-1** Workspace roles: Owner (everything, including billing and registration), Sender (compose, schedule and send) and Viewer (read only).
+- **WF-1** Workspace roles follow O-013: owner (everything, including billing and registration), editor (compose and schedule) and analyst (read only). Sending texts requires an explicit send grant.
 - **WF-2** A message can be sent now or scheduled for a date and time, and a scheduled send can be edited or canceled until it starts.
 - **WF-3** A test send delivers the message to the user's own verified phone before any real send.
 - **WF-4** A confirmation screen shows recipient count, segments per message, estimated cost and any pacing over days. Nothing is sent without confirming it.
@@ -323,18 +325,18 @@ Many solo agents and small restaurants have no website or privacy policy, which 
 - **OFF-2** **Default:** for 30 days after canceling, the tenant can export contacts, consent records and message history as CSV, and can reactivate.
 - **OFF-3** After that period, the platform releases the phone number, deactivates the campaign and closes the provider subaccount, which ends the recurring carrier fees.
 - **OFF-4** **Default:** personal data is deleted 90 days after cancellation, except consent and audit records, which are kept for 5 years in case of a consent dispute.
-- **OFF-5** A workspace suspended for non-payment follows the same steps, starting 14 days after the first failed payment (**Default**).
+- **OFF-5** Non-payment follows D-049: sending is suspended on day 6 and the workspace closes on day 30 after the first failed payment, then follows these steps.
 
 ### Requirements added 2026-11-17
 
-Items marked **Default (pending)** in this group, and in DATE-8, are proposals awaiting the owner's acceptance. All values are admin settings (ADM-1).
+Items marked **Default** in this group, and in DATE-8, were accepted by D-063 on 2026-11-17, as amended by its conflict resolutions. All values are admin settings (ADM-1).
 
 ### Prohibited content
 
-- **CNT-1** **Default (pending):** every text is screened before sending for carrier-restricted content: adult content, hate speech, firearms, tobacco and vaping, cannabis and CBD, gambling, and high-risk financial offers such as payday loans, debt relief and credit repair. A match blocks the send and tells the user which rule applies.
+- **CNT-1** **Default:** every text is screened before sending for carrier-restricted content: adult content, hate speech, firearms, tobacco and vaping, cannabis and CBD, gambling, and high-risk financial offers such as payday loans, debt relief and credit repair. A match blocks the send and tells the user which rule applies.
 - **CNT-2** Alcohol is allowed only under CMP-9.
 - **CNT-3** Screening covers typed text, templates, automated messages and merged values, and every result is logged.
-- **CNT-4** **Default (pending):** a set number of blocked sends within a set period flags the workspace for operator review (values set in the owner's private requirements document).
+- **CNT-4** **Default:** a set number of blocked sends within a set period flags the workspace for operator review (values set in the owner's private requirements document).
 - **CNT-5** The acceptable-use policy (PLT-2) lists the same restricted categories.
 
 ### Gift credit disputes
@@ -342,57 +344,57 @@ Items marked **Default (pending)** in this group, and in DATE-8, are proposals a
 - **CBK-1** Stripe dispute notifications are processed for every gift credit purchase.
 - **CBK-2** When a dispute opens, the disputed amount is frozen and no new gift offers can draw on it until it is resolved.
 - **CBK-3** If the disputed credit was already spent on claimed gifts, the workspace's gift balance goes negative, gifting and sending pause, and the tenant is asked to pay the balance.
-- **CBK-4** **Default (pending):** a negative balance unpaid after 14 days suspends the workspace and follows the offboarding steps (OFF-5).
-- **CBK-5** **Default (pending):** a lost dispute on a workspace still in probation suspends it at once for operator review.
+- **CBK-4** An unpaid negative balance follows the D-049 schedule in OFF-5: suspended on day 6, closed on day 30.
+- **CBK-5** **Default:** a lost dispute on a workspace still in probation suspends it at once for operator review.
 - **CBK-6** Dispute evidence (purchase record, ledger entries, timestamped claim records) is gathered and submitted through Stripe automatically.
 
 ### Plan changes and trial
 
-- **PLN-1** Upgrades take effect at once with a prorated charge. Downgrades take effect at the next billing date.
-- **PLN-2** **Default (pending):** moving to Pro starts a Standard registration in the background. Until it is approved, the workspace keeps its current daily limit and plan price, and the Pro price starts on approval.
-- **PLN-3** **Default (pending):** downgrading from Pro keeps the Standard registration; the setup fee is not refunded.
-- **PLN-4** **Default (pending):** there is no free texting trial, because registration fees are paid up front. Instead, the first month's plan fee is refundable within 30 days; the setup fee is not.
+- **PLN-1** Upgrades take effect at once with a prorated charge, once actual provider and portal behavior is verified (D-049). Downgrades take effect at renewal.
+- **PLN-2** **Default:** moving to Text 2500 starts a Standard registration in the background. Until it is approved, the workspace keeps its current daily limit and plan price, and the Text 2500 price starts on approval.
+- **PLN-3** **Default:** downgrading from Text 2500 keeps the Standard registration; the setup fee is not refunded.
+- **PLN-4** There is no free texting trial, because registration fees are paid up front. Plan-fee refunds go through D-049 manual review; the setup fee is not refunded.
 - **PLN-5** Canceling only the texting add-on stops texting as in OFF-1 to OFF-3, and the newsletter subscription continues.
 
 ### Workspace short names
 
 - **SLG-1** Each workspace has a unique short name, used in its short links (flkl.cc/name/code) and its hosted business page address.
 - **SLG-2** The short name is suggested from the business name at sign-up and can be edited before registration.
-- **SLG-3** **Default (pending):** 3 to 30 characters, lowercase letters, digits and hyphens.
+- **SLG-3** **Default:** 3 to 30 characters, lowercase letters, digits and hyphens.
 - **SLG-4** Blocked names: platform words (admin, api, www, help, support, login, signup), financial and security words (bank, pay, verify, secure, account) and carrier and major brand names. The list is an admin setting.
-- **SLG-5** **Default (pending):** a short name can be changed once every 90 days. The old name keeps redirecting for the link life (2 months) and cannot be taken by another workspace for 12 months.
+- **SLG-5** **Default:** a short name can be changed once every 90 days. The old name keeps redirecting for the link life (2 months) and cannot be taken by another workspace for 12 months.
 
 ### Recipient-facing pages
 
 These apply to the sign-up, claim, coupon, RSVP and hosted business pages.
 
-- **PUB-1** **Default (pending):** pages show the tenant's name and logo, with a small Powered by Flockletter footer.
+- **PUB-1** **Default:** pages show the tenant's name and logo, with a small Powered by Flockletter footer.
 - **PUB-2** Pages are designed for phones first and work in current mobile and desktop browsers.
 - **PUB-3** Pages meet WCAG 2.2 level AA accessibility.
-- **PUB-4** **Default (pending):** pages load in under 2 seconds on a typical mobile connection.
+- **PUB-4** **Default:** pages load in under 2 seconds on a typical mobile connection.
 - **PUB-5** From a tap on Claim to the redemption link takes under 3 seconds; a longer wait shows a progress message.
 - **PUB-6** Recipients never need an account or a sign-in.
 - **PUB-7** Expired offers, closed workspaces and invalid links show a clear message, never an error page.
 
 ### Language
 
-- **LNG-1** **Default (pending):** the interface and system texts (opt-in confirmations, HELP and STOP replies) are English in the first release.
+- **LNG-1** **Default:** the interface and system texts (opt-in confirmations, HELP and STOP replies) are English in the first release.
 - **LNG-2** Tenants can write their own messages in any language (MSG-2).
-- **LNG-3** **Default (pending):** Spanish opt-out words (PARAR, CANCELAR, DETENER) are treated as opt-outs alongside the English ones. The list is an admin setting.
+- **LNG-3** **Default:** Spanish opt-out words (PARAR, CANCELAR, DETENER) are treated as opt-outs alongside the English ones. The list is an admin setting.
 - **LNG-4** Spanish system texts and interface are a later phase.
 
 ### Retention and tax
 
-- **RET-1** **Default (pending):** message bodies, outbound and inbound, are kept 24 months for active workspaces and then deleted. Delivery records (status, time, cost) are kept for the life of the workspace.
+- **RET-1** **Default:** message bodies, outbound and inbound, are kept 24 months for active workspaces and then deleted. Delivery records (status, time, cost) are kept for the life of the workspace.
 - **RET-2** Consent and opt-out records are kept for the life of the workspace plus 5 years (OFF-4).
-- **RET-3** **Default (pending):** gift credit ledger and billing records are kept 7 years for accounting.
-- **TAX-1** **Default (pending):** Stripe Tax calculates sales tax on plan fees, setup fees and gift credit fees from the tenant's address.
+- **RET-3** **Default:** gift credit ledger and billing records are kept 7 years for accounting.
+- **TAX-1** No tax is collected on texting fees while D-062 applies. Revisit when D-062 ends.
 - **TAX-2** Whether tax applies to the gift credit itself is part of the legal review.
 
 ### Tenant notifications
 
 - **NTF-1** The workspace Owner is notified by email and in the app of: registration submitted, approved or rejected; probation ended; a scheduled send completed; a send paused or the workspace suspended; gift credit low; a dispute opened; a payment failed; 80% and 100% of the month's texts used; and a gift campaign ended with credit returned.
-- **NTF-2** **Default (pending):** gift credit counts as low when it falls below $20 or below the value of gift offers scheduled in the next 7 days, whichever is higher.
+- **NTF-2** **Default:** gift credit counts as low when it falls below $20 or below the value of gift offers scheduled in the next 7 days, whichever is higher.
 - **NTF-3** Each notification can be turned off, except those about registration, pauses, suspensions, disputes and failed payments.
 - **NTF-4** Other workspace members can opt in to any notification.
 
@@ -421,7 +423,7 @@ These cover how the service is run and protected. Numeric targets are **Default*
 
 - **SEC-1** All traffic uses HTTPS, including the flkl.cc redirect and every webhook endpoint.
 - **SEC-2** Personal data (names, phone numbers, emails, dates) is encrypted at rest in the database and in backups.
-- **SEC-3** API keys and secrets for Twilio, Tremendous, Stripe, Clerk and Resend are stored in Bitwarden Secrets Manager and never in the repository. The app reads them from there at deploy or start-up, and they can be rotated without a code change.
+- **SEC-3** API keys and secrets for Twilio, Tremendous, Stripe, Clerk and Resend are stored in Bitwarden Secrets Manager and never in the repository. Render holds only a Bitwarden machine-account access token per environment; the app loads the other secrets at start-up, and they can be rotated without a code change.
 - **SEC-4** Every inbound webhook is verified with the sender's signature (Twilio, Stripe, Tremendous) and rejected if the check fails.
 - **SEC-5** Each tenant's Twilio subaccount credentials are stored per workspace, so a leak affects one tenant only.
 - **SEC-6** Operator access to tenant data requires multi-factor sign-in and is recorded in the audit log (PLT-4).
@@ -454,7 +456,7 @@ These cover how the service is run and protected. Numeric targets are **Default*
 
 ### Environments and change control
 
-- **CHG-1** A staging environment uses Twilio test credentials, the Tremendous sandbox and Stripe test mode. No real texts, gifts or charges can originate from it.
+- **CHG-1** Twilio no longer issues test credentials to new accounts. Staging uses a mock Twilio client by default, and the flockletter-staging subaccount, with its own Standard API key, only for approved real-send checks to the owner's phone. Customer subaccount creation and registration are tested with mocks only. Gifts use the Tremendous sandbox and charges use Stripe test mode. No customer texts, real gifts or charges originate from staging.
 - **CHG-2** Changes reach production only through pull requests on GitHub with automated tests passing.
 - **CHG-3** Database changes are applied by versioned migrations that can be rolled back.
 - **CHG-4** Tests that cover consent, opt-out handling, tenant isolation and duplicate-charge protection must pass before any release.
@@ -477,7 +479,7 @@ These are the records the feature needs; every one carries a workspace ID.
 | Record | Key fields |
 | --- | --- |
 | Workspace | Clerk organization ID, short name, plan, registration tier, probation status, spending cap, status |
-| Workspace member | User, role (Owner, Sender, Viewer) |
+| Workspace member | User, O-013 role (owner, editor, analyst), send grant |
 | Sender registration | Legal name, EIN, DBA flag, brand ID, campaign ID, status, rejection reason, Twilio subaccount ID |
 | Phone number | Number, campaign ID, status |
 | Contact | Name, phone in E.164 format, email, time zone, textable flag, external ID (ID in another system) |
@@ -503,14 +505,14 @@ These are the records the feature needs; every one carries a workspace ID.
 
 | System | Used for | Requirement |
 | --- | --- | --- |
-| Twilio | Registration, numbers, sending, webhooks, line-type lookup | One subaccount per workspace to isolate numbers, usage and carrier penalties; lookup cost per check to confirm (NUM-2) |
+| Twilio | Registration, numbers, sending, webhooks, line-type lookup | One subaccount per workspace. Done 2026-11-17: account upgraded, Primary Business Profile approved as ISV Reseller or Partner, platform Main API key and staging subaccount created, secrets in Bitwarden. Lookup cost per check to confirm (NUM-2) |
 | Tremendous | Buying gift cards when a recipient claims | Prepaid balance topped up by bank transfer through the API (GFT-9); sandbox-tested 2026-11-16, one live gift still to test |
 | Stripe | Plans, metered texts, setup fees, gift credit purchases, disputes, sales tax | Usage reported per workspace; dispute webhooks processed (CBK-1) |
 | Clerk | Sign-in, organizations and roles | Organization equals workspace |
 | Resend | Newsletters, email fallback, opt-in and notification emails | Already in place |
 | Render | App, background jobs, webhook endpoints, scheduled automations | Already in place |
 | Cloudflare | DNS for Flockletter's domains and flkl.cc | flkl.cc email lockdown in place; auto-renew and a redirect from the bare domain still to set |
-| Bitwarden Secrets Manager | All API keys and secrets | Never stored in the repository (SEC-3) |
+| Bitwarden Secrets Manager | All API keys and secrets | Projects flockletter-production and flockletter-staging hold the Twilio secrets; machine accounts still to create (SEC-3) |
 | Cadence (future) | Source of contacts and dates | Not built now; DATA-1 to DATA-3 keep it possible |
 
 **Cadence bridge principle:** Cadence knows who the clients are and when their dates fall. Flockletter owns consent, the registered number and every outbound message. Cadence asks Flockletter to send; Flockletter decides whether it is allowed.
@@ -557,14 +559,14 @@ Texting is sold as an add-on to Flockletter in three monthly plans, priced under
 
 | Plan | Price per month | Texts included |
 | --- | --- | --- |
-| Starter | $19 | 300 |
-| Growth | $39 | 1,000 |
-| Pro | $79 | 2,500 |
+| Text 300 | $19 | 300 |
+| Text 1000 | $39 | 1,000 |
+| Text 2500 | $79 | 2,500 |
 
 - **PRC-1** A text is one message segment. A message that runs to two segments counts as two texts.
-- **PRC-2** Texts beyond the plan's allowance cost 3 cents each, up to the workspace's spending cap (BIL-4).
+- **PRC-2** No overage at launch: when the plan's texts are used up, sends stop and the tenant is offered an upgrade (D-063).
 - **PRC-3** A one-time setup fee of $49 covers low-volume registration, or $99 for Standard registration. It is charged before any registration call (ONB-6) and is not refunded if the carrier rejects the registration.
-- **PRC-4** The Pro plan assumes Standard registration.
+- **PRC-4** The Text 2500 plan assumes Standard registration.
 - **PRC-5** Gift credit carries a 10% fee taken at purchase: $55 buys $50 of credit. On refund of unused credit (GFT-8), the fee for the unused portion is refunded too.
 - **PRC-6** Coupons, sign-up pages, date automations, events and link shortening are included in every plan at no extra charge.
 - **PRC-7** Unused texts do not roll over to the next month.
@@ -577,7 +579,7 @@ Sources: [SimpleTexting comparison](https://simpletexting.com/blog/best-text-mes
 
 Each phase must pass its gate before the next starts.
 
-1. **Foundation.** Open the Twilio reseller account under Frosty Flamingo Software, and add SMS wording to each site's privacy policy and terms. Gate: provider account approved.
+1. **Foundation.** Open the Twilio reseller account under Frosty Flamingo Software, and add SMS wording to each site's privacy policy and terms. Gate: provider account approved. Gate met 2026-11-17; the SMS wording on the first business's site is still needed before its registration in phase 2.
 2. **Core sending.** Build tenancy, consent, the sign-up page, the flkl.cc link shortener, admin settings and basic sending. Register the owner's first business by running the registration code as the operator, with no self-serve screens yet. Gate: campaign approved and a real opted-in text delivered.
 3. **Self-serve onboarding.** Build the in-app sign-up flow, automated provisioning, identity checks, probation and the review queue. Prove it by registering the owner's remaining businesses through that flow. Gate: both approved without manual workarounds.
 4. **Automation, events and coupons.** Add important dates, date automations, events and RSVP, coupons with tap-to-redeem, and inbound replies. Gate: automations run unattended for 30 days in the owner's own workspaces.
@@ -589,7 +591,7 @@ Three tracks start now, alongside phase 1, because none depends on code: opening
 
 ## Decisions
 
-Owner decisions recorded in the private requirements document on 2026-11-16 and 2026-11-17. They are not entered in the [decision ledger](../DECISIONS.md) and do not override it (see O-016).
+Owner decisions recorded in the private requirements document on 2026-11-16 and 2026-11-17. D-063 in the [decision ledger](../DECISIONS.md) accepts them, as amended by its conflict resolutions.
 
 - **SMS provider:** Twilio.
 - **DBA registration:** a DBA is a second brand on the same EIN.
@@ -610,7 +612,7 @@ Owner decisions recorded in the private requirements document on 2026-11-16 and 
 
 - **Default items:** all accepted as written; each stays adjustable through the admin settings.
 
-- **Pricing:** texting add-on plans at $19, $39 and $79 a month; 3 cents per extra text; $49 setup fee ($99 Standard); 10% fee on gift credit at purchase.
+- **Pricing:** texting add-on plans Text 300, Text 1000 and Text 2500 at $19, $39 and $79 a month; no overage at launch; $49 setup fee ($99 Standard); 10% fee on gift credit at purchase.
 
 - **Hosted business page:** kept. It is domainless: a path on Frosty Flamingo Software's domain, with no custom-domain option for tenants.
 - **Short-link codes:** mixed case, handled case-sensitively.
@@ -622,14 +624,14 @@ Owner decisions recorded in the private requirements document on 2026-11-16 and 
 ## Open questions
 
 - [x] Probation settings: decided 2026-11-16. See IDV-6 to IDV-11 and the Default settings table.
-- [ ] Confirm at registration that Twilio accepts a second brand on the same EIN for a DBA.
+- [ ] Confirm at phase 3 registration that Twilio accepts a second brand on the same EIN for a DBA.
 
-- [ ] Confirm that Twilio's consent API can clear an opt-out after a new web opt-in on a 10DLC number (second path in CON-6).
+- [ ] Twilio support ticket 30421267 asks whether the Consent Management API can clear a 10DLC opt-out after a web re-opt-in. Phase 2 uses START only until answered.
 - [x] Test in the Tremendous sandbox: a $5 Starbucks US card can be ordered by API and delivered as a link.
 
-- [ ] Confirm with Twilio whether a Flockletter-hosted business page satisfies the website requirement for tenants with no site of their own (HST-4).
+- [ ] Twilio support ticket 30421267 asks whether a Flockletter-hosted business page satisfies website vetting (HST-4). Needed before phase 6.
 - [x] Default items and the Default settings table: accepted by the owner on 2026-11-16.
 
 - [ ] Include prepaid gift credit in the legal review: refund terms and any state rules on unused customer balances.
 
-- [ ] Review the Default (pending) items added on 2026-11-17: prohibited content, disputes, plan changes and trial, short names, recipient-facing pages, language, retention and tax, notifications, and DATE-8.
+- [x] Default items added on 2026-11-17: accepted by D-063, as amended by its conflict resolutions.
