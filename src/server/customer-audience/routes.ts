@@ -30,6 +30,17 @@ const page = (heading: string, body: string) =>
   '</h1>' +
   body +
   '</main></body></html>';
+/** Optional texting fields from the hosted form. Blank fields are simply absent; none is required. */
+function signupTexting(body: Record<string, unknown>) {
+  const text = (name: string) => typeof body[name] === 'string' && (body[name] as string).trim() ? (body[name] as string).trim().slice(0, 64) : undefined;
+  const int = (name: string, min: number, max: number) => { const v = Number(text(name)); return Number.isInteger(v) && v >= min && v <= max ? v : undefined; };
+  const date = (prefix: string, withYear: boolean) => {
+    const month = int(prefix + 'Month', 1, 12), day = int(prefix + 'Day', 1, 31), year = withYear ? int(prefix + 'Year', 1900, 2100) : undefined;
+    return month && day ? { month, day, ...(year ? { year } : {}) } : undefined;
+  };
+  return { phone: text('phone'), smsConsent: body.smsConsent === 'yes', wordingShown: typeof body.smsWording === 'string' ? body.smsWording : undefined,
+    birthday: date('birthday', false), anniversary: date('anniversary', true) };
+}
 export function customerAudienceRoutes(service: CustomerAudience) {
   const router = express.Router();
   router.use((req, res, next) => {
@@ -149,7 +160,7 @@ export function customerAudienceRoutes(service: CustomerAudience) {
       (form.confirmationMode === 'single_opt_in' ? 'No email confirmation is required. You can unsubscribe from any newsletter.' : 'Email confirmation is required.')+' Tracking is off.',
       [form.mode === 'exercise' && h('p',{key:'mode'},'Staging exercise. Messages are captured for the workspace owner.'),
        form.design.introduction && h('p',{key:'intro'},form.design.introduction),
-       h(SignupFields,{key:'signup',consent:form.consentText,version:form.policyVersion})]);
+       h(SignupFields,{key:'signup',consent:form.consentText,version:form.policyVersion,...(form.texting?{texting:form.texting}:{})})]);
   });
   router.post('/:form', async (req, res) => {
     const form = await service.publicForm(String(req.params.form));
@@ -157,6 +168,7 @@ export function customerAudienceRoutes(service: CustomerAudience) {
       email: req.body?.email,
       consentAffirmed: req.body?.consentAffirmed === 'yes',
       policyVersion: req.body?.policyVersion,
+      ...(form.texting ? { texting: signupTexting(req.body ?? {}) } : {}),
     });
     sendPostcard(res, String(req.params.form), form, receipt.status === 'request_received' ? 'Request received' : 'Check your email',
       'You can unsubscribe from any newsletter.', h('p', {}, receipt.message));

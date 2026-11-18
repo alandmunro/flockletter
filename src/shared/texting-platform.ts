@@ -1,0 +1,41 @@
+import { z } from 'zod';
+import { textingSettingKeys, registrationSteps } from './texting.js';
+import { mockFaults } from './texting-mock.js';
+
+// Operator-only texting commands. Customer connection scopes never grant these (FL-SMS-003/013).
+const operationKey = z.uuid(), reason = z.string().trim().min(12).max(400);
+const workspaceId = z.string().regex(/^org_[A-Za-z0-9_-]{1,120}$/);
+const define = <T extends z.ZodRawShape>(description: string, mutation: boolean, shape: T) => ({ description, mutation, schema: z.object(shape).strict() });
+const text = (max: number) => z.string().trim().min(1).max(max);
+const businessProfile = z.object({
+  ein: z.string().regex(/^\d{2}-?\d{7}$/), website: z.url().max(300), vertical: text(60), areaCode: z.string().regex(/^[2-9]\d{2}$/).optional(),
+  address: z.object({ street: text(120), city: text(60), region: z.string().regex(/^[A-Z]{2}$/), postalCode: z.string().regex(/^\d{5}(-\d{4})?$/), country: z.literal('US') }).strict(),
+  contact: z.object({ firstName: text(60), lastName: text(60), email: z.email().max(254), phone: z.string().regex(/^\+1\d{10}$/), title: text(60) }).strict(),
+}).strict();
+const mockAction = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('fault'), target: z.enum([...registrationSteps, 'send']), faults: z.array(z.enum(mockFaults)).min(1).max(10) }).strict(),
+  z.object({ kind: z.literal('brand'), registrationId: z.uuid(), status: z.enum(['APPROVED', 'FAILED', 'SUSPENDED']) }).strict(),
+  z.object({ kind: z.literal('campaign'), registrationId: z.uuid(), status: z.enum(['VERIFIED', 'FAILED', 'SUSPENDED']) }).strict(),
+  z.object({ kind: z.literal('inbound'), from: z.string().regex(/^\+1\d{10}$/), to: z.string().regex(/^\+1\d{10}$/), body: z.string().min(1).max(320) }).strict(),
+  z.object({ kind: z.literal('deliver') }).strict(),
+]);
+export const textingPlatformCommands = {
+  'platform.textingSettings': define('Read every texting setting with its safe bounds, the platform value and any workspace override.', false, { workspaceId: workspaceId.optional() }),
+  'platform.textingSettingHistory': define('Read the audited history of texting setting changes (old value, new value, actor, interface, reason).', false, { workspaceId: workspaceId.optional() }),
+  'platform.textingSetSetting': define('Set or clear one texting setting within its safe bounds, platform-wide or for one workspace. Takes effect without a deployment and is audited.', true, {
+    operationKey, key: z.enum(textingSettingKeys as [string, ...string[]]), workspaceId: workspaceId.nullable(), value: z.json().nullable(), expectedRevision: z.number().int().min(0), reason }),
+  'platform.textingCarrierBrand': define('Create, or correct while draft or rejected, the one carrier brand for a company (FL-SMS-002).', true, {
+    operationKey, workspaceId, companyId: z.uuid(), legalName: text(200), dbaName: text(200).nullable(),
+    entityType: z.enum(['private_profit', 'public_profit', 'non_profit', 'sole_proprietor', 'government']), profile: businessProfile, helpContact: text(120), reason }),
+  'platform.textingConfirmPolicies': define('Record that the business’s website privacy policy and SMS terms are live. Carrier registration waits for this.', true, {
+    operationKey, workspaceId, carrierBrandId: z.uuid(), privacyPolicyUrl: z.url().max(300), smsTermsUrl: z.url().max(300), reason }),
+  'platform.textingSubmit': define('Start, or restart after correction, carrier registration for one carrier brand. In live mode each brand, campaign and number step also needs platform.textingApprove.', true, {
+    operationKey, workspaceId, registrationId: z.uuid(), reason }),
+  'platform.textingApprove': define('Live mode only: approve one real carrier or cost action (brand, campaign or number) for the current registration revision.', true, {
+    operationKey, workspaceId, registrationId: z.uuid(), step: z.enum(['brand', 'campaign', 'number']), costNote: text(200), reason }),
+  'platform.textingRegistration': define('Read registration state, every step with its operation key, and numbers for one workspace.', false, { workspaceId }),
+  'platform.textingProcess': define('Run one texting worker pass for a workspace now.', true, { operationKey, workspaceId }),
+  'platform.textingMock': define('Staging mock only: script provider faults, decide brand or campaign status, deliver queued callbacks, or receive a text from a phone.', true, {
+    operationKey, workspaceId, action: mockAction }),
+};
+export type TextingPlatformCommand = keyof typeof textingPlatformCommands;

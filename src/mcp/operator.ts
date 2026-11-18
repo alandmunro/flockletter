@@ -4,7 +4,7 @@ import { platformCommands } from '../shared/platform.js';
 export function operatorApiCaller(origin:string,token:string){
  const url=new URL(origin);if(url.origin!==origin||url.username||url.password||(url.protocol!=='https:'&&!(url.protocol==='http:'&&['127.0.0.1','localhost'].includes(url.hostname))))throw Error('Use an exact HTTPS origin or local loopback.');
  if(token.startsWith('flk_')||!/^[-_A-Za-z0-9]+\.[-_A-Za-z0-9]+\.[-_A-Za-z0-9]+$/.test(token))throw Error('Use a short-lived verified Clerk operator session; customer connection tokens cannot grant operator access.');
- return async(name:string,input:unknown)=>{const response=await fetch(origin+'/api/operator/v1/commands/'+name,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(input),redirect:'error',signal:AbortSignal.timeout(30000)});const data=await response.json() as {result?:unknown;error?:{message?:string}};if(!response.ok)throw Error(data.error?.message??'Operator action failed.');return data.result;};
+ return async(name:string,input:unknown)=>{const response=await fetch(origin+'/api/operator/v1/commands/'+name,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json','x-flockletter-interface':'operator_mcp'},body:JSON.stringify(input),redirect:'error',signal:AbortSignal.timeout(30000)});const data=await response.json() as {result?:unknown;error?:{message?:string}};if(!response.ok)throw Error(data.error?.message??'Operator action failed.');return data.result;};
 }
 export function createOperatorMcpServer(call:(name:string,input:unknown)=>Promise<unknown>){
  const server=new McpServer({name:'flockletter-operator',version:'0.1.0'});

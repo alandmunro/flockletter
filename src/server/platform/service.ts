@@ -14,7 +14,7 @@ import type { CustomerOperationsStatus,CustomerWorkerHeartbeat } from '../../sha
 
 const stagingCriticalAlerts = new Set(['security_incident','migration_failed','deployment_failure_persistent','worker_failure_persistent']);
 
-type Options={sendingSafeguards?:import('../customer-delivery/safeguards.js').SendingSafeguards;environment:Config['environment'];mode:'capture'|'live';identity:OperatorIdentity;support:CustomerSupport;databaseName:string;workerHeartbeat?:()=>Promise<CustomerWorkerHeartbeat>;plan?:(workspace:string,jobId:string)=>Promise<RetentionPlan>;signing?:{keyId:string;privateKey:string};gaps?:string[];alerts?:{provider:SupportProvider;from:string;to:string};now?:()=>Date};
+type Options={texting?:import('../texting/service.js').Texting;sendingSafeguards?:import('../customer-delivery/safeguards.js').SendingSafeguards;environment:Config['environment'];mode:'capture'|'live';identity:OperatorIdentity;support:CustomerSupport;databaseName:string;workerHeartbeat?:()=>Promise<CustomerWorkerHeartbeat>;plan?:(workspace:string,jobId:string)=>Promise<RetentionPlan>;signing?:{keyId:string;privateKey:string};gaps?:string[];alerts?:{provider:SupportProvider;from:string;to:string};now?:()=>Date};
 export class PlatformService {
  constructor(readonly db:Database,readonly store:PlatformStore,readonly options:Options){}
  private now(){return this.options.now?.()??new Date();}
@@ -104,9 +104,17 @@ export class PlatformService {
   // This quarantine never maps From to a customer account and never triggers a reply.
   return this.store.transaction('_platform_inbox',async records=>{const old=await records.get<{id:string;digest:string}>('inbound',email.providerEmailId);if(old){requireCondition(old.digest===email.digest,409,'inbound_conflict','This email identifier has different verified content.');return {id:old.id};}requireCondition(await records.count('inbound')<1000,503,'platform_inbox_capacity','The unassigned inbox needs operator review before accepting more mail.');const id=randomUUID();await records.put('inbound',email.providerEmailId,{...email,id,state:'quarantined',receivedAt:this.now().toISOString()},true);return {id};});
  }
- async execute(name:PlatformCommand,raw:unknown,actor:OperatorSession):Promise<unknown>{
+ async execute(name:PlatformCommand,raw:unknown,actor:OperatorSession,via:'operator_ui'|'operator_api'|'operator_mcp'='operator_api'):Promise<unknown>{
   await this.current(actor);
   const input=platformCommands[name].schema.parse(raw);
+  if(name.startsWith('platform.texting')){
+   const texting=this.options.texting;
+   requireCondition(texting,503,'texting_off','Texting is not enabled in this environment.');
+   const target=(input as {workspaceId?:string|null}).workspaceId;
+   // A workspace exercise may act only on its own workspace and never on platform-wide values.
+   if(actor.exercise)requireCondition(target===actor.workspaceId,403,'exercise_workspace_only','The operator exercise is limited to your current workspace.');
+   return texting.operator(name as import('../../shared/texting-platform.js').TextingPlatformCommand,input,{userId:actor.userId,via});
+  }
   if(name==='platform.overview')return this.overview(actor);
   if(name==='platform.openCase'){
    const p=platformCommands[name].schema.parse(input);this.workspace(actor,p.workspaceId);

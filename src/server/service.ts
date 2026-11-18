@@ -46,11 +46,12 @@ const connectionView = (row: ConnectionRow): Connection => ({ id: row.id, name: 
 
 export function authorize(actor: Actor, name: CommandName) {
   const scope = commands[name].scope;
-  if((scope==='campaign:send'||scope==='delivery:configure'||scope==='sender:configure')&&actor.kind==='connection')requireCondition(actor.scopes.includes('read'),403,'scope_required','Delivery also requires draft read access.');
+  if((scope==='campaign:send'||scope==='delivery:configure'||scope==='sender:configure'||scope==='sms:send')&&actor.kind==='connection')requireCondition(actor.scopes.includes('read'),403,'scope_required','Delivery also requires draft read access.');
   if(scope==='campaign:rehearse' && actor.kind==='connection') requireCondition(actor.scopes.includes('read'),403,'scope_required','Rehearsals also require draft read access.');
   if (scope === 'owner') requireCondition(actor.kind === 'session' && actor.owner, 403, 'owner_required', 'Use a current workspace owner session for this action.');
   else {
-    const memberScope=scope==='read'||scope==='draft:write'||scope==='assets:write';
+    // sms:send reaches a member only through an explicit owner grant (team_grants.sms_send).
+    const memberScope=scope==='read'||scope==='draft:write'||scope==='assets:write'||scope==='sms:send';
     const allowed=actor.kind==='connection'?actor.owner&&actor.scopes.includes(scope):
       actor.owner||memberScope&&actor.scopes.includes(scope);
     requireCondition(allowed,403,'scope_required',`This action requires ${scope} access in this workspace.`);
@@ -108,8 +109,13 @@ export class CommandService {
     }
     return methods;
   }
-  async execute(name: CommandName, raw: unknown, actor: Actor): Promise<unknown> {
+  async execute(name: CommandName, raw: unknown, actor: Actor, via?: 'ui'|'api'|'mcp'): Promise<unknown> {
     authorize(actor, name);
+    if (name.startsWith('sms.')) {
+      const texting=this.customer?.texting;
+      requireCondition(texting,503,'texting_off','Texting is not enabled in this environment.');
+      return texting.execute(name as Parameters<typeof texting.execute>[0], raw, actor, via ?? (actor.kind==='session'?'ui':'api'));
+    }
     if (name === 'sender.deliveryReadiness') {
       const {brandId} = commands[name].schema.parse(raw);
       const sender = await this.db.tenant(actor.workspaceId, async sql => {
@@ -258,7 +264,7 @@ export class CommandService {
       case 'workspace.retention':return retentionPreview(sql,w);
       case 'team.list':return teamPage(sql,w,this.team,commands[name].schema.parse(raw).offset,this.customer?.billing.options);
       case 'team.grant':{
-        const request=commands[name].schema.parse(raw);return grantMember(sql,w,actor.userId,this.team,request.userId,request.permission,request.brandIds,this.customer?.billing.options);
+        const request=commands[name].schema.parse(raw);return grantMember(sql,w,actor.userId,this.team,request.userId,request.permission,request.brandIds,this.customer?.billing.options,request.smsSend);
       }
       case 'team.revoke':{
         return revokeMember(sql,commands[name].schema.parse(raw).userId);

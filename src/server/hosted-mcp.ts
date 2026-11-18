@@ -22,7 +22,7 @@ export function hostedMcp(service: CommandService, auth: Authenticator) {
       express.json({ limit: '1mb' })(req, res, error => error ? reject(error) : resolve());
     });
     const server = createMcpServer(async (name, input) => {
-      try { return await service.execute(name, input, actor); }
+      try { return await service.execute(name, input, actor, 'mcp'); }
       catch (cause) {
         if (cause instanceof AppError) throw new Error(cause.code + ': ' + cause.message, { cause });
         throw new Error('The request could not be completed.', { cause });

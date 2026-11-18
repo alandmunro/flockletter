@@ -70,7 +70,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     customerWorkflows:service?.customer?{billing:service.customer.settings.billing,delivery:service.customer.settings.delivery,deliveryScope:service.customer.settings.deliveryScope,audience:service.customer.settings.audience,team:service.customer.settings.team,support:service.customer.settings.support,retention:service.customer.settings.retention}:null }));
   app.use('/api/v1', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false,
     skip: req => (['HEAD','POST'].includes(req.method) && /^\/brands\/[^/]+\/subscriber-signups\/?$/i.test(req.path)) ||
-      (req.method==='POST' && /^\/(confirmation-feedback|customer-audience\/confirmation-events|billing\/stripe-events|customer-billing\/stripe-events|support\/(inbound|resend-inbound)|customer-delivery\/(ses-events|resend-events))\/?$/i.test(req.path)),
+      (req.method==='POST' && /^\/(confirmation-feedback|customer-audience\/confirmation-events|billing\/stripe-events|customer-billing\/stripe-events|support\/(inbound|resend-inbound)|customer-delivery\/(ses-events|resend-events)|texting\/twilio\/(inbound|status|registration))\/?$/i.test(req.path)),
     message: { error: { code: 'rate_limited', message: 'Too many requests. Retry in a minute.' } } }));
   app.use('/api/v1', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -162,7 +162,8 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     const limit = name==='asset.uploadBatch' ? '29mb' : (name==='campaign.previewImport'||name==='campaign.commitImport') ? '640kb' : (name==='audience.previewImport'||name==='audience.applyPracticeImport'||name==='audienceOnboarding.import') ? csvRequestBytes : (name==='campaign.create'||name==='campaign.update') ? '160kb' : name.startsWith('audience.') ? '4kb' : '64kb';
     express.json({ limit, strict: true })(req, res, error => {
       if (error) return next(error);
-      void service!.execute(name, req.body, actor).then(result => res.json({ result })).catch(next);
+      const via = actor.kind === 'connection' && req.get('x-flockletter-interface') === 'mcp' ? 'mcp' : actor.kind === 'session' ? 'ui' : 'api';
+      void service!.execute(name, req.body, actor, via).then(result => res.json({ result })).catch(next);
     });
   });
   app.get('/api/v1/assets/:id', async (req, res) => {
@@ -173,7 +174,24 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     res.set('Content-Disposition', 'inline');
     res.type(asset.mime).send(asset.bytes);
   });
+  // Twilio webhooks (FL-SMS-009/015): form-encoded, signature-checked against the owning account's auth token.
+  for (const kind of ['inbound', 'status', 'registration'] as const)
+    app.post('/api/v1/texting/twilio/' + kind, rateLimit({ windowMs: 60000, limit: 960, standardHeaders: 'draft-8', legacyHeaders: false }), express.urlencoded({ extended: false, limit: '32kb', parameterLimit: 60 }), async (req, res) => {
+      const texting = service?.customer?.texting;
+      if (!texting) throw new AppError(503, 'texting_off', 'Texting is not enabled.');
+      const params = Object.fromEntries(Object.entries(req.body as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === 'string'));
+      await texting.webhook(kind, config.origin + req.originalUrl, params, req.get('x-twilio-signature') ?? '');
+      // An empty TwiML response: Flockletter never replies inline.
+      res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
+    });
   app.use('/api', (_req, _res, next) => next(new AppError(404, 'not_found', 'This API route is unavailable.')));
+  // Short links (FL-SMS-010): exact, case-sensitive match to a stored, unexpired destination only.
+  app.get('/l/:shortName/:code', rateLimit({ windowMs: 60000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false }), async (req, res) => {
+    const destination = await service?.customer?.texting?.resolveLink(String(req.params.shortName), String(req.params.code)) ?? null;
+    res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer');
+    if (!destination) { res.status(404).type('text/plain').send('This link is unavailable.'); return; }
+    res.redirect(302, destination);
+  });
   const clientDirectory = path.resolve('dist/client');
   app.use(express.static(clientDirectory, { index: false, maxAge: '1h' }));
   app.get('/{*path}', (_req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(clientDirectory, 'index.html')); });

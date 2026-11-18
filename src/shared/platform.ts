@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type {CustomerWorkerHeartbeat} from './customer-operations.js';
+import {textingPlatformCommands} from './texting-platform.js';
 
 const operationKey=z.uuid(),caseId=z.uuid(),reason=z.string().trim().min(12).max(400);
 const workspaceId=z.string().regex(/^org_[A-Za-z0-9_-]{1,120}$/);
@@ -17,6 +18,7 @@ export const platformCommands={
   'platform.abuseHold':define('Set a reversible workspace review hold without resetting trial history.',true,{operationKey,caseId,held:z.boolean(),reason}),
   'platform.alertAck':define('Acknowledge an alert without clearing the underlying risk.',true,{operationKey,alertId:z.uuid(),reason}),
   'platform.inbox':define('Inspect quarantined unassigned inbound support; sender is not authority.',false,{}),
+  ...textingPlatformCommands,
 };
 export type PlatformCommand=keyof typeof platformCommands;
 export type PlatformCase={id:string;workspaceId:string;kind:'support'|'retention'|'abuse'|'delivery';resourceId:string|null;reason:string;actorId:string;sessionId:string;verifiedAt:string;authentication?:'required'|'pre-revenue';expiresAt:string;createdAt:string;requestHash:string};

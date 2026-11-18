@@ -1,6 +1,6 @@
 # Texting phase 2: implementation plan
 
-**Status: plan for owner review. No code yet.** D-063 authorizes FL-SMS-001–015 only. The [SRD](../SRD.md) is canonical. Source IDs (REG-, CON-, MSG-…) refer to [the texting requirements](PROPOSED_TEXTING_AND_GIFTING.md).
+**Status: approved 2026-11-18 and implemented on `texting/phase-2`. FL-AT-041–044 pass locally against the mock; staging and FL-AT-045 are not yet done.** D-063 authorizes FL-SMS-001–015 only. The [SRD](../SRD.md) is canonical. Source IDs (REG-, CON-, MSG-…) refer to [the texting requirements](PROPOSED_TEXTING_AND_GIFTING.md).
 
 Out of scope: self-serve onboarding, identity checks, probation, billing or charges, gifting, coupons, events, date automations, hosted business pages and outside customers. Birthday and anniversary values are collected by the sign-up page (FL-SMS-007) and stored, but nothing sends on them.
 
@@ -192,3 +192,35 @@ The owner approved the plan with the recommended defaults:
 3. **Auth token:** `FLOCKLETTER_TWILIO_AUTH_TOKEN` is in `flockletter-production`. Twilio is reported to sign each subaccount's webhooks with that subaccount's own auth token. So FL-AT-045 must confirm which account the token belongs to before it is used to verify staging-subaccount webhooks. Signature verification looks up the token by the `AccountSid` in the request and fails closed if none matches.
 4. **Seeded defaults:** yes, only the public non-fraud defaults. Fraud limits stay unset.
 5. **Sign-up switches:** per workspace, applied to every brand page.
+
+## 9. Implementation (2026-11-18)
+
+Code: `migrations/040_texting.sql` (+ `migrations/rollback/040_texting.down.sql`), `src/shared/texting*.ts`, `src/shared/us-area-codes.ts`, `src/server/texting/`, `src/server/secrets/bitwarden.ts`, `src/client/Texting.tsx`, `src/client/OperatorTexting.tsx`. Tests: `tests/texting.test.ts`, `tests/texting-migration.test.ts`, `tests/bitwarden.test.ts`.
+
+### Configuration
+
+| Variable | Meaning |
+| --- | --- |
+| `FLOCKLETTER_TEXTING` | `off`, `mock` or `live`. Default `mock` in staging, `off` elsewhere. Production refuses `mock`. |
+| `FLOCKLETTER_TEXTING_ACTIVATION_APPROVED` | Must be `true` for `live`. |
+| `FLOCKLETTER_SHORT_LINK_ORIGIN` | Short-link origin and path. Default `<APP_ORIGIN>/l`; `https://flkl.cc` once its DNS and Render domain exist. |
+| `BWS_ACCESS_TOKEN`, `BWS_PROJECT` | Live only. The machine-account token and this environment's project (`flockletter-staging` or `flockletter-production`); any other project name is refused. The token is removed from the process environment after loading. |
+
+Bitwarden keys read in live mode: `FLOCKLETTER_TWILIO_ACCOUNT_SID`, `FLOCKLETTER_TWILIO_API_KEY_SID`, `FLOCKLETTER_TWILIO_API_KEY_SECRET`, `FLOCKLETTER_TWILIO_AUTH_TOKEN` (staging subaccount); `FLOCKLETTER_TWILIO_PLATFORM_ACCOUNT_SID`, `FLOCKLETTER_TWILIO_PLATFORM_API_KEY_SID`, `FLOCKLETTER_TWILIO_PLATFORM_API_KEY_SECRET`, `FLOCKLETTER_TWILIO_PRIMARY_PROFILE_SID` (platform); `FLOCKLETTER_TEXTING_SEAL_KEY` (64 hex characters). Mock mode reads none.
+
+### Staging exercise
+
+1. Operator control room → texting settings: set `carrier_daily_limit`, `monthly_segment_allowance`, `test_texts_per_day`, `member_code_minutes`, `member_code_attempts` (and optionally `reconcile_settle_minutes`, `registration_poll_minutes`).
+2. For each synthetic workspace: `platform.textingCarrierBrand` → `platform.textingConfirmPolicies` → `platform.textingSubmit` → “Simulate brand approval” → “Simulate campaign approval”.
+3. Workspace → Texting: set a short name and sign-up fields, add contacts, compose, review, send. `platform.textingMock` scripts faults and inbound replies.
+
+### Known limits (not hidden)
+
+- **Erasure of private texting routes.** Public `sms_*` tables are erased with the workspace (they are runtime tables). The private `texting_*` route, account and short-name rows are not yet in the retention executor's private list; that needs the executor and its role grants updated together.
+- **Inbound forwarding** records `captured`; no email transport is wired for INB-4 yet.
+- **Editors with the send grant** use the API or MCP; the browser Texting page is in the owner navigation only.
+- **Tenant narrowing** of quiet hours and frequency (owner can only narrow) is not built; only operator settings exist.
+- **Carrier daily limit** counts per UTC day.
+- **Real adapter.** TrustHub, A2P brand, campaign and number calls follow Twilio's ISV documentation but are first exercised in FL-AT-045. Each live step needs `platform.textingApprove`.
+- **Auth token.** The token in `flockletter-production` is likely the parent account's. Signature checks use the token of the account named in `AccountSid` and fail closed, so FL-AT-045 must confirm the staging subaccount's token first.
+- **US numbers only** by area code: 360 area codes for the 50 states and DC, maintained by hand in `src/shared/us-area-codes.ts`; a new overlay must be added there.

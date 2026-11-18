@@ -178,6 +178,31 @@ VALUES (w, gen_random_uuid(), 'example.test', 'example.test', 'create', 'example
 
 INSERT INTO platform_exercise_records (workspace_id, kind, id, body)
 VALUES (w, 'case', 'example.test', '{}'::jsonb);
+
+-- Texting add-on (040). One row in every texting table.
+DECLARE co uuid:=public.flockletter_default_company_id(w); cb uuid:=gen_random_uuid(); reg uuid:=gen_random_uuid();
+  num uuid:=gen_random_uuid(); ct uuid:=gen_random_uuid(); snd uuid:=gen_random_uuid(); msg uuid:=gen_random_uuid();
+  phone text:='+1212555'||lpad((abs(hashtext(w))%10000)::text,4,'0');
+BEGIN
+INSERT INTO sms_workspace_profile(workspace_id) VALUES(w);
+INSERT INTO sms_carrier_brands(workspace_id,id,company_id,legal_name,entity_type,profile,help_contact,created_by) VALUES(w,cb,co,'Fixture LLC','private_profit','{}','help@example.test','fixture');
+INSERT INTO sms_registrations(workspace_id,id,carrier_brand_id,state) VALUES(w,reg,cb,'approved');
+INSERT INTO sms_registration_steps(workspace_id,registration_id,revision,step,operation_key,state) VALUES(w,reg,1,'brand','sms-reg/'||reg||'/1/brand','done');
+INSERT INTO sms_operator_approvals(workspace_id,id,registration_id,revision,step,cost_note,approved_by) VALUES(w,gen_random_uuid(),reg,1,'brand','fixture','fixture');
+INSERT INTO sms_numbers(workspace_id,id,carrier_brand_id,e164,provider_sid,messaging_service_sid,state) VALUES(w,num,cb,phone,'PNfixture','MGfixture','active');
+INSERT INTO sms_contacts(workspace_id,id,phone_e164,subscriber_id,brand_id) VALUES(w,ct,phone,s,b);
+INSERT INTO sms_consents(workspace_id,company_id,contact_id,state) VALUES(w,co,ct,'opted_in');
+INSERT INTO sms_consent_events(workspace_id,id,company_id,contact_id,event,source,recorded_by) VALUES(w,gen_random_uuid(),co,ct,'confirmed','inbound_sms','fixture');
+INSERT INTO contact_dates(workspace_id,id,contact_id,type,label,month,day) VALUES(w,gen_random_uuid(),ct,'birthday','Birthday',1,2);
+INSERT INTO sms_member_phones(workspace_id,user_id,phone_e164) VALUES(w,'member',phone);
+INSERT INTO sms_sends(workspace_id,id,company_id,kind,body,state,created_by) VALUES(w,snd,co,'broadcast','Fixture','completed','fixture');
+INSERT INTO sms_messages(workspace_id,id,send_id,company_id,contact_id,purpose,to_e164,rendered_body,body_digest,encoding,segments,state) VALUES(w,msg,snd,co,ct,'broadcast',phone,'Fixture',digest,'gsm7',1,'delivered');
+INSERT INTO sms_inbound(workspace_id,id,number_id,from_e164,contact_id,body,provider_sid,classification) VALUES(w,gen_random_uuid(),num,phone,ct,'Fixture','SMfixture','other');
+INSERT INTO sms_provider_events(workspace_id,event_key,digest) VALUES(w,'fixture',digest);
+INSERT INTO sms_usage(workspace_id,period_month) VALUES(w,date_trunc('month',now())::date);
+INSERT INTO sms_links(workspace_id,code,destination) VALUES(w,'Fixture','https://example.test/');
+INSERT INTO sms_audit(workspace_id,id,actor_id,interface,action) VALUES(w,gen_random_uuid(),'fixture','worker','fixture');
+END;
     END $$;`);
     await db.query('COMMIT');
   } catch (error) {
