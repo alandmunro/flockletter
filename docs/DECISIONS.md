@@ -133,6 +133,7 @@ The owner can resolve these incrementally. Missing decisions must be exposed bef
 
 | Date | Change |
 | --- | --- |
+| 2026-11-17 | The CI dependency audit now runs `npm run audit:check`: production dependencies must have no moderate-or-higher advisory, with no exceptions. Development-only advisories need a dated exception in `scripts/audit-exceptions.json`. picomatch GHSA-fc5q-39xc-vjpf (no patched release; reached only through build and test tooling) is accepted until 2026-12-01. |
 | 2026-11-17 | Added O-016 and the public texting and gifting proposal for review. No decision accepted and no implementation authorized. |
 | 2026-11-17 | D-063 accepts the texting add-on with conflict resolutions, resolves O-016, adds FL-SMS-001–015 and FL-AT-041–045, and authorizes phase 2 only. |
 | 2026-11-09 | D-048/049/050 record explicit owner acceptance of the minimal lifetime trial-history exception, specified billing defaults and FFA Growth complimentary policy. Configuration, historical/provider evidence, exact customer agreement, legal/tax facts and actual grant issuance remain separate. Documentation only. |
