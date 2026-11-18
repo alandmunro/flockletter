@@ -89,6 +89,8 @@ export interface CustomerConfirmationPort {
   lookup(operationKey: string): Promise<{ state: 'accepted' | 'rejected' | 'unknown'; providerId?: string }>;
 }
 export type CustomerAudienceOptions = {
+  /** Texting add-on hook for the optional sign-up fields (FL-SMS-007). */
+  texting?: import('../texting/service.js').Texting;
   mode: Mode;
   origin: string;
   checkOwner: (user: string, workspace: string) => Promise<boolean>;
@@ -791,7 +793,8 @@ export class CustomerAudience {
     return this.db.brand(workspace, brand, async (sql) => {
       const row = await settings(sql);
       if (!row?.enabled || row.form_token !== form || this.options.mode === 'off') throw invalidLink();
-      return { ...(await brandIdentity(sql, brand)), ...policy(row), mode: this.options.mode, confirmationMode: row.confirmation_mode };
+      const texting = this.options.texting ? await this.options.texting.signupView(sql, workspace, brand) : null;
+      return { ...(await brandIdentity(sql, brand)), ...policy(row), mode: this.options.mode, confirmationMode: row.confirmation_mode, texting };
     });
   }
   publicLogo(form: string) {
@@ -842,7 +845,7 @@ export class CustomerAudience {
       ).rows[0]!;
       if (budget.requests > 10) return row.confirmation_mode === 'single_opt_in'
         ? { status: 'request_received', message: 'Your signup request has been received. You can unsubscribe from any newsletter.' } : genericReceipt;
-      return this.signupInTransaction(
+      const receipt = await this.signupInTransaction(
         sql,
         workspace,
         brand,
@@ -850,6 +853,12 @@ export class CustomerAudience {
         email.data,
         'customer-public-' + this.options.mode + '-signup',
       );
+      // Optional texting fields ride in the same transaction; email confirmation is unchanged (D-054).
+      if (this.options.texting && input.texting) {
+        const subscriber = (await sql.query<{ id: string }>('SELECT id FROM subscribers WHERE email_normalized=$1', [email.data])).rows[0]?.id ?? null;
+        await this.options.texting.recordSignup(sql, workspace, brand, subscriber, input.texting as Parameters<NonNullable<CustomerAudienceOptions['texting']>['recordSignup']>[4]);
+      }
+      return receipt;
     });
   }
   async confirm(form: string, token: string) {

@@ -19,9 +19,10 @@ import { customerRetentionCommands } from './customer-retention.js';
 import { customerDeliveryCommands } from './customer-delivery.js';
 import { customerOperationsCommands } from './customer-operations.js';
 import { customerInfrastructureCommands } from './customer-infrastructure.js';
+import { textingCommands } from './texting.js';
 
 export type { IntakeStatus } from './subscriber.js';
-export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write','audience:confirm','delivery:configure','sender:configure'] as const;
+export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write','audience:confirm','delivery:configure','sender:configure','sms:send'] as const;
 export type Capability = typeof capabilities[number];
 export const limits = { fileBytes: 5 * 1024 * 1024, batchBytes: 20 * 1024 * 1024, batchFiles: 10, imagePixels: 25_000_000, campaignImages: 6, workspaceBytes: 100 * 1024 * 1024, assets: 500, drafts: 100, connections: 10, preparationOperations: 2000 } as const;
 export const plans = [
@@ -82,6 +83,7 @@ export const commands = {
   ...customerOperationsCommands,
   ...customerInfrastructureCommands,
   ...senderSetupCommands,
+  ...textingCommands,
   'workspace.get': descriptor('Inspect workspace, plan catalogue and preparation limits. Does not create records.', 'read', false, {}),
   'workspace.preflight': descriptor('Start here: inspect all workspace setup gaps and preparation limits before gathering content or photos. Never starts billing or sends.', 'read', false, {}),
   'workspace.initialize': descriptor('Create the current Clerk organization workspace and first brand once. Does not activate a subscription.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(100), brandName: z.string().trim().min(1).max(100) }),
@@ -91,7 +93,7 @@ export const commands = {
   'team.list':descriptor('List verified Clerk workspace members, brand access and seat capacity.', 'owner',false,{offset:z.number().int().min(0).max(10000000).default(0)}),
   'team.invitations':descriptor('View pending Clerk invitations and remaining workspace seats in an owner session.', 'owner',false,{offset:z.number().int().min(0).max(10000000).default(0)}),
   'team.invite':descriptor('Request or reconcile one preconfigured staging Clerk member invitation.', 'owner',true,{operationKey:z.uuid(),email:invitationEmail}),
-  'team.grant':descriptor('Give an existing Clerk workspace member explicit brand preparation access.', 'owner',true,{operationKey:key,userId:clerkUserId,permission:teamRole,brandIds:z.array(id).min(1).max(5)}),
+  'team.grant':descriptor('Give an existing Clerk workspace member explicit brand preparation access. smsSend lets an editor send texts; it defaults to off.', 'owner',true,{operationKey:key,userId:clerkUserId,permission:teamRole,brandIds:z.array(id).min(1).max(5),smsSend:z.boolean().optional()}),
   'team.revoke':descriptor('Remove a member’s Flockletter brand access without changing their Clerk account.', 'owner',true,{operationKey:key,userId:clerkUserId}),
   'company.list':descriptor('List workspace companies, brands and applicable plan limits.', 'owner',false,{}),
   'company.create':descriptor('Create a company within the workspace-wide plan cap.', 'owner',true,{operationKey:key,name:companyOrBrandName}),

@@ -11,7 +11,7 @@ export function apiCaller(origin: string, token: string): ApiCaller {
   if (url.origin !== origin || url.username || url.password || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname)))) throw new Error('Use an exact HTTPS Flockletter origin, or local loopback HTTP.');
   if (!token.startsWith('flk_')) throw new Error('Use an owner-issued Flockletter connection token.');
   return async (name, input) => {
-    const response = await fetch(`${origin}/api/v1/commands/${name}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(60000) });
+    const response = await fetch(`${origin}/api/v1/commands/${name}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-flockletter-interface': 'mcp' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(60000) });
     const body = await response.json() as { result?: unknown; error?: { code: string; message: string; details?: unknown } };
     if (!response.ok) throw new Error(`${body.error?.code ?? 'request_failed'}: ${body.error?.message ?? 'Request failed.'}${body.error?.details ? ` ${JSON.stringify(body.error.details)}` : ''}`);
     return body.result;

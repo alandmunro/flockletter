@@ -164,6 +164,7 @@ export async function grantMember(
   permission: TeamRole,
   brandIds: string[],
   options?: Partial<BillingOptions>,
+  smsSend?: boolean,
 ) {
   requireCondition(
     (await clerk.membership(user, w)) === 'member',
@@ -189,9 +190,11 @@ export async function grantMember(
     'Choose existing brands in this workspace.',
   );
   await sql.query(
-    `INSERT INTO team_grants(workspace_id,user_id,permission,updated_by) VALUES($1,$2,$3,$4)
-    ON CONFLICT(workspace_id,user_id) DO UPDATE SET permission=excluded.permission,updated_by=excluded.updated_by,updated_at=now()`,
-    [w, user, permission, issuer],
+    `INSERT INTO team_grants(workspace_id,user_id,permission,updated_by,sms_send) VALUES($1,$2,$3,$4,$5)
+    ON CONFLICT(workspace_id,user_id) DO UPDATE SET permission=excluded.permission,updated_by=excluded.updated_by,updated_at=now(),
+      sms_send=CASE WHEN $6 THEN excluded.sms_send ELSE team_grants.sms_send END`,
+    // Only editors may hold the texting send grant; omitting smsSend leaves an existing grant unchanged.
+    [w, user, permission, issuer, permission === 'editor' && smsSend === true, smsSend !== undefined || permission !== 'editor'],
   );
   await sql.query('DELETE FROM team_grant_brands WHERE user_id=$1', [user]);
   await sql.query(
@@ -218,9 +221,9 @@ export async function memberPermissions(
   options?: Partial<BillingOptions>,
 ) {
   const row = (
-    await sql.query<{ permission: TeamRole; brand_ids: string[] }>(
-      `SELECT g.permission,array_agg(b.brand_id ORDER BY b.brand_id) brand_ids
-    FROM team_grants g JOIN team_grant_brands b USING(workspace_id,user_id) WHERE g.user_id=$1 GROUP BY g.permission`,
+    await sql.query<{ permission: TeamRole; brand_ids: string[]; sms_send: boolean }>(
+      `SELECT g.permission,g.sms_send,array_agg(b.brand_id ORDER BY b.brand_id) brand_ids
+    FROM team_grants g JOIN team_grant_brands b USING(workspace_id,user_id) WHERE g.user_id=$1 GROUP BY g.permission,g.sms_send`,
       [user],
     )
   ).rows[0];
@@ -234,6 +237,6 @@ export async function memberPermissions(
       'The workspace exceeds its seat allowance. An owner can review team access.',
     );
   const scopes: Capability[] =
-    row.permission === 'editor' ? ['read', 'draft:write', 'assets:write'] : ['read'];
+    row.permission === 'editor' ? ['read', 'draft:write', 'assets:write', ...(row.sms_send ? ['sms:send' as const] : [])] : ['read'];
   return { brandIds: row.brand_ids, scopes };
 }
