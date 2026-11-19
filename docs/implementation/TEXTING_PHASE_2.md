@@ -228,9 +228,9 @@ Staging (`flockletter-staging`, development Clerk, mock Twilio) was exercised th
 | FL-AT-044 | Emoji refused (`text_characters_blocked`); curly quotes and long dash converted; GSM-7 single segment with business prefix and STOP line; non-allow-listed link reported `link_not_allowed`; test send refused until the member phone is verified, wrong code returned `verified: false`; review → confirm with digest → accepted → delivered via mock callback; allowance usage recorded. |
 
 **Findings from the staging run.**
-- Changed SMS wording on the hosted sign-up returns a generic HTTP 503 page instead of a clear refusal; nothing is recorded (the signup transaction rolls back), but the visitor sees an error. Fix: map `consent_wording_changed` to a 409 page asking the visitor to reload.
-- An uncertain registration step waits indefinitely while `reconcile_settle_minutes` is unset (fail-closed by design), but `sms.status` and the operator panel don't list it as needed. Fix: show it among the needed settings once a step is uncertain.
-- Calling `platform.textingCarrierBrand` again while the registration is still a draft silently replaces the draft's details instead of refusing. Decide whether that is the intended correction path; the staging registration was submitted as "Other LLC" because of this.
+- Changed SMS wording on the hosted sign-up is refused with 409 `consent_wording_changed` and nothing is recorded. (A first attempt returned a one-off 503 that did not reproduce.) Like the existing `consent_changed` refusal, a native form post shows the JSON error rather than a page.
+- An uncertain registration step waits indefinitely while `reconcile_settle_minutes` is unset (fail-closed by design), but nothing said so. Fixed in PR #86: the setting is now listed as needed while a step is uncertain.
+- Calling `platform.textingCarrierBrand` again while the registration is a draft or rejected corrects it (audited as `carrier_brand.correct`, and policy confirmation is cleared); this is the designed correction path. The staging registration was submitted as "Other LLC" because the exercise called it twice.
 - Correct-code phone verification and two-tenant isolation were not exercised on staging (the code isn't readable through any customer or operator interface; only one workspace is available).
 
 ### Known limits (not hidden)
