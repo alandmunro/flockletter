@@ -888,7 +888,7 @@
     "/api/operator/v1/commands/platform.textingCarrierBrand": {
       "post": {
         "operationId": "platform_textingCarrierBrand",
-        "summary": "Create, or correct while draft or rejected, the one carrier brand for a company (FL-SMS-002).",
+        "summary": "Create, or correct while draft or rejected, the one carrier brand for a company (FL-SMS-002). Live registration also needs the campaign description and 2 to 5 sample texts written for this business.",
         "security": [
           {
             "operatorSession": []
@@ -957,10 +957,53 @@
                         "maxLength": 300,
                         "format": "uri"
                       },
+                      "businessType": {
+                        "type": "string",
+                        "enum": [
+                          "Limited Liability Corporation",
+                          "Corporation",
+                          "Partnership",
+                          "Co-operative",
+                          "Non-profit Corporation"
+                        ]
+                      },
                       "vertical": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 60
+                        "enum": [
+                          "AGRICULTURE",
+                          "AUTOMOTIVE",
+                          "BANKING",
+                          "CONSTRUCTION",
+                          "CONSUMER",
+                          "EDUCATION",
+                          "ELECTRONICS",
+                          "ENGINEERING",
+                          "ENERGY",
+                          "FAST_MOVING_CONSUMER_GOODS",
+                          "FINANCIAL",
+                          "FINTECH",
+                          "FOOD_AND_BEVERAGE",
+                          "GOVERNMENT",
+                          "HEALTHCARE",
+                          "HOSPITALITY",
+                          "INSURANCE",
+                          "JEWELRY",
+                          "LEGAL",
+                          "MANUFACTURING",
+                          "MEDIA",
+                          "NOT_FOR_PROFIT",
+                          "OIL_AND_GAS",
+                          "ONLINE",
+                          "PROFESSIONAL_SERVICES",
+                          "RAW_MATERIALS",
+                          "REAL_ESTATE",
+                          "RELIGION",
+                          "RETAIL",
+                          "TECHNOLOGY",
+                          "TELECOMMUNICATIONS",
+                          "TRANSPORTATION",
+                          "TRAVEL"
+                        ]
                       },
                       "areaCode": {
                         "type": "string",
@@ -1043,9 +1086,35 @@
                     "required": [
                       "ein",
                       "website",
+                      "businessType",
                       "vertical",
                       "address",
                       "contact"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "campaign": {
+                    "type": "object",
+                    "properties": {
+                      "description": {
+                        "type": "string",
+                        "minLength": 40,
+                        "maxLength": 4096
+                      },
+                      "samples": {
+                        "minItems": 2,
+                        "maxItems": 5,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 20,
+                          "maxLength": 1024
+                        }
+                      }
+                    },
+                    "required": [
+                      "description",
+                      "samples"
                     ],
                     "additionalProperties": false
                   },

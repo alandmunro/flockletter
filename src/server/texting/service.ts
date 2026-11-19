@@ -1,5 +1,6 @@
 // The texting add-on behind the one command layer (customer `sms.*` and operator `platform.texting*`),
 // plus its worker pass, signed webhooks, short-link redirects and the sign-up page hook.
+import { businessRefusals, twilioBusiness } from '../../shared/texting-business.js';
 import { randomInt, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { Database, Sql } from '../db.js';
@@ -498,7 +499,11 @@ export class Texting {
         return { key: p.key, workspaceId: p.workspaceId, value, revision: revision.rows[0]!.r };
       }
       case 'platform.textingCarrierBrand': {
-        const p = input as unknown as { workspaceId: string; companyId: string; legalName: string; dbaName: string | null; entityType: string; profile: Record<string, unknown>; helpContact: string; reason: string };
+        const p = input as unknown as { workspaceId: string; companyId: string; legalName: string; dbaName: string | null; entityType: string; profile: Record<string, unknown>; campaign?: { description: string; samples: string[] }; helpContact: string; reason: string };
+        const business = twilioBusiness(p.entityType, p.profile.businessType, p.profile.vertical);
+        if ('reason' in business) throw new AppError(422, business.reason, businessRefusals[business.reason] ?? 'This business cannot be registered.');
+        // The wording is stored with the registration profile; the campaign step files it as written.
+        p.profile = { ...p.profile, ...(p.campaign ? { campaign: p.campaign } : {}) };
         return write(p.workspaceId, async sql => {
           await this.company(sql, p.companyId);
           const existing = (await sql.query<{ id: string; legal_name: string; profile: unknown }>('SELECT * FROM sms_carrier_brands WHERE company_id=$1', [p.companyId])).rows[0];

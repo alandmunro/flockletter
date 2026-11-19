@@ -7,6 +7,8 @@ export type Result<T> = { outcome: Outcome; value?: T; reason?: string; retryAft
 export type AccountCredentials = { accountSid: string; keySid: string; keySecret: string; authToken: string };
 export type BusinessProfile = {
   legalName: string; dbaName: string | null; entityType: string; ein: string; website: string; vertical: string;
+  /** Twilio's exact `business_type` and `company_type` strings (see shared/texting-business.ts). */
+  businessType: string; companyType: string;
   address: { street: string; city: string; region: string; postalCode: string; country: 'US' };
   contact: { firstName: string; lastName: string; email: string; phone: string; title: string };
   notificationEmail: string;

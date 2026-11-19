@@ -276,6 +276,21 @@ Both crashed with `Live texting needs FLOCKLETTER_TEXTING_SEAL_KEY`.
 
 **Rollout order for live mode:** deploy the web first, so a start-up failure leaves the old instance serving. Then deploy the worker, and watch its logs for restarts, because its deploy status can't show a crash.
 
+### Live registration wording (2026-11-19)
+
+Before the first real filing, a review of the live registration path found two problems that would have been refused by Twilio or the carriers:
+
+- **Business type.** The business profile sent the internal entity type (`private_profit`) as Twilio's `business_type`, and `company_type` was always `private`. Twilio accepts only its own strings.
+- **Campaign samples.** Every brand filed the same generic retail description and samples ("15% off in store"). Carriers reject a campaign whose samples don't match the business, and each campaign submission pays a vetting fee.
+
+**Fix:**
+- `src/shared/texting-business.ts` holds Twilio's business types, industries and company types (from Twilio's "Gather the required business information" page, checked 2026-11-19) and its rules: non-profit and government brands use "Non-profit Corporation" with `NOT_FOR_PROFIT` or `GOVERNMENT`. Public companies (stock exchange details not collected) and sole proprietors without an EIN (a separate Twilio brand path) are refused.
+- `platform.textingCarrierBrand` now takes `profile.businessType` and an industry from Twilio's list as `profile.vertical`, and refuses combinations Twilio would refuse. It also takes `campaign` (a description of 40 to 4096 characters and 2 to 5 sample texts) written for this business, stored with the brand profile.
+- In live mode, `platform.textingSubmit` refuses with `campaign_wording_missing`, or the business refusal, before any provider call. The campaign step files the brand's own wording, and the opt-in description includes the confirmed privacy policy and SMS terms links. The generic wording remains for the mock only.
+- This narrows ONB-5's per-vertical templates: for now the operator writes the wording per brand. Self-serve onboarding still needs the templates.
+
+Tests: `tests/texting-twilio-business.test.ts` (rules, and the exact strings the live adapter sends); `tests/texting.test.ts` "live registration wording" (refusals, live submit refused without wording and with no provider call, then accepted).
+
 ### Known limits (not hidden)
 
 - **Erasure of private texting routes.** Public `sms_*` tables are erased with the workspace (they are runtime tables). The private `texting_*` route, account and short-name rows are not yet in the retention executor's private list; that needs the executor and its role grants updated together.
