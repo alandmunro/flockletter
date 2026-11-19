@@ -129,6 +129,14 @@ describe('FL-AT-042 registration', () => {
     await expect(op('platform.textingCarrierBrand', { workspaceId: w, companyId: company[w], legalName: 'Other LLC', dbaName: null, entityType: 'private_profit', profile, helpContact: 'x@example.com', reason: 'Attempt a second brand.' })).rejects.toMatchObject({ code: 'registration_in_progress' });
     await expect(db.tenant(w, sql => sql.query(`INSERT INTO sms_carrier_brands(workspace_id,id,company_id,legal_name,entity_type,profile,help_contact,created_by) VALUES($1,$2,$3,'Dup','private_profit','{}','x@example.com','t')`, [w, randomUUID(), company[w]]))).rejects.toThrow(/unique/);
     await tick(w); // subaccount timed out after commit → reconciled by lookup; profile 5xx → uncertain
+    // With no settle time the uncertain step waits, and both the customer and operator views say which setting is needed.
+    await setting('reconcile_settle_minutes', null);
+    await db.tenant(w, sql => sql.query(`UPDATE sms_registration_steps SET state='uncertain' WHERE step='campaign'`));
+    expect((await run<{ settingsNeeded: string[] }>('sms.status', {})).settingsNeeded).toContain('reconcile_settle_minutes');
+    expect((await op<{ settingsNeeded: string[] }>('platform.textingRegistration', { workspaceId: w })).settingsNeeded).toEqual(['reconcile_settle_minutes']);
+    await db.tenant(w, sql => sql.query(`UPDATE sms_registration_steps SET state='queued' WHERE step='campaign'`));
+    await setting('reconcile_settle_minutes', 1);
+    expect((await op<{ settingsNeeded: string[] }>('platform.textingRegistration', { workspaceId: w })).settingsNeeded).toEqual([]);
     advance(2 * 60000); await tick(w); // settle time passed: profile retried; brand 429 → queued
     advance(60000); await tick(w);
     // Crash simulation: a committed `calling` intent with no provider call made.
