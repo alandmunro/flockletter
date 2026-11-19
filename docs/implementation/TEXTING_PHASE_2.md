@@ -1,6 +1,6 @@
 # Texting phase 2: implementation plan
 
-**Status: approved 2026-11-18 and implemented on `texting/phase-2`. FL-AT-041–044 pass locally against the mock; staging and FL-AT-045 are not yet done.** D-063 authorizes FL-SMS-001–015 only. The [SRD](../SRD.md) is canonical. Source IDs (REG-, CON-, MSG-…) refer to [the texting requirements](PROPOSED_TEXTING_AND_GIFTING.md).
+**Status: approved 2026-11-18, merged in PR #84 (`7c67ab9`) and live on staging in mock mode. FL-AT-041–044 pass locally and were exercised on staging against the mock; FL-AT-045 is not yet done.** D-063 authorizes FL-SMS-001–015 only. The [SRD](../SRD.md) is canonical. Source IDs (REG-, CON-, MSG-…) refer to [the texting requirements](PROPOSED_TEXTING_AND_GIFTING.md).
 
 Out of scope: self-serve onboarding, identity checks, probation, billing or charges, gifting, coupons, events, date automations, hosted business pages and outside customers. Birthday and anniversary values are collected by the sign-up page (FL-SMS-007) and stored, but nothing sends on them.
 
@@ -213,6 +213,25 @@ Bitwarden keys read in live mode: `FLOCKLETTER_TWILIO_ACCOUNT_SID`, `FLOCKLETTER
 1. Operator control room → texting settings: set `carrier_daily_limit`, `monthly_segment_allowance`, `test_texts_per_day`, `member_code_minutes`, `member_code_attempts` (and optionally `reconcile_settle_minutes`, `registration_poll_minutes`).
 2. For each synthetic workspace: `platform.textingCarrierBrand` → `platform.textingConfirmPolicies` → `platform.textingSubmit` → “Simulate brand approval” → “Simulate campaign approval”.
 3. Workspace → Texting: set a short name and sign-up fields, add contacts, compose, review, send. `platform.textingMock` scripts faults and inbound replies.
+
+### Staging evidence (2026-11-18)
+
+Staging (`flockletter-staging`, development Clerk, mock Twilio) was exercised through the operator and customer HTTP command APIs and the hosted sign-up page, signed in as the workspace owner. The operator account is a workspace-only exercise actor, so only one workspace (`org_3LmYkS07OAgBzsblHl3ppMfXrBk`) was available; cross-workspace isolation between two live tenants remains covered by the local tests only.
+
+**Release.** The schema-compatibility rehearsal for serving `4c47ec6` → candidate `7c67ab9` failed (`serving_web_on_new_schema`): the old runtime check rejects the new texting routines and the new check requires them, so neither order is ready-safe. With owner approval this ran as a staging maintenance window: point-in-time recovery point 15:07:44 UTC; migration 040 applied by `scripts/migrate.ts` as a one-off Render job on a temporary worker at `7c67ab9` (15:27:46 UTC); `7c67ab9` deployed and verified by `/api/health/version` and `/readyz` (15:30:37 UTC); worker deleted. Staging was not ready for about three minutes. Production will hit the same incompatibility and needs a bridge release or its own window.
+
+| Case | Observed on staging |
+| --- | --- |
+| FL-AT-041 | Operator exercise actor refused for another workspace (`exercise_workspace_only`) on settings, registration and mock; platform-scope setting changes refused; operator commands unknown on the customer API; foreign company id `not_found`; unsigned or wrongly signed Twilio webhooks (inbound, status, registration) refused with 403 and changed no consent. Five sending settings plus `reconcile_settle_minutes` set at workspace scope, each audited. |
+| FL-AT-042 | Submit refused until policies confirmed (`policies_unconfirmed`); second carrier brand after submit refused (`registration_in_progress`). Injected faults: campaign `429` → queued, then `5xx` → uncertain, held as `not_found_yet` until the settle time was set, then retried and done (3 calls); number `timeout_after_commit` → uncertain → found by lookup with a single create. Campaign waited for brand approval; number active only after campaign approval. |
+| FL-AT-043 | Hosted sign-up shows optional phone and birthday fields with the SMS checkbox unchecked. Checkbox sign-up → `pending_confirmation` → YES → `opted_in`; sign-up without the checkbox and an import without consent stayed `none` (import's YES classified `other`); unknown number's YES classified `unknown_number`. HELP kept consent; `stop` and `PARAR` opted out; START restored the STOP contact. |
+| FL-AT-044 | Emoji refused (`text_characters_blocked`); curly quotes and long dash converted; GSM-7 single segment with business prefix and STOP line; non-allow-listed link reported `link_not_allowed`; test send refused until the member phone is verified, wrong code returned `verified: false`; review → confirm with digest → accepted → delivered via mock callback; allowance usage recorded. |
+
+**Findings from the staging run.**
+- Changed SMS wording on the hosted sign-up is refused with 409 `consent_wording_changed` and nothing is recorded. (A first attempt returned a one-off 503 that did not reproduce.) Like the existing `consent_changed` refusal, a native form post shows the JSON error rather than a page.
+- An uncertain registration step waits indefinitely while `reconcile_settle_minutes` is unset (fail-closed by design), but nothing said so. Fixed in PR #86: the setting is now listed as needed while a step is uncertain.
+- Calling `platform.textingCarrierBrand` again while the registration is a draft or rejected corrects it (audited as `carrier_brand.correct`, and policy confirmation is cleared); this is the designed correction path. The staging registration was submitted as "Other LLC" because the exercise called it twice.
+- Correct-code phone verification and two-tenant isolation were not exercised on staging (the code isn't readable through any customer or operator interface; only one workspace is available).
 
 ### Known limits (not hidden)
 
