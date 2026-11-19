@@ -4,10 +4,16 @@ import process from 'node:process';
 import console from 'node:console';
 
 /** Service metadata only. This verifies deployment destinations, never credentials or queue liveness. */
-export function productionTargetsMatch(input,{repository,productionUrl,webId,workerId}) {
+/**
+ * maintenanceWindow: after an approved maintenance-window migration the old web can no longer answer,
+ * so a missing (null) application identity is accepted. A reachable but wrong identity is still refused,
+ * and every Render metadata check below still applies.
+ */
+export function productionTargetsMatch(input,{repository,productionUrl,webId,workerId,maintenanceWindow=false}) {
   const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
-  if(!object(input)||!object(input.web)||!object(input.worker)||!object(input.version))return false;
-  if(input.version.appId!=='flockletter'||input.version.environment!=='production')return false;
+  if(!object(input)||!object(input.web)||!object(input.worker))return false;
+  if(input.version===null&&maintenanceWindow===true){/* identity unavailable during the window */}
+  else if(!object(input.version)||input.version.appId!=='flockletter'||input.version.environment!=='production')return false;
   const {web,worker}=input;
   try {
     const url=new URL(productionUrl);
@@ -28,8 +34,10 @@ export function productionTargetsMatch(input,{repository,productionUrl,webId,wor
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href) {
   try {
-    const [repository,productionUrl,webId,workerId]=process.argv.slice(2);
-    if(!productionTargetsMatch(JSON.parse(readFileSync(0,'utf8')),{repository,productionUrl,webId,workerId}))throw Error();
+    const [repository,productionUrl,webId,workerId,...flags]=process.argv.slice(2);
+    if(flags.length>1||(flags.length===1&&flags[0]!=='--maintenance-window'))throw Error();
+    const maintenanceWindow=flags[0]==='--maintenance-window';
+    if(!productionTargetsMatch(JSON.parse(readFileSync(0,'utf8')),{repository,productionUrl,webId,workerId,maintenanceWindow}))throw Error();
     console.log('Production web and worker destinations verified; live operation and worker liveness remain separate checks.');
   }catch {console.error('Production web and worker destination verification failed.');process.exitCode=1;}
 }

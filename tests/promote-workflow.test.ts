@@ -78,6 +78,16 @@ describe('production promotion workflow', () => {
     expect(calls).toEqual(['RENDER_PRODUCTION_WORKER_SERVICE_ID','RENDER_PRODUCTION_SERVICE_ID']);
   });
 
+  it('accepts a missing production identity only in a maintenance window that already applied the migration', () => {
+    expect(workflow).toContain('maintenance_window:');
+    expect(workflow).toContain('[ "${MAINTENANCE_WINDOW}" != "true" ] || [ "${MIGRATIONS_APPLIED}" = "true" ]');
+    const identity = workflow.slice(workflow.indexOf('- name: Confirm the Render service'), workflow.indexOf('- name: Deploy production'));
+    expect(identity).toContain('[ "${MAINTENANCE_WINDOW}" = "true" ] || { echo "::error::Current production application identity is unavailable."; exit 1; }');
+    expect(identity).toContain('window_flag=(--maintenance-window)');
+    expect(identity).toContain('"${window_flag[@]}"');
+    expect(identity).toContain('curl -fsS --max-time 30 -H "Authorization: Bearer ${RENDER_API_KEY}" "https://api.render.com/v1/services/${RENDER_PRODUCTION_WORKER_SERVICE_ID}"');
+  });
+
   it('asks the CI and restore-drill workflows directly and refuses unknown or changed migrations without confirmation', () => {
     expect(workflow).toContain('for workflow in ci.yml selfhost.yml');
     expect(workflow).toContain('actions/workflows/${workflow}/runs?head_sha=${SHA}&per_page=100');

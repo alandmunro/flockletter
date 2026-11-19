@@ -24,6 +24,12 @@ on:
         type: choice
         default: 'false'
         options: ['false', 'true']
+      maintenance_window:
+        description: The migration already ran in an approved maintenance window, so the old production web may be down (requires migrations_applied=true)
+        required: false
+        type: choice
+        default: 'false'
+        options: ['false', 'true']
       request_id:
         description: Mission Control release correlation ID (optional for manual runs)
         required: false
@@ -54,6 +60,7 @@ jobs:
       SHA: ${{ inputs.sha }}
       MIGRATIONS_APPLIED: ${{ inputs.migrations_applied }}
       DRY_RUN: ${{ inputs.dry_run || 'false' }}
+      MAINTENANCE_WINDOW: ${{ inputs.maintenance_window || 'false' }}
       STAGING_URL: ${{ vars.FLOCKLETTER_STAGING_URL || 'https://flockletter-staging.onrender.com' }}
       PRODUCTION_URL: ${{ vars.FLOCKLETTER_PRODUCTION_URL || 'https://flockletter-production.onrender.com' }}
       PRODUCTION_ALIAS_URL: ${{ vars.FLOCKLETTER_PRODUCTION_ALIAS_URL || 'https://preview.flockletter.frostyflamingosoftware.com' }}
@@ -65,6 +72,8 @@ jobs:
           set -euo pipefail
           [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::A full lowercase 40-character commit SHA is required."; exit 1; }
           [[ "${MIGRATIONS_APPLIED}" =~ ^(true|false)$ ]] || { echo "::error::migrations_applied must be true or false."; exit 1; }
+          [[ "${MAINTENANCE_WINDOW}" =~ ^(true|false)$ ]] || { echo "::error::maintenance_window must be true or false."; exit 1; }
+          [ "${MAINTENANCE_WINDOW}" != "true" ] || [ "${MIGRATIONS_APPLIED}" = "true" ] || { echo "::error::maintenance_window requires migrations_applied=true."; exit 1; }
           [[ -z "${REQUEST_ID}" || "${REQUEST_ID}" =~ ^[0-9a-f]{32}$ ]] || { echo "::error::request_id must be 32 hex characters."; exit 1; }
 
       # The release tooling always comes from the reviewed workflow commit, never from the commit being
@@ -145,11 +154,18 @@ jobs:
             || { echo "::error::Render rejected the API key or the service id (read-only check failed)."; exit 1; }
           worker="$(curl -fsS --max-time 30 -H "Authorization: Bearer ${RENDER_API_KEY}" "https://api.render.com/v1/services/${RENDER_PRODUCTION_WORKER_SERVICE_ID}")" \
             || { echo "::error::Render rejected the worker identity check."; exit 1; }
-          version="$(curl -fsS --max-time 30 "${PRODUCTION_URL}/api/health/version")" \
-            || { echo "::error::Current production application identity is unavailable."; exit 1; }
+          window_flag=()
+          if ! version="$(curl -fsS --max-time 30 "${PRODUCTION_URL}/api/health/version")"; then
+            # After a maintenance-window migration the old web cannot answer. Only then is a missing identity
+            # accepted; the Render metadata below is still checked, and a reachable wrong identity still fails.
+            [ "${MAINTENANCE_WINDOW}" = "true" ] || { echo "::error::Current production application identity is unavailable."; exit 1; }
+            echo "::warning::Current production application identity is unavailable; continuing because maintenance_window=true."
+            version=null
+            window_flag=(--maintenance-window)
+          fi
           jq -nc --argjson web "${service}" --argjson worker "${worker}" --argjson version "${version}" '{web:$web,worker:$worker,version:$version}' | \
             node control/scripts/verify-render-production-targets.mjs "https://github.com/${{ github.repository }}" \
-              "${PRODUCTION_URL}" "${RENDER_PRODUCTION_SERVICE_ID}" "${RENDER_PRODUCTION_WORKER_SERVICE_ID}"
+              "${PRODUCTION_URL}" "${RENDER_PRODUCTION_SERVICE_ID}" "${RENDER_PRODUCTION_WORKER_SERVICE_ID}" "${window_flag[@]}"
 
       - name: Deploy production
         if: ${{ env.DRY_RUN != 'true' }}
