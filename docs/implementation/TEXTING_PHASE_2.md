@@ -1,6 +1,6 @@
 # Texting phase 2: implementation plan
 
-**Status: approved 2026-11-18, merged in PR #84 (`7c67ab9`) and live on staging in mock mode. FL-AT-041–044 pass locally and were exercised on staging against the mock; FL-AT-045 is not yet done.** D-063 authorizes FL-SMS-001–015 only. The [SRD](../SRD.md) is canonical. Source IDs (REG-, CON-, MSG-…) refer to [the texting requirements](PROPOSED_TEXTING_AND_GIFTING.md).
+**Status: approved 2026-11-18, merged in PR #84 (`7c67ab9`) and live on staging in mock mode. FL-AT-041–044 pass locally and were exercised on staging against the mock. Released to production on 2026-11-19 at `1a4a33d` with texting `off`. FL-AT-045 was approved by the owner on 2026-11-19 and waits for the missing Twilio keys in Bitwarden.** D-063 authorizes FL-SMS-001–015 only. The [SRD](../SRD.md) is canonical. Source IDs (REG-, CON-, MSG-…) refer to [the texting requirements](PROPOSED_TEXTING_AND_GIFTING.md).
 
 Out of scope: self-serve onboarding, identity checks, probation, billing or charges, gifting, coupons, events, date automations, hosted business pages and outside customers. Birthday and anniversary values are collected by the sign-up page (FL-SMS-007) and stored, but nothing sends on them.
 
@@ -232,6 +232,27 @@ Staging (`flockletter-staging`, development Clerk, mock Twilio) was exercised th
 - An uncertain registration step waits indefinitely while `reconcile_settle_minutes` is unset (fail-closed by design), but nothing said so. Fixed in PR #86: the setting is now listed as needed while a step is uncertain.
 - Calling `platform.textingCarrierBrand` again while the registration is a draft or rejected corrects it (audited as `carrier_brand.correct`, and policy confirmation is cleared); this is the designed correction path. The staging registration was submitted as "Other LLC" because the exercise called it twice.
 - Correct-code phone verification and two-tenant isolation were not exercised on staging (the code isn't readable through any customer or operator interface; only one workspace is available).
+
+### Production release (2026-11-19)
+
+The owner asked for the same maintenance window in production. Commit `1a4a33d` (main; it differs from the staging-tested `7c67ab9` only in docs) was first deployed to staging and verified ready there.
+
+- **Rehearsal.** Serving web and worker `4c47ec6` → candidate `1a4a33d` failed with `serving_web_on_new_schema` for both web and worker, as on staging.
+- **Dry run.** Promotion workflow run 44454895439 (`dry_run=true`, `migrations_applied=true`) passed every gate, including the read-only Render identity check.
+- **Window.** Production was ready on `4c47ec6` at 03:57:41 UTC; that is the database recovery point (`cadence-prod-db`, point-in-time recovery available). The production release credentials were linked to a temporary worker at `1a4a33d`, and migration 040 ran as a one-off job with `scripts/migrate.ts` (03:57:55–03:58:22 UTC). The credentials were then unlinked and the temporary worker deleted.
+- **Deploy.** Workflow run 44455099682 stopped at its identity check because the old web was already down on the new schema (502). The worker and then the web were deployed with the same `scripts/render-deploy.sh`; both went live at `1a4a33d`. At 04:02:13 UTC `/readyz` was ready, and `scripts/verify-release.mjs` verified `1a4a33d` on both production addresses. Production was not ready for about 4 minutes.
+- **Texting mode.** Production has no `FLOCKLETTER_TEXTING` setting, so texting is `off` and no Twilio or Bitwarden secret is read.
+- **Follow-up.** The promotion workflow can't finish a maintenance-window release once the migration has run, because its identity check needs the old web to answer. Either let it run that check before the migration, or accept the dry-run result.
+
+### FL-AT-045 approval (2026-11-19)
+
+The owner approved FL-AT-045 and will add the missing Twilio keys to Bitwarden later. Until then, production stays `off`. Going live still needs, in order:
+1. The keys in `flockletter-production`, including confirming which account the auth token belongs to.
+2. `FLOCKLETTER_TEXTING=live`, `FLOCKLETTER_TEXTING_ACTIVATION_APPROVED=true` and the machine-account token on the production services.
+3. The live-recipient allow-list set to the owner's phone.
+4. Each live registration step approved with `platform.textingApprove`.
+
+Hospitality's carrier registration also waits until the owner confirms its website privacy policy and SMS terms are live.
 
 ### Known limits (not hidden)
 
