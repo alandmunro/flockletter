@@ -17,6 +17,7 @@ import type { CustomerWorkflows } from '../src/server/customer-runtime.js';
 import { CustomerAudience } from '../src/server/customer-audience/service.js';
 import type { AudienceSettingsView } from '../src/shared/customer-audience.js';
 import { Texting, type OperatorActor } from '../src/server/texting/service.js';
+import { TextingRegistration } from '../src/server/texting/registration.js';
 import { twilioSignature, verifyTwilioSignature } from '../src/server/texting/twilio.js';
 import { encodeText, normalizeUsPhone, composeBroadcast } from '../src/shared/texting.js';
 import { textingPlatformCommands, type TextingPlatformCommand } from '../src/shared/texting-platform.js';
@@ -47,7 +48,7 @@ async function setting(keyName: string, value: unknown, workspaceId: string | nu
   const revision = (workspaceId ? current.workspace?.revision : current.platform?.revision) ?? 0;
   return op('platform.textingSetSetting', { key: keyName, workspaceId, value, expectedRevision: revision, reason: 'Test configuration for FL-AT.' });
 }
-const profile = { ein: '12-3456789', website: 'https://example.com', vertical: 'RETAIL', areaCode: '212',
+const profile = { ein: '12-3456789', website: 'https://example.com', businessType: 'Limited Liability Corporation', vertical: 'RETAIL', areaCode: '212',
   address: { street: '1 Main St', city: 'New York', region: 'NY', postalCode: '10001', country: 'US' },
   contact: { firstName: 'Pat', lastName: 'Owner', email: 'pat@example.com', phone: '+12125550100', title: 'Owner' } };
 async function optIn(w: string, phone: string, name: string | null = null) {
@@ -502,5 +503,45 @@ describe('FL-AT-044 sending', () => {
     await db.tenant(w, sql => sql.query(`INSERT INTO sms_links(workspace_id,code,destination,expires_at) VALUES($1,'Exp1red','https://example.com/a',now()-interval '1 second')`, [w]));
     await db.tenant(w, sql => sql.query(`SELECT flockletter_customer_jobs.texting_register_link($1,'shop-a','Exp1red')`, [w]));
     expect(await texting.resolveLink('shop-a', 'Exp1red')).toBeNull();
+  });
+});
+
+describe('live registration wording', () => {
+  const wording = { description: 'Synthetic C texts past and future guests about open dates, seasonal offers and local news for its rental condo.',
+    samples: ['Synthetic C: Two winter weekends just opened at the lake condo. Book at example.com. Reply STOP to opt out.',
+      'Synthetic C: Summer is here! Stay 4 nights in June and get the 5th free. Reply STOP to opt out.'] };
+  it('refuses a business Twilio would refuse before anything is stored', async () => {
+    const w = A.workspaceId, base = { workspaceId: w, companyId: randomUUID(), legalName: 'Synthetic C LLC', dbaName: null, helpContact: 'help@example.com', reason: 'Synthetic business check.' };
+    await expect(op('platform.textingCarrierBrand', { ...base, entityType: 'non_profit', profile })).rejects.toMatchObject({ code: 'business_type_mismatch' });
+    await expect(op('platform.textingCarrierBrand', { ...base, entityType: 'government', profile: { ...profile, businessType: 'Non-profit Corporation' } })).rejects.toMatchObject({ code: 'industry_mismatch' });
+    await expect(op('platform.textingCarrierBrand', { ...base, entityType: 'public_profit', profile })).rejects.toMatchObject({ code: 'public_company_unsupported' });
+    await expect(op('platform.textingCarrierBrand', { ...base, entityType: 'sole_proprietor', profile })).rejects.toMatchObject({ code: 'sole_proprietor_unsupported' });
+    await expect(op('platform.textingCarrierBrand', { ...base, entityType: 'private_profit', profile: { ...profile, vertical: 'Vacation rentals' } })).rejects.toThrow();
+    await expect(op('platform.textingCarrierBrand', { ...base, entityType: 'private_profit', profile: { ...profile, businessType: 'LLC' } })).rejects.toThrow();
+  });
+  it('refuses live submit without the business’s own campaign wording, then files it as written', async () => {
+    const w = A.workspaceId;
+    const companyId = randomUUID();
+    await db.tenant(w, sql => sql.query(`INSERT INTO companies(workspace_id,id,name,is_default) VALUES($1,$2,'Synthetic C',false)`, [w, companyId]));
+    const created = await op<{ carrierBrandId: string; registrationId: string }>('platform.textingCarrierBrand', { workspaceId: w, companyId, legalName: 'Synthetic C LLC', dbaName: 'Synthetic C', entityType: 'private_profit', profile: { ...profile, vertical: 'HOSPITALITY' }, helpContact: 'help@example.com', reason: 'Synthetic live wording check.' });
+    await op('platform.textingConfirmPolicies', { workspaceId: w, carrierBrandId: created.carrierBrandId, privacyPolicyUrl: 'https://example.com/privacy', smsTermsUrl: 'https://example.com/sms-terms', reason: 'Synthetic policies are live.' });
+    const mock = texting.registration.options.platform;
+    const calls: { name: string; args: unknown[] }[] = [];
+    const livePlatform = new Proxy(mock, { get(target, name, receiver) {
+      if (name === 'mode') return 'live';
+      const value = Reflect.get(target, name, receiver) as unknown;
+      return typeof value === 'function' ? (...args: unknown[]) => { calls.push({ name: String(name), args }); return (value as (...a: unknown[]) => unknown).apply(target, args); } : value;
+    } });
+    const live = new TextingRegistration({ ...texting.registration.options, platform: livePlatform });
+    const submit = () => db.tenant(w, sql => live.submit(sql, w, created.registrationId, 'user_operator', 'operator_api'));
+    await expect(submit()).rejects.toMatchObject({ code: 'campaign_wording_missing' });
+    expect(calls).toEqual([]);
+    // Correcting the draft with the wording clears the policy confirmation, as any correction does.
+    await op('platform.textingCarrierBrand', { workspaceId: w, companyId, legalName: 'Synthetic C LLC', dbaName: 'Synthetic C', entityType: 'private_profit', profile: { ...profile, vertical: 'HOSPITALITY' }, campaign: wording, helpContact: 'help@example.com', reason: 'Add the campaign wording.' });
+    await op('platform.textingConfirmPolicies', { workspaceId: w, carrierBrandId: created.carrierBrandId, privacyPolicyUrl: 'https://example.com/privacy', smsTermsUrl: 'https://example.com/sms-terms', reason: 'Synthetic policies are live.' });
+    await expect(submit()).resolves.toMatchObject({ state: 'provisioning' });
+    const stored = (await rows<{ profile: { campaign: unknown; businessType: string } }>(w, 'SELECT profile FROM sms_carrier_brands WHERE id=$1', [created.carrierBrandId]))[0]!;
+    expect(stored.profile).toMatchObject({ campaign: wording, businessType: 'Limited Liability Corporation' });
+    await db.tenant(w, sql => sql.query(`UPDATE sms_registrations SET state='draft' WHERE id=$1`, [created.registrationId]));
   });
 });

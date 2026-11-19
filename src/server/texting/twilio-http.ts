@@ -88,7 +88,7 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
     const endUser = (name: string, type: string, attributes: object) => this.ensure(auth, { url: `${trusthub}/EndUsers`, field: 'results', schema: bundle },
       { url: `${trusthub}/EndUsers`, form: { FriendlyName: name, Type: type, Attributes: JSON.stringify(attributes) } });
     const business = await endUser(op + '/business', 'customer_profile_business_information', {
-      business_name: p.legalName, business_identity: 'direct_customer', business_type: p.entityType, business_industry: p.vertical,
+      business_name: p.legalName, business_identity: 'direct_customer', business_type: p.businessType, business_industry: p.vertical,
       business_registration_identifier: 'EIN', business_registration_number: p.ein, business_regions_of_operation: 'USA_AND_CANADA', website_url: p.website });
     if (business.outcome !== 'accepted') return business;
     const representative = await endUser(op + '/rep', 'authorized_representative_1', {
@@ -107,7 +107,7 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
       { url: `${trusthub}/TrustProducts`, form: { FriendlyName: op + '/a2p', Email: p.notificationEmail, PolicySid: this.policies.a2pProfile, StatusCallback: callback } });
     if (product.outcome !== 'accepted') return product;
     const productUrl = `${trusthub}/TrustProducts/${product.value!.sid}`;
-    const a2p = await endUser(op + '/a2p-info', 'us_a2p_messaging_profile_information', { company_type: 'private' });
+    const a2p = await endUser(op + '/a2p-info', 'us_a2p_messaging_profile_information', { company_type: p.companyType });
     if (a2p.outcome !== 'accepted') return a2p;
     for (const object of [a2p.value!.sid, profile.value!.sid]) {
       const assigned = await this.assign(auth, productUrl, object); if (assigned.outcome !== 'accepted') return { outcome: assigned.outcome, reason: assigned.reason };

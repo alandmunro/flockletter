@@ -6,6 +6,7 @@ import type { Database, Sql } from '../db.js';
 import { lockWorkspace } from '../workspace-lock.js';
 import { requireCondition } from '../errors.js';
 import { registrationSteps, type RegistrationState, type RegistrationStep } from '../../shared/texting.js';
+import { businessRefusals, twilioBusiness, type TwilioBusinessType } from '../../shared/texting-business.js';
 import { audit, readSettings, type Interface } from './storage.js';
 import { registrationRank, type AccountCredentials, type BusinessProfile, type CredentialSeal, type ProvisionFacts, type Result, type TwilioPlatformPort } from './twilio.js';
 
@@ -19,6 +20,12 @@ export type RegistrationOptions = {
   now?: () => Date;
 };
 const gated: RegistrationStep[] = ['brand', 'campaign', 'number'];
+/** The business's own campaign description and samples, stored with the carrier brand profile. */
+function campaignWording(profile: Record<string, unknown>): { description: string; samples: string[] } | null {
+  const c = profile.campaign as { description?: unknown; samples?: unknown } | undefined;
+  return c && typeof c.description === 'string' && Array.isArray(c.samples) && c.samples.length >= 2 && c.samples.every(x => typeof x === 'string')
+    ? { description: c.description, samples: c.samples as string[] } : null;
+}
 export const operationKey = (registration: string, revision: number, step: RegistrationStep) => `sms-reg/${registration}/${revision}/${step}`;
 
 export class TextingRegistration {
@@ -38,9 +45,17 @@ export class TextingRegistration {
     const reg = (await sql.query<RegistrationRow>('SELECT * FROM sms_registrations WHERE id=$1 FOR UPDATE', [registrationId])).rows[0];
     requireCondition(reg, 404, 'registration_unavailable', 'This registration is unavailable.');
     requireCondition(reg.state === 'draft' || reg.state === 'rejected', 409, 'registration_in_progress', 'Only a draft or a corrected rejected registration can be submitted.');
-    const brand = (await sql.query<{ privacy_policy_confirmed_at: Date | null; sms_terms_confirmed_at: Date | null }>('SELECT privacy_policy_confirmed_at,sms_terms_confirmed_at FROM sms_carrier_brands WHERE id=$1', [reg.carrier_brand_id])).rows[0]!;
+    const brand = (await sql.query<{ privacy_policy_confirmed_at: Date | null; sms_terms_confirmed_at: Date | null; entity_type: string; profile: Record<string, unknown> }>('SELECT privacy_policy_confirmed_at,sms_terms_confirmed_at,entity_type,profile FROM sms_carrier_brands WHERE id=$1', [reg.carrier_brand_id])).rows[0]!;
     requireCondition(brand.privacy_policy_confirmed_at && brand.sms_terms_confirmed_at, 409, 'policies_unconfirmed',
       'Record that the business’s website privacy policy and SMS terms are live before carrier registration.');
+    if (this.options.platform.mode === 'live') {
+      // Refuse before any provider call: a brand Twilio would refuse, or a campaign without this business's own wording.
+      const business = twilioBusiness(brand.entity_type, brand.profile.businessType, brand.profile.vertical);
+      requireCondition(!('reason' in business), 409, 'reason' in business ? business.reason : 'business_invalid',
+        'reason' in business ? (businessRefusals[business.reason] ?? 'This business cannot be registered.') + ' Correct the carrier brand first.' : '');
+      requireCondition(campaignWording(brand.profile), 409, 'campaign_wording_missing',
+        'Set this business’s campaign description and sample texts on the carrier brand before live registration.');
+    }
     const revision = reg.state === 'rejected' ? reg.revision + 1 : reg.revision;
     await sql.query(`UPDATE sms_registrations SET state='provisioning',revision=$2,rejection_reason=NULL,updated_at=clock_timestamp(),
       brand_sid=CASE WHEN $3 THEN NULL ELSE brand_sid END,brand_status=CASE WHEN $3 THEN NULL ELSE brand_status END,
@@ -142,22 +157,32 @@ export class TextingRegistration {
       return created.outcome === 'accepted' ? { outcome: 'accepted', value: { sid: created.value!.accountSid, account: created.value! } } : { outcome: created.outcome, ...(created.reason ? { reason: created.reason } : {}), ...(created.retryAfterSeconds ? { retryAfterSeconds: created.retryAfterSeconds } : {}) };
     }
     if (!account) return { outcome: 'rejected', reason: 'provider_account_missing' };
-    const p = brand.profile as { ein: string; website: string; vertical: string; areaCode?: string; address: BusinessProfile['address']; contact: BusinessProfile['contact'] };
+    const p = brand.profile as { ein: string; website: string; businessType?: string; vertical: string; areaCode?: string; address: BusinessProfile['address']; contact: BusinessProfile['contact']; privacyPolicyUrl?: string; smsTermsUrl?: string };
     const callbacks = this.callbacks(workspace);
-    if (step.step === 'customer_profile') return platform.createCustomerProfile(account, op, {
-      legalName: brand.legal_name, dbaName: brand.dba_name, entityType: brand.entity_type, ein: p.ein, website: p.website, vertical: p.vertical,
+    if (step.step === 'customer_profile') {
+      const business = twilioBusiness(brand.entity_type, p.businessType, p.vertical);
+      if ('reason' in business) return { outcome: 'rejected', reason: business.reason };
+      return platform.createCustomerProfile(account, op, {
+      legalName: brand.legal_name, dbaName: brand.dba_name, entityType: brand.entity_type, businessType: p.businessType as TwilioBusinessType, companyType: business.companyType, ein: p.ein, website: p.website, vertical: p.vertical,
       address: p.address, contact: p.contact, notificationEmail: notificationEmail ?? p.contact.email,
     } satisfies BusinessProfile, callbacks.registration);
+    }
     if (step.step === 'brand') return platform.submitBrand(account, op, facts('customer_profile')!.sid, String(facts('customer_profile')!.parentSid ?? ''));
     if (step.step === 'messaging_service') return platform.createMessagingService(account, op, callbacks);
     const name = brand.dba_name ?? brand.legal_name;
-    if (step.step === 'campaign') return platform.submitCampaign(account, op, facts('messaging_service')!.sid, facts('brand')!.sid, {
-      description: `${name} sends marketing texts (offers, events and updates) to customers who opted in on ${name}'s Flockletter-hosted sign-up page.`,
-      messageFlow: `Customers opt in on ${name}'s hosted sign-up page by checking an optional, unchecked SMS box that shows the program name, message frequency, "Msg & data rates may apply", STOP and HELP instructions, and links to the privacy policy and SMS terms. They then reply YES to a confirmation text before any other message.`,
-      samples: [`${name}: This week only, 15% off in store. Reply STOP to opt out.`, `${name}: Our spring hours start Monday, 9am-6pm. Reply STOP to opt out.`],
+    if (step.step === 'campaign') {
+      const wording = campaignWording(brand.profile);
+      // Generic wording is for the mock only. Live campaigns file the business's own description and samples.
+      if (!wording && platform.mode === 'live') return { outcome: 'rejected', reason: 'campaign_wording_missing' };
+      const policies = p.privacyPolicyUrl && p.smsTermsUrl ? ` SMS terms: ${p.smsTermsUrl}. Privacy policy: ${p.privacyPolicyUrl}.` : '';
+      return platform.submitCampaign(account, op, facts('messaging_service')!.sid, facts('brand')!.sid, {
+      description: wording?.description ?? `${name} sends marketing texts (offers, events and updates) to customers who opted in on ${name}'s Flockletter-hosted sign-up page.`,
+      messageFlow: `Customers opt in on ${name}'s hosted sign-up page by checking an optional, unchecked SMS box that shows the program name, message frequency, "Msg & data rates may apply", STOP and HELP instructions, and links to the privacy policy and SMS terms. They then reply YES to a confirmation text before any other message.${policies}`,
+      samples: wording?.samples ?? [`${name}: This week only, 15% off in store. Reply STOP to opt out.`, `${name}: Our spring hours start Monday, 9am-6pm. Reply STOP to opt out.`],
       optInMessage: `${name}: Reply YES to confirm you want texts from us. Msg & data rates may apply. Reply STOP to opt out.`,
       optOutMessage: `${name}: You are unsubscribed and will receive no more texts. Reply START to resubscribe.`,
       helpMessage: `${name}: For help contact ${brand.help_contact}. Reply STOP to opt out.`, hasLinks: true });
+    }
     return platform.buyNumber(account, op, facts('messaging_service')!.sid, typeof p.areaCode === 'string' ? p.areaCode : null);
   }
   private async apply(workspace: string, step: StepRow, result: Result<ProvisionFacts & { account?: AccountCredentials }>, via: 'call' | 'reconcile'): Promise<'progress' | Date | null> {

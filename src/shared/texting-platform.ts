@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { textingSettingKeys, registrationSteps } from './texting.js';
 import { mockFaults } from './texting-mock.js';
+import { carrierEntityTypes, twilioBusinessTypes, twilioIndustries } from './texting-business.js';
 
 // Operator-only texting commands. Customer connection scopes never grant these (FL-SMS-003/013).
 const operationKey = z.uuid(), reason = z.string().trim().min(12).max(400);
@@ -8,9 +9,14 @@ const workspaceId = z.string().regex(/^org_[A-Za-z0-9_-]{1,120}$/);
 const define = <T extends z.ZodRawShape>(description: string, mutation: boolean, shape: T) => ({ description, mutation, schema: z.object(shape).strict() });
 const text = (max: number) => z.string().trim().min(1).max(max);
 const businessProfile = z.object({
-  ein: z.string().regex(/^\d{2}-?\d{7}$/), website: z.url().max(300), vertical: text(60), areaCode: z.string().regex(/^[2-9]\d{2}$/).optional(),
+  ein: z.string().regex(/^\d{2}-?\d{7}$/), website: z.url().max(300), businessType: z.enum(twilioBusinessTypes), vertical: z.enum(twilioIndustries), areaCode: z.string().regex(/^[2-9]\d{2}$/).optional(),
   address: z.object({ street: text(120), city: text(60), region: z.string().regex(/^[A-Z]{2}$/), postalCode: z.string().regex(/^\d{5}(-\d{4})?$/), country: z.literal('US') }).strict(),
   contact: z.object({ firstName: text(60), lastName: text(60), email: z.email().max(254), phone: z.string().regex(/^\+1\d{10}$/), title: text(60) }).strict(),
+}).strict();
+// Carriers reject campaigns whose description and samples don't match the business, so each brand files its own.
+const campaignWording = z.object({
+  description: z.string().trim().min(40).max(4096),
+  samples: z.array(z.string().trim().min(20).max(1024)).min(2).max(5),
 }).strict();
 const mockAction = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('fault'), target: z.enum([...registrationSteps, 'send']), faults: z.array(z.enum(mockFaults)).min(1).max(10) }).strict(),
@@ -24,9 +30,9 @@ export const textingPlatformCommands = {
   'platform.textingSettingHistory': define('Read the audited history of texting setting changes (old value, new value, actor, interface, reason).', false, { workspaceId: workspaceId.optional() }),
   'platform.textingSetSetting': define('Set or clear one texting setting within its safe bounds, platform-wide or for one workspace. Takes effect without a deployment and is audited.', true, {
     operationKey, key: z.enum(textingSettingKeys as [string, ...string[]]), workspaceId: workspaceId.nullable(), value: z.json().nullable(), expectedRevision: z.number().int().min(0), reason }),
-  'platform.textingCarrierBrand': define('Create, or correct while draft or rejected, the one carrier brand for a company (FL-SMS-002).', true, {
+  'platform.textingCarrierBrand': define('Create, or correct while draft or rejected, the one carrier brand for a company (FL-SMS-002). Live registration also needs the campaign description and 2 to 5 sample texts written for this business.', true, {
     operationKey, workspaceId, companyId: z.uuid(), legalName: text(200), dbaName: text(200).nullable(),
-    entityType: z.enum(['private_profit', 'public_profit', 'non_profit', 'sole_proprietor', 'government']), profile: businessProfile, helpContact: text(120), reason }),
+    entityType: z.enum(carrierEntityTypes), profile: businessProfile, campaign: campaignWording.optional(), helpContact: text(120), reason }),
   'platform.textingConfirmPolicies': define('Record that the business’s website privacy policy and SMS terms are live. Carrier registration waits for this.', true, {
     operationKey, workspaceId, carrierBrandId: z.uuid(), privacyPolicyUrl: z.url().max(300), smsTermsUrl: z.url().max(300), reason }),
   'platform.textingSubmit': define('Start, or restart after correction, carrier registration for one carrier brand. In live mode each brand, campaign and number step also needs platform.textingApprove.', true, {
