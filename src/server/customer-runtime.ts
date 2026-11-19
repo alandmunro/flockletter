@@ -42,7 +42,7 @@ import { limits } from '../shared/contracts.js';
 import { CustomerInfrastructure } from './customer-infrastructure/index.js';
 import { createAwsInfrastructurePort } from './customer-infrastructure/aws.js';
 import { parseSesRoute, type SesRoute } from './campaign/ses-runtime.js';
-import { createTexting, type TextingSecrets } from './texting/runtime.js';
+import { createTexting, loadTextingSecrets, type TextingSecrets } from './texting/runtime.js';
 import type { Texting } from './texting/service.js';
 
 const prefixes=['senderSetup.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
@@ -66,6 +66,13 @@ export class CustomerWorkflows {
   private running=false;
   private closing=false;
   private active=new Map<string,Promise<number>>();
+  /**
+   * Startup entry for the web and the dedicated worker. Live texting reads its Twilio credentials from
+   * this environment's Bitwarden project before the workflows are built; other modes read nothing.
+   */
+  static async start(db:Database,config:Config,identity:IdentityProvider,env:NodeJS.ProcessEnv=process.env,fetcher:typeof fetch=fetch) {
+    return new CustomerWorkflows(db,config,identity,env,await loadTextingSecrets(config,env,fetcher));
+  }
   constructor(readonly db:Database,readonly config:Config,readonly identity:IdentityProvider,readonly env:NodeJS.ProcessEnv=process.env,textingSecrets?:TextingSecrets) {
     const settings=this.settings=customerSettings(config,env);
     const gateway=stripeCustomerProvider(config.origin,env);

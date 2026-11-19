@@ -254,6 +254,28 @@ The owner approved FL-AT-045 and will add the missing Twilio keys to Bitwarden l
 
 Hospitality's carrier registration also waits until the owner confirms its website privacy policy and SMS terms are live.
 
+### Live start-up failure (2026-11-19)
+
+On 2026-11-19, the keys were in `flockletter-production`, and the production web and worker had `FLOCKLETTER_TEXTING=live`, the activation flag, `BWS_PROJECT=flockletter-production` and a read-only machine-account token. A redeploy at `a7631ef` then failed:
+- **Web:** the deploy ended `update_failed`, and Render kept the old instance serving.
+- **Worker:** it crash-looped from about 18:02 to 18:05:30 UTC. Workers have no health check, so Render still reported the deploy `live`.
+
+Both crashed with `Live texting needs FLOCKLETTER_TEXTING_SEAL_KEY`.
+
+**Cause:** `loadTextingSecrets()` was never called. `main.ts` and `customer-worker-main.ts` built `CustomerWorkflows` without secrets. Tests covered the loader and live construction separately, but not the start-up wiring.
+
+**Recovery:**
+- Set `FLOCKLETTER_TEXTING=off` on both services.
+- Redeployed the worker at `a7631ef`.
+- No texts were sent or attempted.
+
+**Fix:**
+- Both entry points now start through `CustomerWorkflows.start()`, which loads the secrets first.
+- Building a live runtime without loaded secrets fails with a direct message.
+- `tests/texting-startup.test.ts` starts production live mode against a fake Bitwarden project and checks that both entry points use `start()`.
+
+**Rollout order for live mode:** deploy the web first, so a start-up failure leaves the old instance serving. Then deploy the worker, and watch its logs for restarts, because its deploy status can't show a crash.
+
 ### Known limits (not hidden)
 
 - **Erasure of private texting routes.** Public `sms_*` tables are erased with the workspace (they are runtime tables). The private `texting_*` route, account and short-name rows are not yet in the retention executor's private list; that needs the executor and its role grants updated together.

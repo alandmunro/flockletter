@@ -41,6 +41,7 @@ export function createTexting(db: Database, config: Config, env: NodeJS.ProcessE
   if (link.username || link.password || link.search || link.hash || (config.environment !== 'local' && config.environment !== 'test' && link.protocol !== 'https:'))
     throw Error('FLOCKLETTER_SHORT_LINK_ORIGIN must be an exact HTTPS origin and optional path.');
   if (mode === 'mock') return Texting.mock(db, { origin: config.origin, linkOrigin, ...options });
+  if (!secrets) throw Error('Live texting secrets were not loaded. Start the workflows with CustomerWorkflows.start().');
   const need = (key: (typeof textingSecretKeys)[number]) => { const value = secrets?.get(key); if (!value) throw Error(`Live texting needs ${key} in the ${env.BWS_PROJECT} Bitwarden project.`); return value; };
   const allowList = async () => {
     const rows = (await db.pool.query<{ v: string[] | null }>(`SELECT flockletter_customer_jobs.texting_setting('', 'live_recipient_allow_list') v`)).rows;
