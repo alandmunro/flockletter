@@ -69,6 +69,24 @@ describe('productionTargetsMatch',()=>{
   });
 });
 
+describe('maintenance window',()=>{
+  const expected={repository:repo,productionUrl:url,webId,workerId};
+  it('accepts a missing application identity only in a maintenance window',()=>{
+    const input={...base(),version:null};
+    expect(productionTargetsMatch(input,{...expected,maintenanceWindow:true})).toBe(true);
+    expect(productionTargetsMatch(input,expected)).toBe(false);
+    expect(productionTargetsMatch({web:base().web,worker:base().worker},{...expected,maintenanceWindow:true})).toBe(false);
+  });
+  it('still refuses a reachable wrong identity and wrong Render metadata in a maintenance window',()=>{
+    const staging=base(); staging.version.environment='staging';
+    expect(productionTargetsMatch(staging,{...expected,maintenanceWindow:true})).toBe(false);
+    const suspended={...base(),version:null}; suspended.worker.suspended='suspended';
+    expect(productionTargetsMatch(suspended,{...expected,maintenanceWindow:true})).toBe(false);
+    const foreign={...base(),version:null}; foreign.web.repo='https://github.com/example/other';
+    expect(productionTargetsMatch(foreign,{...expected,maintenanceWindow:true})).toBe(false);
+  });
+});
+
 it.each([
   {repository:'https://example.test/other/flockletter'},
   {productionUrl:'http://flockletter.example.test'},

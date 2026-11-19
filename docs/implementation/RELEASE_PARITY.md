@@ -49,6 +49,17 @@ Before the protected migration, rehearse the **actual serving web and worker com
 The local model drafted the checklist, mechanical production-script conversions and disposable-database test scaffolding. Chat corrected an unsupported completed-parity claim, merge-SHA/build-hash equality, assumptions about existing credentials, escaped source formatting and test-order assumptions. Chat removed a private physical-database identifier from the draft, added explicit production confirmation/environment checks and reviewed foreign-grant preservation, migration scope and secret handling. Security decisions, environment boundaries and release evidence remain with Chat.
 
 
+## Maintenance-window promotion
+
+When the schema rehearsal fails and the owner approves a maintenance window, the migration runs first and takes the old web down. The promotion workflow's identity check normally reads the current production version, so it would then stop before deploying (this happened on 2026-11-19, run 44455099682).
+
+For that case, dispatch with `migrations_applied=true` and `maintenance_window=true`:
+1. Run a dry run (`dry_run=true`) for the same commit before the window, while the old web still answers.
+2. Record the database recovery point and apply the migration.
+3. Dispatch the real promotion.
+
+With `maintenance_window=true` the identity check accepts an unreachable version endpoint only. A reachable but wrong application identity still fails, and every Render metadata check (service IDs, types, repository, branch, manual deploys, suspension, instance counts, URL, worker command, owner, environment and region) still applies. After deployment the workflow still verifies the exact commit and readiness on both addresses. Without the flag, an unreachable version still stops the release.
+
 ## Dedicated production worker release
 
 The production queue service is a separate background worker in the same Render workspace, project environment and region as the web service. Both use restricted Flockletter runtime authority. The worker build must include development build tools (`npm ci --include=dev && npm run build`); it starts the compiled standalone entry point with explicit dedicated mode. Staging stays on Free with embedded captured execution. Do not copy migration, operator, Stripe, AWS or Resend credentials merely to prepare an idle worker.
