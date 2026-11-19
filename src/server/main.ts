@@ -35,7 +35,7 @@ if (configurationGaps(config).length === 0) {
   await db.verifyBoundary();
   if((await db.pool.query('SELECT public.flockletter_restore_blocked() blocked')).rows[0]?.blocked)throw Error('Restored data remains quarantined. Complete protected checkpoint reconciliation and operator release before startup.');
   const identity = config.localIdentity ? localIdentity() : clerkIdentity(config);
-  const customer=new CustomerWorkflows(db,config,identity);
+  const customer=await CustomerWorkflows.start(db,config,identity);
   await customer.engine?.verify();
   const bindings = deliveryBindings(process.env);
   messenger=await startLegacyMessenger(config,db,identity.isOwner,ses,process.env,marketing);
