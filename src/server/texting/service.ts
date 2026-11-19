@@ -88,6 +88,7 @@ export class Texting {
       LEFT JOIN sms_numbers n ON n.carrier_brand_id=b.id AND n.state<>'released' ORDER BY c.name`)).rows;
     const usage = (await sql.query<{ segments_used: number; segments_reserved: number }>(`SELECT segments_used,segments_reserved FROM sms_usage WHERE period_month=$1::date`, [this.now().toISOString().slice(0, 8) + '01'])).rows[0];
     const missing = textingSettingKeys.filter(key => ['sending', 'always'].includes(textingSettings[key].required) && settings[key] === undefined);
+    if (settings.reconcile_settle_minutes === undefined && (await sql.query(`SELECT 1 FROM sms_registration_steps s JOIN sms_registrations r ON r.id=s.registration_id AND r.revision=s.revision WHERE s.state='uncertain' LIMIT 1`)).rowCount) missing.push('reconcile_settle_minutes');
     return { mode: this.options.mode, profile: profile ? { shortName: profile.short_name, notificationEmail: profile.notification_email, timeZone: profile.time_zone,
         phoneField: profile.phone_field, birthdayField: profile.birthday_field, anniversaryField: profile.anniversary_field, anniversaryLabel: profile.anniversary_label, revision: profile.revision } : null,
       companies: companies.map(c => ({ id: c.id, name: c.name, carrierBrand: !!c.carrier_brand_id, registration: c.registration_state ?? 'not_started', number: c.e164, numberState: c.number_state,
@@ -551,7 +552,9 @@ export class Texting {
           const regs = (await sql.query<RegistrationRow & { company_id: string; legal_name: string }>(`SELECT r.*,b.company_id,b.legal_name FROM sms_registrations r JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id ORDER BY r.created_at`)).rows;
           const steps = (await sql.query<StepRow>('SELECT * FROM sms_registration_steps ORDER BY created_at')).rows;
           const numbers = (await sql.query('SELECT id,carrier_brand_id AS "carrierBrandId",e164,state FROM sms_numbers')).rows;
-          return { mode: this.options.mode, registrations: regs.map(r => ({ ...r, steps: steps.filter(s => s.registration_id === r.id && s.revision === r.revision)
+          // An uncertain step is only retried after the settle time; without it the step waits for the operator (fail closed).
+          const settingsNeeded = steps.some(s => s.state === 'uncertain' && regs.some(r => r.id === s.registration_id && r.revision === s.revision)) && (await readSettings(sql, w)).reconcile_settle_minutes === undefined ? ['reconcile_settle_minutes'] : [];
+          return { mode: this.options.mode, settingsNeeded, registrations: regs.map(r => ({ ...r, steps: steps.filter(s => s.registration_id === r.id && s.revision === r.revision)
             .map(s => ({ step: s.step, state: s.state, attempts: s.attempts, operationKey: s.operation_key, reason: (s as unknown as { reason: string | null }).reason, nextCheckAt: s.next_check_at })) })), numbers };
         });
       }

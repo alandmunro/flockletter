@@ -4,7 +4,7 @@ import type { PlatformApi } from './platform-api.js';
 
 // FL-SMS-004/013: operator texting controls. Same commands as /api/operator/v1 and the operator MCP.
 type Setting = { key: string; kind: string; min?: number; max?: number; required: string; description: string; platform: { value: unknown; revision: number } | null; workspace: { value: unknown; revision: number } | null };
-type Registration = { mode: string; registrations: { id: string; company_id: string; legal_name: string; state: string; revision: number; rejection_reason: string | null; carrier_brand_id: string;
+type Registration = { mode: string; settingsNeeded?: string[]; registrations: { id: string; company_id: string; legal_name: string; state: string; revision: number; rejection_reason: string | null; carrier_brand_id: string;
   steps: { step: string; state: string; attempts: number; operationKey: string; reason: string | null }[] }[]; numbers: { e164: string; state: string }[] };
 
 export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformApi; workspaceId: string; onError: (message: string) => void }) {
@@ -42,6 +42,7 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
     </section>
     {workspaceId && reg && <section className="card"><h2>Carrier registration · {workspaceId}</h2>
       <p className="badge">Twilio client: {reg.mode}{reg.mode === 'live' ? ' · each brand, campaign and number step needs a separate approval' : ' · simulated, nothing is filed with carriers'}</p>
+      {!!reg.settingsNeeded?.length && <p className="badge">A step is waiting to be checked again. Set {reg.settingsNeeded.join(', ')} above so it can be retried.</p>}
       {reg.registrations.length === 0 && <p>No carrier brand yet. Create one with platform.textingCarrierBrand through the operator API or MCP.</p>}
       {reg.registrations.map(r => <article key={r.id} className="connection-row"><div>
         <strong>{r.legal_name}</strong> · {r.state.replaceAll('_', ' ')} · revision {r.revision}{r.rejection_reason ? ' · ' + r.rejection_reason : ''}
