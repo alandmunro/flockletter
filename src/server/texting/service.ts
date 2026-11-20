@@ -342,22 +342,31 @@ export class Texting {
     });
   }
   /** What the hosted sign-up page shows: the workspace's optional fields, and the SMS checkbox wording if offered. */
-  async signupView(sql: Sql, w: string, brandId: string) {
+  async signupView(sql: Sql, w: string, brandId: string, smsPreview = false) {
     if (this.options.mode === 'off') return null;
     const profile = await this.profile(sql);
     if (!profile || (!profile.phone_field && !profile.birthday_field && !profile.anniversary_field)) return null;
-    const offer = profile.phone_field ? await this.smsOffer(sql, w, brandId) : null;
-    return { phone: profile.phone_field, birthday: profile.birthday_field, anniversary: profile.anniversary_field, anniversaryLabel: profile.anniversary_label, smsWording: offer?.wording ?? null };
+    const offer = profile.phone_field ? await this.smsOffer(sql, w, brandId, smsPreview) : null;
+    return { phone: profile.phone_field, birthday: profile.birthday_field, anniversary: profile.anniversary_field, anniversaryLabel: profile.anniversary_label,
+      smsWording: offer?.wording ?? null, smsTermsUrl: offer?.smsTermsUrl ?? null, privacyPolicyUrl: offer?.privacyPolicyUrl ?? null };
   }
-  /** The SMS checkbox shows only when the brand's company has an approved number. */
-  async smsOffer(sql: Sql, w: string, brandId: string) {
+  /**
+   * The SMS checkbox shows only when the brand's company has an approved number. `preview` drops that one condition
+   * for the view-only page carrier reviewers see before the number exists; it still needs the confirmed policies,
+   * and a preview never records consent.
+   */
+  async smsOffer(sql: Sql, w: string, brandId: string, preview = false) {
     if (this.options.mode === 'off') return null;
     const company = (await sql.query<{ company_id: string }>('SELECT company_id FROM company_brands WHERE brand_id=$1', [brandId])).rows[0];
-    if (!company || !await sendingNumber(sql, company.company_id)) return null;
+    if (!company || (!preview && !await sendingNumber(sql, company.company_id))) return null;
+    const links = (await sql.query<{ sms_terms_url: string | null; privacy_policy_url: string | null }>(`SELECT profile->>'smsTermsUrl' sms_terms_url, profile->>'privacyPolicyUrl' privacy_policy_url
+      FROM sms_carrier_brands WHERE company_id=$1 AND sms_terms_confirmed_at IS NOT NULL AND privacy_policy_confirmed_at IS NOT NULL`, [company.company_id])).rows[0];
+    if (preview && !links?.sms_terms_url) return null;
     const settings = await readSettings(sql, w);
     if (settings.contact_monthly_limit === undefined || settings.unconfirmed_expiry_days === undefined) return null;
     const business = await businessName(sql, company.company_id);
-    return { companyId: company.company_id, wording: smsConsentWording(business, settings.contact_monthly_limit), business, expiryDays: settings.unconfirmed_expiry_days };
+    return { companyId: company.company_id, wording: smsConsentWording(business, settings.contact_monthly_limit), business, expiryDays: settings.unconfirmed_expiry_days,
+      smsTermsUrl: links?.sms_terms_url ?? null, privacyPolicyUrl: links?.privacy_policy_url ?? null };
   }
   async recordSignup(sql: Sql, w: string, brandId: string, subscriberId: string | null, input: { phone?: string; smsConsent?: boolean; wordingShown?: string; birthday?: { month: number; day: number }; anniversary?: { month: number; day: number; year?: number } }) {
     if (this.options.mode === 'off') return;

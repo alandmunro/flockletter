@@ -41,7 +41,7 @@ export function SignupPostcard({
     </div>
   );
 }
-export type SignupTexting = { phone: boolean; birthday: boolean; anniversary: boolean; anniversaryLabel: string; smsWording: string | null };
+export type SignupTexting = { phone: boolean; birthday: boolean; anniversary: boolean; anniversaryLabel: string; smsWording: string | null; smsTermsUrl?: string | null; privacyPolicyUrl?: string | null };
 const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 function MonthDay({ prefix, label, year = false }: { prefix: string; label: string; year?: boolean }) {
   return (
@@ -75,6 +75,13 @@ function TextingFields({ texting }: { texting: SignupTexting }) {
           {texting.smsWording}
           <input type="hidden" name="smsWording" value={texting.smsWording} />
         </label>
+      )}
+      {texting.phone && texting.smsWording && (texting.smsTermsUrl || texting.privacyPolicyUrl) && (
+        <p className="postcard-consent-links">
+          {texting.smsTermsUrl && <a href={texting.smsTermsUrl} target="_blank" rel="noopener noreferrer">SMS terms</a>}
+          {texting.smsTermsUrl && texting.privacyPolicyUrl && ' | '}
+          {texting.privacyPolicyUrl && <a href={texting.privacyPolicyUrl} target="_blank" rel="noopener noreferrer">Privacy policy</a>}
+        </p>
       )}
       {texting.birthday && <MonthDay prefix="birthday" label="Birthday" />}
       {texting.anniversary && <MonthDay prefix="anniversary" label={texting.anniversaryLabel} year />}

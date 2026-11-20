@@ -17,7 +17,9 @@ import type { CustomerWorkflows } from '../src/server/customer-runtime.js';
 import { CustomerAudience } from '../src/server/customer-audience/service.js';
 import type { AudienceSettingsView } from '../src/shared/customer-audience.js';
 import { Texting, type OperatorActor } from '../src/server/texting/service.js';
-import { TextingRegistration } from '../src/server/texting/registration.js';
+import { TextingRegistration, signupPage } from '../src/server/texting/registration.js';
+import express from 'express';
+import { customerAudienceRoutes } from '../src/server/customer-audience/routes.js';
 import { twilioSignature, verifyTwilioSignature } from '../src/server/texting/twilio.js';
 import { encodeText, normalizeUsPhone, composeBroadcast } from '../src/shared/texting.js';
 import { textingPlatformCommands, type TextingPlatformCommand } from '../src/shared/texting-platform.js';
@@ -317,6 +319,59 @@ describe('FL-AT-043 consent', () => {
     await audience.publicSignup(form, { email: 'single@example.com', policyVersion: 'v2', consentAffirmed: true, texting: { phone: '212-555-0332', smsConsent: true, wordingShown: wording } });
     expect(await email('single@example.com')).toBe('confirmed');
     expect(await consent('+12125550332')).toBe('pending_confirmation');
+  });
+  it('shows carrier reviewers the SMS box on a view-only preview before the number is active, with the policy links', async () => {
+    const brandId = await brand();
+    const audience = new CustomerAudience(db, { mode: 'exercise', origin: 'http://127.0.0.1:4310', checkOwner: async () => true, contactLimit: async () => 250, texting });
+    await audience.execute('audienceOnboarding.configure', { brandId, enabled: true, purpose: 'shop_news', policyVersion: 'v1',
+      consentText: 'Send me Shop newsletters. I can unsubscribe anytime.', sourceDomain: 'shop.example.test', operationKey: key() }, A);
+    const status = (await audience.execute('audienceOnboarding.status', { brandId }, A)) as AudienceSettingsView;
+    const companyId = company[w]!;
+    const terms = 'https://shop.example.test/sms-terms', privacy = 'https://shop.example.test/privacy';
+    const offers = await db.tenant(w, async sql => {
+      await sql.query('SAVEPOINT preview');
+      // Before approval: no active number, so the live page offers no SMS box.
+      await sql.query(`UPDATE sms_registrations SET state='campaign_pending'`);
+      await sql.query(`UPDATE sms_carrier_brands SET sms_terms_confirmed_at=NULL, privacy_policy_confirmed_at=NULL WHERE company_id=$1`, [companyId]);
+      const unconfirmed = await texting.smsOffer(sql, w, brandId, true);
+      await sql.query(`UPDATE sms_carrier_brands SET profile=profile||jsonb_build_object('smsTermsUrl',$2::text,'privacyPolicyUrl',$3::text),
+        sms_terms_confirmed_at=now(), privacy_policy_confirmed_at=now() WHERE company_id=$1`, [companyId, terms, privacy]);
+      const live = await texting.smsOffer(sql, w, brandId);
+      const preview = await texting.smsOffer(sql, w, brandId, true);
+      const page = await signupPage(sql, companyId, 'http://127.0.0.1:4310');
+      await sql.query(`UPDATE sms_workspace_profile SET phone_field=false`);
+      const noPhone = await signupPage(sql, companyId, 'http://127.0.0.1:4310');
+      const brandContext = (await sql.query<{ v: string | null }>("SELECT current_setting('app.intake_brand_id', true) v")).rows[0]!.v;
+      await sql.query('ROLLBACK TO SAVEPOINT preview');
+      return { unconfirmed, live, preview, page, noPhone, brandContext };
+    });
+    expect(offers.unconfirmed).toBeNull(); // the preview needs the confirmed policies
+    expect(offers.live).toBeNull();
+    expect(offers.preview).toMatchObject({ smsTermsUrl: terms, privacyPolicyUrl: privacy });
+    expect(offers.preview!.wording).toMatch(/Up to 4 msgs\/month/);
+    expect(offers.page).toBe(status.signupUrl);
+    expect(offers.noPhone).toBeNull(); // no phone field, no SMS box to show carriers
+    expect(offers.brandContext ?? '').toBe(''); // the lookup clears the brand context it set
+    // Over HTTP (the number is active again here): the slug route keeps ?preview=sms, submitting is off, links show.
+    await db.tenant(w, sql => sql.query(`UPDATE sms_carrier_brands SET profile=profile||jsonb_build_object('smsTermsUrl',$2::text,'privacyPolicyUrl',$3::text),
+      sms_terms_confirmed_at=now(), privacy_policy_confirmed_at=now() WHERE company_id=$1`, [companyId, terms, privacy]));
+    const app = express(); app.use(['/signup', '/newsletter'], customerAudienceRoutes(audience));
+    const local = await new Promise<Server>(resolve => { const l = app.listen(0, '127.0.0.1', () => resolve(l)); });
+    try {
+      const port = (local.address() as { port: number }).port;
+      const path = new URL(status.signupUrl!).pathname;
+      const preview = await fetch(`http://127.0.0.1:${port}${path}?preview=sms`);
+      expect(preview.status).toBe(200);
+      const html = await preview.text();
+      expect(html).toContain('name="smsConsent"');
+      expect(html).toContain('Submitting is turned off on this preview.');
+      expect(html).toMatch(/<button[^>]*disabled/);
+      expect(html).toContain(`href="${terms}"`);
+      expect(html).toContain(`href="${privacy}"`);
+      const normal = await (await fetch(`http://127.0.0.1:${port}${path}`)).text();
+      expect(normal).not.toContain('Submitting is turned off');
+      expect(normal).toContain(`href="${terms}"`); // the live SMS box links its terms too
+    } finally { await new Promise<void>(resolve => local.close(() => resolve())); }
   });
   it('handles STOP (English and Spanish), HELP, START and pending re-enrollment for the number that received them', async () => {
     await optIn(w, '+12125550311', 'Stu');
