@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { twilioBusiness, twilioBusinessTypes, twilioIndustries } from '../src/shared/texting-business.js';
-import { TwilioHttpPlatform } from '../src/server/texting/twilio-http.js';
+import { TwilioHttpPlatform, twilioName } from '../src/server/texting/twilio-http.js';
 import type { AccountCredentials, BusinessProfile } from '../src/server/texting/twilio.js';
 
 describe('Twilio business rules', () => {
@@ -52,11 +52,25 @@ describe('live adapter business profile', () => {
       address: { street: '1 Main St', city: 'Keystone', region: 'CO', postalCode: '80435', country: 'US' },
       contact: { firstName: 'Pat', lastName: 'Owner', email: 'pat@example.com', phone: '+19705550100', title: 'Owner' }, notificationEmail: 'pat@example.com',
     };
-    const result = await platform.createCustomerProfile(account, 'sms-reg/test/1/customer_profile', profile, 'https://example.com/callback');
+    const op = 'sms-reg/b01f8848-5818-4d53-b554-1e89fd55dc58/10/customer_profile';
+    const result = await platform.createCustomerProfile(account, op, profile, 'https://example.com/callback');
     expect(result.outcome).toBe('accepted');
     const attributes = (type: string) => JSON.parse(posts.find(p => p.form.get('Type') === type)!.form.get('Attributes')!) as Record<string, string>;
     expect(attributes('customer_profile_business_information')).toMatchObject({ business_type: 'Limited Liability Corporation', business_industry: 'HOSPITALITY' });
     expect(attributes('us_a2p_messaging_profile_information')).toEqual({ company_type: 'private' });
     expect(posts.some(p => p.form.toString().includes('private_profit'))).toBe(false);
+    // Twilio refuses an Address FriendlyName over 64 characters with error 20400 (first live submit, 2026-11-19).
+    const names = posts.map(p => p.form.get('FriendlyName')).filter((n): n is string => n !== null);
+    expect(names.length).toBeGreaterThanOrEqual(6);
+    for (const name of names) expect(name.length).toBeLessThanOrEqual(64);
+    expect(names).toContain(twilioName(op + '/address'));
+  });
+  it('keeps short names and shortens long ones the same way every time', () => {
+    expect(twilioName('sms-reg/abc/1/number')).toBe('sms-reg/abc/1/number');
+    const long = 'sms-reg/b01f8848-5818-4d53-b554-1e89fd55dc58/1/customer_profile/address';
+    expect(twilioName(long)).toBe(twilioName(long));
+    expect(twilioName(long)).toMatch(/^fl\/[0-9a-f]{32}\/address$/);
+    expect(twilioName(long)).not.toBe(twilioName(long.replace('/1/', '/2/')));
+    expect(twilioName('sms-reg/b01f8848-5818-4d53-b554-1e89fd55dc58/10/messaging_service').length).toBeLessThanOrEqual(64);
   });
 });

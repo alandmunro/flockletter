@@ -3,6 +3,7 @@
 // settled by listing, never by a second POST. Live calls run only in `live` mode after operator approval.
 // NOTE: the TrustHub and A2P request shapes follow Twilio's ISV documentation and are first exercised
 // against Twilio in FL-AT-045, which needs the owner's approval.
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { boundedJson } from '../customer-support/writer.js';
 import { bodyDigest } from './twilio.js';
@@ -13,6 +14,17 @@ export type TwilioPolicies = { secondaryProfile: string; a2pProfile: string; pri
 type Auth = { user: string; secret: string };
 type Response1 = { status: number; json: unknown; retryAfter: number | null };
 const sid = (prefix: string) => z.string().regex(new RegExp('^' + prefix + '[0-9a-f]{32}$'));
+/**
+ * Twilio caps FriendlyName at 64 characters on Addresses, Messaging Services and phone numbers, and refuses longer
+ * ones with error 20400. Operation keys run past that (`sms-reg/<uuid>/<revision>/customer_profile/address` is 71),
+ * so a longer name becomes a fixed digest of itself plus its last segment. It stays deterministic, so an uncertain
+ * create is still settled by looking the same name up again.
+ */
+export function twilioName(name: string): string {
+  if (name.length <= 64) return name;
+  const tail = (name.split('/').pop() ?? '').slice(0, 24);
+  return `fl/${createHash('sha256').update(name).digest('hex').slice(0, 32)}/${tail}`;
+}
 const errorBody = z.object({ code: z.number().int().optional(), message: z.string().optional() }).passthrough();
 
 export function mapStatus(status: number, code?: number): Outcome {
@@ -53,7 +65,7 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
       if (!parsed.success || !Array.isArray(items)) return { outcome: 'unknown', reason: 'unexpected_list' };
       for (const item of items as unknown[]) {
         const found = extract.safeParse(item);
-        if (found.success && found.data.friendly_name === name) return { outcome: 'accepted', value: { sid: found.data.sid, ...(found.data.status ? { status: found.data.status } : {}) } };
+        if (found.success && found.data.friendly_name === twilioName(name)) return { outcome: 'accepted', value: { sid: found.data.sid, ...(found.data.status ? { status: found.data.status } : {}) } };
       }
       next = parsed.data.meta?.next_page_url ?? (parsed.data.next_page_uri ? 'https://api.twilio.com' + parsed.data.next_page_uri : null);
     }
@@ -64,7 +76,7 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
     const name = String(create.form.FriendlyName);
     const existing = await this.findNamed(auth, list.url, list.field, name, list.schema);
     if (existing.outcome !== 'not_submitted') return existing;
-    let r: Response1; try { r = await request(this.call, auth, 'POST', create.url, create.form); } catch { return { outcome: 'unknown' }; }
+    let r: Response1; try { r = await request(this.call, auth, 'POST', create.url, { ...create.form, FriendlyName: twilioName(name) }); } catch { return { outcome: 'unknown' }; }
     if (r.status !== 200 && r.status !== 201) return failed(r);
     const created = list.schema.safeParse(r.json);
     return created.success ? { outcome: 'accepted', value: { sid: created.data.sid, ...(created.data.status ? { status: created.data.status } : {}) } } : { outcome: 'unknown', reason: 'unexpected_create' };
@@ -94,7 +106,7 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
     const representative = await endUser(op + '/rep', 'authorized_representative_1', {
       first_name: p.contact.firstName, last_name: p.contact.lastName, email: p.contact.email, phone_number: p.contact.phone, business_title: p.contact.title, job_position: 'Director' });
     if (representative.outcome !== 'accepted') return representative;
-    const address = await this.ensure(auth, { url: `${api}/Accounts/${account.accountSid}/Addresses.json?FriendlyName=${encodeURIComponent(op + '/address')}`, field: 'addresses', schema: bundle },
+    const address = await this.ensure(auth, { url: `${api}/Accounts/${account.accountSid}/Addresses.json?FriendlyName=${encodeURIComponent(twilioName(op + '/address'))}`, field: 'addresses', schema: bundle },
       { url: `${api}/Accounts/${account.accountSid}/Addresses.json`, form: { FriendlyName: op + '/address', CustomerName: p.legalName, Street: p.address.street, City: p.address.city, Region: p.address.region, PostalCode: p.address.postalCode, IsoCountry: 'US' } });
     if (address.outcome !== 'accepted') return address;
     const document = await this.ensure(auth, { url: `${trusthub}/SupportingDocuments`, field: 'results', schema: bundle },
@@ -153,7 +165,7 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
       if (!search || search.status !== 200) return search ? failed(search) : { outcome: 'not_submitted', reason: 'search_unavailable' };
       const candidate = z.object({ available_phone_numbers: z.array(z.object({ phone_number: z.string() })).min(1) }).safeParse(search.json);
       if (!candidate.success) return { outcome: 'rejected', reason: 'no_number_available' };
-      const r = await request(this.call, auth, 'POST', `${base}/IncomingPhoneNumbers.json`, { PhoneNumber: candidate.data.available_phone_numbers[0]!.phone_number, FriendlyName: op }).catch(() => null);
+      const r = await request(this.call, auth, 'POST', `${base}/IncomingPhoneNumbers.json`, { PhoneNumber: candidate.data.available_phone_numbers[0]!.phone_number, FriendlyName: twilioName(op) }).catch(() => null);
       if (!r) return { outcome: 'unknown' };
       if (r.status !== 201 && r.status !== 200) return failed(r);
       const bought = z.object({ sid: sid('PN'), phone_number: z.string() }).safeParse(r.json);
@@ -175,7 +187,7 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
     const auth = this.auth(account), named = z.object({ sid: z.string(), friendly_name: z.string().nullable(), status: z.string().nullable().optional() });
     if (kind === 'messaging_service') return this.findNamed(auth, `${messaging}/Services`, 'services', op, named);
     if (kind === 'number') {
-      const found = await this.findNamed(auth, `${api}/Accounts/${account.accountSid}/IncomingPhoneNumbers.json?FriendlyName=${encodeURIComponent(op)}`, 'incoming_phone_numbers', op,
+      const found = await this.findNamed(auth, `${api}/Accounts/${account.accountSid}/IncomingPhoneNumbers.json?FriendlyName=${encodeURIComponent(twilioName(op))}`, 'incoming_phone_numbers', op,
         z.object({ sid: z.string(), friendly_name: z.string().nullable(), phone_number: z.string() }).transform(n => ({ ...n, status: n.phone_number })));
       return found.outcome === 'accepted' ? { outcome: 'accepted', value: { sid: found.value!.sid, e164: found.value!.status! } } : found;
     }
