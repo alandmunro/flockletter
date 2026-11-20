@@ -1,14 +1,19 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { evaluateAudit, validateExceptions } from './audit-policy.js';
+import { evaluateAudit, parseAuditReport, validateExceptions } from './audit-policy.js';
 
 function audit(args: string[]) {
   const result = spawnSync('npm', ['audit', '--json', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  if (result.error) throw result.error;
+  const scope = args.includes('--omit=dev') ? 'production' : 'full';
+  // npm can exit 1 for either findings or a failed request. Require a valid report
+  // in both cases rather than interpreting a registry error object as clean.
+  if (result.error || (result.status !== 0 && result.status !== 1)) {
+    throw new Error(`npm audit (${scope}) did not complete normally`);
+  }
   try {
-    return JSON.parse(result.stdout);
-  } catch {
-    throw new Error(`npm audit ${args.join(' ')} did not return JSON: ${result.stderr.slice(0, 500)}`);
+    return parseAuditReport(result.stdout);
+  } catch (error) {
+    throw new Error(`npm audit (${scope}): ${error instanceof Error ? error.message : 'invalid report'}`, { cause: error });
   }
 }
 
