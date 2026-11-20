@@ -17,7 +17,7 @@ Production configuration as observed on November 16, 2026 (`/api/config`):
 | Support inbox | `off` (help is by email) |
 | Hosted retention and erasure | `off` |
 | Platform operator console | `off` |
-| Operator MFA policy | `pre-revenue` (D-051 temporary exception) |
+| Operator MFA policy | `required` (D-051 exception ended 2026-11-20) |
 
 This table records configuration, not customer traffic, provider acceptance or revenue. Under D-051 the operator MFA exception ends once paying customers arrive, and hosted retention stays off while it is in force. D-060 holds new Pro enrollment and D-062 selects the temporary no-tax-collection mode.
 

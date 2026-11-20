@@ -6,7 +6,7 @@ Observed November 16, 2026 from the public `/api/config` and `/api/health/versio
 
 - Production is live at `flockletter.frostyflamingosoftware.com` and serves an exact commit from `main`.
 - Billing is `stripe_live`. Delivery is `resend` with scope `all`. Audience is `live`.
-- Team, support, retention and the platform console are `off`. The operator MFA policy is `pre-revenue` (D-051).
+- Team, support, retention and the platform console are `off`. The operator MFA policy is `required`; D-051's temporary exception ended on 2026-11-20.
 
 The entries under "Current authorization" are a newest-first ledger. Several older entries say to keep live billing or general sending off. Those sentences describe the state when each decision was accepted. D-058/059 and D-062 supersede them for activation, and production is now configured live. Do not treat the older wording as an instruction to disable live billing or sending, and do not change any live flag, provider setting or activation gate without an explicit owner instruction.
 

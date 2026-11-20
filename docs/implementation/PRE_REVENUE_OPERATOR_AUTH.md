@@ -1,5 +1,7 @@
 # Temporary production administrator sign-in policy
 
+**Status: ended 2026-11-20.** Clerk production now offers authenticator-app and backup-code two-step verification. Both Flockletter admin accounts enrolled (confirmed through the Clerk API), and production web and worker run `FLOCKLETTER_OPERATOR_MFA_POLICY=required`. The exception code remains as a switch but is not in use. Cases opened under `pre-revenue` aren't upgraded and must be reopened.
+
 Applicable: D-051, FL-ID-001/005, FL-OPS-003/006 and FL-AT-006.
 
 The owner explicitly deferred production operator MFA until paid customers. The default remains `required`. Only the server setting `FLOCKLETTER_OPERATOR_MFA_POLICY=pre-revenue` enables the **temporary single-factor exception**. This does not purchase Clerk or activate the platform control room.
