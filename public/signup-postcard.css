@@ -12,7 +12,11 @@
 .signup-postcard[data-font="sans"] :is(.postcard-name,h1) { font-family:Arial,Helvetica,sans-serif }
 .signup-postcard form { display:grid; gap:18px }
 .signup-postcard label { display:grid; gap:6px }
-.signup-postcard input[type="email"] { padding:10px; border:1px solid #927985; border-radius:5px; font:inherit; width:100% }
+.signup-postcard :is(input[type="email"],input[type="tel"],input[type="text"],input[type="number"],input:not([type]),select) { padding:10px; min-height:44px; border:1px solid #927985; border-radius:5px; font:inherit; width:100% }
+.signup-postcard .postcard-date { display:flex; flex-wrap:wrap; gap:8px; border:0; padding:0; margin:0; min-width:0 }
+.signup-postcard .postcard-date legend { padding:0; margin-bottom:6px }
+.signup-postcard .postcard-date :is(select,input) { width:auto; flex:1 1 7rem }
+.signup-postcard .postcard-consent-links { margin:-8px 0 0; font-size:14px }
 .signup-postcard label.postcard-consent { display:flex; align-items:baseline; gap:10px }
 .signup-postcard input[type="checkbox"] { flex:none; width:1rem; height:1rem; margin:0 }
 .signup-postcard button { justify-self:start; cursor:pointer; padding:14px 22px; border:0; border-radius:5px; font:bold 16px/20px Arial,sans-serif; background:var(--postcard-accent,#83364f); color:var(--postcard-ink,#fff) }
@@ -20,3 +24,4 @@
 .signup-postcard .postcard-foot { border-top:1px solid #eadbdf; color:#69515d; font-size:14px }
 .design-studio .studio-columns { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:24px; margin-block:18px }
 .signup-postcard .confirmation-photo { display:block; max-width:100%; max-height:240px; height:auto; object-fit:contain }
+.signup-postcard button:disabled { opacity:.55; cursor:not-allowed }

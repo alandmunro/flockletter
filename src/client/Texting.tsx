@@ -41,8 +41,9 @@ function Profile({ api, status, busy, act }: { api: Api; status: Status; busy: b
   const p = status.profile;
   const [form, setForm] = useState({ shortName: p?.shortName ?? '', notificationEmail: p?.notificationEmail ?? '', timeZone: p?.timeZone ?? 'America/New_York', phoneField: p?.phoneField ?? false, birthdayField: p?.birthdayField ?? false, anniversaryField: p?.anniversaryField ?? false, anniversaryLabel: p?.anniversaryLabel ?? 'Anniversary' });
   const key = useRef(operationKey());
-  const save = (e: FormEvent) => { e.preventDefault(); void act(async () => { await api.call('sms.configure', { operationKey: key.current, expectedRevision: p?.revision ?? 1, ...form, shortName: form.shortName || undefined, notificationEmail: form.notificationEmail || null }); key.current = operationKey(); }); };
-  const set = (patch: Partial<typeof form>) => { setForm(f => ({ ...f, ...patch })); key.current = operationKey(); };
+  const [saved, setSaved] = useState(false);
+  const save = (e: FormEvent) => { e.preventDefault(); setSaved(false); void act(async () => { await api.call('sms.configure', { operationKey: key.current, expectedRevision: p?.revision ?? 1, ...form, shortName: form.shortName || undefined, notificationEmail: form.notificationEmail || null }); key.current = operationKey(); setSaved(true); }); };
+  const set = (patch: Partial<typeof form>) => { setForm(f => ({ ...f, ...patch })); key.current = operationKey(); setSaved(false); };
   return <section className="card"><h2>Texting settings</h2><form onSubmit={save}><fieldset disabled={busy}>
     <label>Short name for links (flkl.cc/<em>name</em>)<input value={form.shortName} pattern="[a-z0-9][a-z0-9-]{1,28}[a-z0-9]" onChange={e => set({ shortName: e.target.value.toLowerCase() })} /></label>
     <label>Email for text replies<input type="email" value={form.notificationEmail} onChange={e => set({ notificationEmail: e.target.value })} /></label>
@@ -53,7 +54,8 @@ function Profile({ api, status, busy, act }: { api: Api; status: Status; busy: b
       <label className="asset-option"><input type="checkbox" checked={form.anniversaryField} onChange={e => set({ anniversaryField: e.target.checked })} />Anniversary</label>
       {form.anniversaryField && <label>Anniversary label<input maxLength={40} value={form.anniversaryLabel} onChange={e => set({ anniversaryLabel: e.target.value })} /></label>}
     </fieldset>
-    <button className="btn" type="submit">Save texting settings</button></fieldset></form></section>;
+    <button className="btn" type="submit">Save texting settings</button>
+    {saved && <p role="status" className="notice success">Texting settings saved.</p>}</fieldset></form></section>;
 }
 function Composer({ api, companies, busy, act }: { api: Api; companies: Status['companies']; busy: boolean; act: Act }) {
   const [companyId, setCompanyId] = useState(companies[0]?.id ?? ''), [body, setBody] = useState(''), [draft, setDraft] = useState<{ id: string; revision: number } | null>(null);
