@@ -6,6 +6,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/dependency-audit.yml'
+      - 'scripts/check-audit.ts'
+      - 'scripts/audit-policy.ts'
+      - 'scripts/audit-exceptions.json'
 permissions:
   contents: read
 concurrency:
@@ -25,5 +28,5 @@ jobs:
           cache: npm
       # Keep exceptions and thresholds in the same policy as Foundation checks.
       # Skip package lifecycle scripts; neither application build nor deployment is needed.
-      - run: npm ci --ignore-scripts
+      - run: npm ci --ignore-scripts --no-audit
       - run: npm run audit:check

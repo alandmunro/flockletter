@@ -38,6 +38,56 @@ function isSeverity(value: unknown): value is Severity {
   return typeof value === 'string' && Object.hasOwn(severityRank, value);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Reject npm error responses and incomplete reports before evaluating advisories. */
+export function parseAuditReport(stdout: string): AuditReport {
+  let report: unknown;
+  try {
+    report = JSON.parse(stdout);
+  } catch {
+    throw new Error('audit returned invalid JSON');
+  }
+
+  if (
+    !isRecord(report) ||
+    Object.hasOwn(report, 'error') ||
+    report.auditReportVersion !== 2 ||
+    !isRecord(report.metadata) ||
+    !isRecord(report.metadata.vulnerabilities) ||
+    !isRecord(report.vulnerabilities)
+  ) {
+    throw new Error('audit returned an invalid or incomplete report');
+  }
+
+  const vulnerabilities: NonNullable<AuditReport['vulnerabilities']> = {};
+  for (const [name, entry] of Object.entries(report.vulnerabilities)) {
+    if (!isRecord(entry) || !Array.isArray(entry.via)) {
+      throw new Error('audit returned an invalid advisory entry');
+    }
+    const via: Array<string | AuditVia> = [];
+    for (const reference of entry.via as unknown[]) {
+      if (typeof reference === 'string' && reference.length > 0) {
+        via.push(reference);
+      } else if (
+        isRecord(reference) &&
+        typeof reference.name === 'string' && reference.name.length > 0 &&
+        typeof reference.url === 'string' && reference.url.length > 0 &&
+        isSeverity(reference.severity)
+      ) {
+        const { name, url, severity, title } = reference;
+        via.push({ name, url, severity, title: typeof title === 'string' ? title : undefined });
+      } else {
+        throw new Error('audit returned an invalid advisory reference');
+      }
+    }
+    Object.defineProperty(vulnerabilities, name, { value: { via }, enumerable: true });
+  }
+  return { vulnerabilities };
+}
+
 /** Collects the distinct advisories in an `npm audit --json` report. */
 export function advisoriesFrom(report: AuditReport): Advisory[] {
   const found = new Map<string, Advisory>();

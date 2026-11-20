@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { advisoriesFrom, evaluateAudit, validateExceptions, type AuditException } from '../scripts/audit-policy.js';
+import { advisoriesFrom, evaluateAudit, parseAuditReport, validateExceptions, type AuditException } from '../scripts/audit-policy.js';
 
 const advisory = (name: string, id: string, severity: string) => ({
   vulnerabilities: {
@@ -16,6 +16,34 @@ const exception: AuditException = {
   accepted: '2026-11-17',
   expires: '2026-12-01',
 };
+
+describe('npm audit report validation', () => {
+  const report = (vulnerabilities: unknown) => ({
+    auditReportVersion: 2,
+    vulnerabilities,
+    metadata: { vulnerabilities: {} },
+  });
+
+  it('accepts a complete clean report and preserves valid advisory records', () => {
+    expect(advisoriesFrom(parseAuditReport(JSON.stringify(report({}))))).toEqual([]);
+    const finding = advisory('example', 'GHSA-dddd-eeee-ffff', 'high');
+    const parsed = parseAuditReport(JSON.stringify(report(finding.vulnerabilities)));
+    expect(advisoriesFrom(parsed)).toMatchObject([{ id: 'GHSA-dddd-eeee-ffff', package: 'example', severity: 'high' }]);
+  });
+
+  it('rejects unavailable registry JSON, missing report data and unparseable output', () => {
+    const unavailable = { error: { code: 'TEST_REGISTRY_UNAVAILABLE', summary: 'Synthetic fixture only' } };
+    for (const value of [unavailable, { ...report({}), ...unavailable }, {}, report([]), report(null)]) {
+      expect(() => parseAuditReport(JSON.stringify(value))).toThrow(/invalid or incomplete report/);
+    }
+    expect(() => parseAuditReport('not JSON')).toThrow(/invalid JSON/);
+  });
+
+  it('rejects malformed advisory entries even inside a complete report', () => {
+    expect(() => parseAuditReport(JSON.stringify(report({ example: {} })))).toThrow(/invalid advisory entry/);
+    expect(() => parseAuditReport(JSON.stringify(report({ example: { via: [{}] } })))).toThrow(/invalid advisory reference/);
+  });
+});
 
 describe('dependency audit policy', () => {
   it('collects distinct advisories and skips transitive name references', () => {
