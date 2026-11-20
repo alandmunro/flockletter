@@ -1,0 +1,29 @@
+name: Nightly dependency audit
+on:
+  schedule:
+    - cron: '15 8 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/dependency-audit.yml'
+permissions:
+  contents: read
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  npm-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      # Keep exceptions and thresholds in the same policy as Foundation checks.
+      # Skip package lifecycle scripts; neither application build nor deployment is needed.
+      - run: npm ci --ignore-scripts
+      - run: npm run audit:check
