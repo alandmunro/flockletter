@@ -788,12 +788,12 @@ export class CustomerAudience {
     if (!token) throw invalidLink();
     return token;
   }
-  async publicForm(form: string) {
+  async publicForm(form: string, options: { smsPreview?: boolean } = {}) {
     const { workspace, brand } = parseForm(form);
     return this.db.brand(workspace, brand, async (sql) => {
       const row = await settings(sql);
       if (!row?.enabled || row.form_token !== form || this.options.mode === 'off') throw invalidLink();
-      const texting = this.options.texting ? await this.options.texting.signupView(sql, workspace, brand) : null;
+      const texting = this.options.texting ? await this.options.texting.signupView(sql, workspace, brand, options.smsPreview === true) : null;
       return { ...(await brandIdentity(sql, brand)), ...policy(row), mode: this.options.mode, confirmationMode: row.confirmation_mode, texting };
     });
   }

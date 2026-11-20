@@ -70,7 +70,8 @@ export function customerAudienceRoutes(service: CustomerAudience) {
     if (req.baseUrl.toLowerCase() === '/signup') {
       const match = /^\/([a-zA-Z0-9-]+)\/?$/.exec(req.path);
       if (!match) throw new AppError(404,'signup_unavailable','Signup page unavailable.');
-      req.url = '/' + await service.resolveSignupSlug(match[1]!);
+      const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+      req.url = '/' + await service.resolveSignupSlug(match[1]!) + query;
     }
     next();
   });
@@ -155,12 +156,16 @@ export function customerAudienceRoutes(service: CustomerAudience) {
     res.type(logo.mime).send(logo.bytes);
   });
   router.get('/:form', async (req, res) => {
-    const form = await service.publicForm(String(req.params.form));
+    // `?preview=sms` is the view-only form carrier reviewers see before the texting number is active (FL-SMS-007).
+    const smsPreview = req.query.preview === 'sms';
+    const form = await service.publicForm(String(req.params.form), { smsPreview });
+    if (smsPreview && !form.texting?.smsWording) throw new AppError(404, 'preview_unavailable', 'This preview is unavailable.');
     sendPostcard(res, String(req.params.form), form, form.design.heading || 'News from '+form.brandName,
       (form.confirmationMode === 'single_opt_in' ? 'No email confirmation is required. You can unsubscribe from any newsletter.' : 'Email confirmation is required.')+' Tracking is off.',
       [form.mode === 'exercise' && h('p',{key:'mode'},'Staging exercise. Messages are captured for the workspace owner.'),
+       smsPreview && h('p',{key:'preview'},'Preview of this sign-up form with its optional text message opt-in. Submitting is turned off on this preview.'),
        form.design.introduction && h('p',{key:'intro'},form.design.introduction),
-       h(SignupFields,{key:'signup',consent:form.consentText,version:form.policyVersion,...(form.texting?{texting:form.texting}:{})})]);
+       h(SignupFields,{key:'signup',consent:form.consentText,version:form.policyVersion,preview:smsPreview,...(form.texting?{texting:form.texting}:{})})]);
   });
   router.post('/:form', async (req, res) => {
     const form = await service.publicForm(String(req.params.form));

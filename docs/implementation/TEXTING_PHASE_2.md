@@ -291,6 +291,14 @@ Before the first real filing, a review of the live registration path found two p
 
 Tests: `tests/texting-twilio-business.test.ts` (rules, and the exact strings the live adapter sends); `tests/texting.test.ts` "live registration wording" (refusals, live submit refused without wording and with no provider call, then accepted).
 
+### Opt-in visible to carrier reviewers (2026-11-20)
+
+Carrier vetting checks the opt-in, but the hosted sign-up page only shows the SMS box once the company has an active number, which comes after the campaign. So:
+
+- `GET /signup/<slug>?preview=sms` (and `/newsletter/<form>?preview=sms`) renders the same form with the SMS box and its exact wording, with submitting turned off. It needs a carrier brand with confirmed policies and never records consent.
+- The SMS box (live and preview) links the confirmed SMS terms and privacy policy.
+- The campaign's message flow names the sign-up page and its preview. A live campaign with no enabled sign-up page showing the phone field is refused as `signup_page_missing` before Twilio is called, so no campaign fee is spent on a filing reviewers can't verify.
+
 ### Known limits (not hidden)
 
 - **Erasure of private texting routes.** Public `sms_*` tables are erased with the workspace (they are runtime tables). The private `texting_*` route, account and short-name rows are not yet in the retention executor's private list; that needs the executor and its role grants updated together.

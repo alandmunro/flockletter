@@ -125,7 +125,8 @@ export class TextingRegistration {
         const brand = (await sql.query<BrandRow>('SELECT * FROM sms_carrier_brands WHERE id=$1', [reg.carrier_brand_id])).rows[0]!;
         const company = (await sql.query<{ name: string }>('SELECT name FROM companies WHERE id=$1', [brand.company_id])).rows[0]!;
         const profile = (await sql.query<{ notification_email: string | null }>('SELECT notification_email FROM sms_workspace_profile')).rows[0];
-        return { kind: 'call' as const, reg, step, steps: ordered, brand, company: company.name, notificationEmail: profile?.notification_email ?? null, account: await this.account(sql, workspace) };
+        const signupUrl = step.step === 'campaign' ? await signupPage(sql, brand.company_id, this.options.origin) : null;
+        return { kind: 'call' as const, reg, step, steps: ordered, brand, company: company.name, notificationEmail: profile?.notification_email ?? null, signupUrl, account: await this.account(sql, workspace) };
       }
       return { kind: 'reconcile' as const, reg, step, steps: ordered, account: await this.account(sql, workspace) };
     });
@@ -133,7 +134,7 @@ export class TextingRegistration {
     if (claim.kind === 'wait') return claim.at;
     if (claim.kind === 'complete') return this.complete(workspace, registrationId);
     if (claim.kind === 'call') {
-      const result = await this.call(workspace, claim.reg, claim.step, claim.steps, claim.brand, claim.company, claim.notificationEmail, claim.account).catch((): Result<ProvisionFacts & { account?: AccountCredentials }> => ({ outcome: 'unknown', reason: 'adapter_error' }));
+      const result = await this.call(workspace, claim.reg, claim.step, claim.steps, claim.brand, claim.company, claim.notificationEmail, claim.signupUrl, claim.account).catch((): Result<ProvisionFacts & { account?: AccountCredentials }> => ({ outcome: 'unknown', reason: 'adapter_error' }));
       return this.apply(workspace, claim.step, result, 'call');
     }
     const found = claim.step.step === 'subaccount' && this.options.platform.mode === 'live' ? { outcome: 'not_submitted' as const }
@@ -149,7 +150,7 @@ export class TextingRegistration {
     const sid = (name: RegistrationStep) => steps.find(s => s.step === name)?.provider_sid ?? undefined;
     return step === 'brand' ? sid('customer_profile') : step === 'campaign' ? sid('messaging_service') : undefined;
   }
-  private async call(workspace: string, reg: RegistrationRow, step: StepRow, steps: StepRow[], brand: BrandRow, company: string, notificationEmail: string | null, account: AccountCredentials | null): Promise<Result<ProvisionFacts & { account?: AccountCredentials }>> {
+  private async call(workspace: string, reg: RegistrationRow, step: StepRow, steps: StepRow[], brand: BrandRow, company: string, notificationEmail: string | null, signupUrl: string | null, account: AccountCredentials | null): Promise<Result<ProvisionFacts & { account?: AccountCredentials }>> {
     const platform = this.options.platform, op = step.operation_key, facts = (name: RegistrationStep) => steps.find(s => s.step === name)?.facts;
     if (step.step === 'subaccount') {
       if (platform.mode === 'live') return this.options.liveAccount ? { outcome: 'accepted', value: { sid: this.options.liveAccount.accountSid, account: this.options.liveAccount } } : { outcome: 'rejected', reason: 'live_account_not_configured' };
@@ -174,10 +175,14 @@ export class TextingRegistration {
       const wording = campaignWording(brand.profile);
       // Generic wording is for the mock only. Live campaigns file the business's own description and samples.
       if (!wording && platform.mode === 'live') return { outcome: 'rejected', reason: 'campaign_wording_missing' };
+      // Carrier vetting checks the opt-in. The SMS box only appears once a number is active, so reviewers get the
+      // live page and its view-only SMS preview. Refused here, before the campaign fee, if there is no page to show.
+      if (!signupUrl && platform.mode === 'live') return { outcome: 'rejected', reason: 'signup_page_missing' };
+      const optIn = signupUrl ? ` Sign-up page: ${signupUrl}. The SMS box appears there once this campaign's number is active; until then the same form with the SMS box can be viewed at ${signupUrl}?preview=sms.` : '';
       const policies = p.privacyPolicyUrl && p.smsTermsUrl ? ` SMS terms: ${p.smsTermsUrl}. Privacy policy: ${p.privacyPolicyUrl}.` : '';
       return platform.submitCampaign(account, op, facts('messaging_service')!.sid, facts('brand')!.sid, {
       description: wording?.description ?? `${name} sends marketing texts (offers, events and updates) to customers who opted in on ${name}'s Flockletter-hosted sign-up page.`,
-      messageFlow: `Customers opt in on ${name}'s hosted sign-up page by checking an optional, unchecked SMS box that shows the program name, message frequency, "Msg & data rates may apply", STOP and HELP instructions, and links to the privacy policy and SMS terms. They then reply YES to a confirmation text before any other message.${policies}`,
+      messageFlow: `Customers opt in on ${name}'s hosted sign-up page by checking an optional, unchecked SMS box that shows the program name, message frequency, "Msg & data rates may apply", STOP and HELP instructions, and links to the privacy policy and SMS terms. They then reply YES to a confirmation text before any other message.${optIn}${policies}`,
       samples: wording?.samples ?? [`${name}: This week only, 15% off in store. Reply STOP to opt out.`, `${name}: Our spring hours start Monday, 9am-6pm. Reply STOP to opt out.`],
       optInMessage: `${name}: Reply YES to confirm you want texts from us. Msg & data rates may apply. Reply STOP to opt out.`,
       optOutMessage: `${name}: You are unsubscribed and will receive no more texts. Reply START to resubscribe.`,
@@ -293,4 +298,22 @@ export class TextingRegistration {
     }
     return new Date(this.now().getTime() + minutes * 60000);
   }
+}
+
+/**
+ * The company's enabled hosted sign-up page, when the workspace shows the phone field. Audience settings are
+ * brand-scoped, so each of the company's brands is checked under its own brand context, which is then cleared.
+ */
+export async function signupPage(sql: Sql, companyId: string, origin: string): Promise<string | null> {
+  const fields = (await sql.query<{ phone_field: boolean }>('SELECT phone_field FROM sms_workspace_profile')).rows[0];
+  if (!fields?.phone_field) return null;
+  const brands = (await sql.query<{ brand_id: string }>('SELECT brand_id FROM company_brands WHERE company_id=$1 ORDER BY brand_id', [companyId])).rows;
+  let url: string | null = null;
+  for (const { brand_id } of brands) {
+    await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand_id]);
+    const slug = (await sql.query<{ slug: string | null }>('SELECT public.flockletter_signup_slug(form_token) slug FROM customer_audience_settings WHERE brand_id=$1 AND enabled', [brand_id])).rows[0]?.slug;
+    if (slug) { url = new URL('/signup/' + slug, origin).href; break; }
+  }
+  await sql.query("SELECT set_config('app.intake_brand_id','',true)");
+  return url;
 }
