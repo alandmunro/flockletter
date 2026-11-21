@@ -180,11 +180,13 @@ export class TextingRegistration {
       // Carrier vetting checks the opt-in. The SMS box only appears once a number is active, so reviewers get the
       // live page and its view-only SMS preview. Refused here, before the campaign fee, if there is no page to show.
       if (!signupUrl && platform.mode === 'live') return { outcome: 'rejected', reason: 'signup_page_missing' };
+      if ((!p.privacyPolicyUrl || !p.smsTermsUrl) && platform.mode === 'live') return { outcome: 'rejected', reason: 'policy_urls_missing' };
       const optIn = signupUrl ? ` Sign-up page: ${signupUrl}. The SMS box appears there once this campaign's number is active; until then the same form with the SMS box can be viewed at ${signupUrl}?preview=sms.` : '';
       const policies = p.privacyPolicyUrl && p.smsTermsUrl ? ` SMS terms: ${p.smsTermsUrl}. Privacy policy: ${p.privacyPolicyUrl}.` : '';
       const stay = wording?.stayTexts ? ` The same checkbox also covers texts about the subscriber's own booked stays (arrival details, check-in and checkout reminders). Stay texts go only to subscribers who opted in this way and confirmed with YES.` : '';
       return platform.submitCampaign(account, op, facts('messaging_service')!.sid, facts('brand')!.sid, {
       useCase: wording?.useCase ?? 'MARKETING',
+      ...(p.privacyPolicyUrl ? { privacyPolicyUrl: p.privacyPolicyUrl } : {}), ...(p.smsTermsUrl ? { termsUrl: p.smsTermsUrl } : {}),
       description: wording?.description ?? `${name} sends marketing texts (offers, events and updates) to customers who opted in on ${name}'s Flockletter-hosted sign-up page.`,
       messageFlow: `Customers opt in on ${name}'s hosted sign-up page by checking an optional, unchecked SMS box that shows the program name, message frequency, "Msg & data rates may apply", STOP and HELP instructions, and links to the privacy policy and SMS terms. They then reply YES to a confirmation text before any other message.${stay}${optIn}${policies}`,
       samples: wording?.samples ?? [`${name}: This week only, 15% off in store. Reply STOP to opt out.`, `${name}: Our spring hours start Monday, 9am-6pm. Reply STOP to opt out.`],
@@ -260,6 +262,20 @@ export class TextingRegistration {
       }
       return null;
     });
+  }
+  /**
+   * The operator edited and resubmitted a FAILED campaign in the Twilio Console (same campaign SID, no new vetting fee).
+   * Flockletter goes back to waiting on that campaign's status instead of treating the registration as rejected.
+   */
+  async campaignResubmitted(sql: Sql, workspace: string, registrationId: string, actor: string, via: Interface) {
+    await lockWorkspace(sql, workspace);
+    const reg = (await sql.query<RegistrationRow>('SELECT * FROM sms_registrations WHERE id=$1 FOR UPDATE', [registrationId])).rows[0];
+    requireCondition(reg, 404, 'registration_unavailable', 'This registration is unavailable.');
+    requireCondition(reg.campaign_sid && reg.campaign_status === 'FAILED' && ['rejected', 'campaign_pending'].includes(reg.state), 409, 'campaign_not_failed',
+      'Only a filed campaign that the carrier marked FAILED can be recorded as resubmitted.');
+    await sql.query(`UPDATE sms_registrations SET state='campaign_pending',campaign_status='IN_PROGRESS',rejection_reason=NULL,status_checked_at=NULL,updated_at=clock_timestamp() WHERE id=$1`, [reg.id]);
+    await audit(sql, workspace, actor, via, 'registration.campaign_resubmitted', reg.id, { state: reg.state, status: reg.campaign_status }, { state: 'campaign_pending', status: 'IN_PROGRESS', campaignSid: reg.campaign_sid });
+    return { state: 'campaign_pending' as const, campaignSid: reg.campaign_sid };
   }
   /** A carrier status from a signed callback or a poll. Applied only as a forward move. */
   async status(sql: Sql, workspace: string, kind: 'brand' | 'campaign', sid: string, status: string, reason: string | null, source: Interface) {

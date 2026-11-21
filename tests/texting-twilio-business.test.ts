@@ -78,10 +78,12 @@ describe('live adapter business profile', () => {
     const input = { description: 'Synthetic texts about open dates and booked stays.', messageFlow: 'Sign-up page checkbox.', samples: ['Sample one text here.', 'Sample two text here.'],
       optInMessage: 'Reply YES', optOutMessage: 'Unsubscribed', helpMessage: 'Help', hasLinks: true };
     for (const useCase of ['LOW_VOLUME', 'MARKETING'] as const) {
-      const result = await platform.submitCampaign(account, `sms-reg/x/1/campaign-${useCase}`, 'MG' + '6'.repeat(32), 'BN' + '7'.repeat(32), { ...input, useCase });
+      const result = await platform.submitCampaign(account, `sms-reg/x/1/campaign-${useCase}`, 'MG' + '6'.repeat(32), 'BN' + '7'.repeat(32), { ...input, useCase, privacyPolicyUrl: 'https://example.com/privacy', termsUrl: 'https://example.com/sms-terms' });
       expect(result.outcome).toBe('accepted');
     }
     expect(posts.map(p => p.get('UsAppToPersonUsecase'))).toEqual(['LOW_VOLUME', 'MARKETING']);
+    // Twilio rejects a campaign without these as separate fields (30908, 30882; FF Hospitality, 2026-11-21).
+    expect(posts.map(p => [p.get('PrivacyPolicyUrl'), p.get('TermsAndConditionsUrl')])).toEqual([['https://example.com/privacy', 'https://example.com/sms-terms'], ['https://example.com/privacy', 'https://example.com/sms-terms']]);
   });
   it('reads an approved brand whose errors field is null, as Twilio sends it', async () => {
     const fakeFetch = (async () => new Response(JSON.stringify({ sid: 'BN' + '8'.repeat(32), status: 'APPROVED', identity_status: 'VETTED_VERIFIED', failure_reason: null, errors: null }),

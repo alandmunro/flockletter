@@ -306,6 +306,11 @@ Carrier vetting checks the opt-in, but the hosted sign-up page only shows the SM
 - `platform.textingCampaignWording` changes the wording any time before the campaign step is called (draft, rejected, or the campaign step still queued or held). Once the campaign has gone to the carrier it is refused as `campaign_already_filed`.
 - Changing `stayTexts` clears the policy confirmation, because the SMS terms must describe stay texts. The campaign step waits, even with an operator approval, until `platform.textingConfirmPolicies` is run again.
 
+### Policy URL fields and Console resubmission (2026-11-21)
+
+- Twilio's automated check rejected FF Hospitality's first campaign (30908 privacy policy, 30882 terms) because the campaign was filed without the separate `PrivacyPolicyUrl` and `TermsAndConditionsUrl` fields; the pages themselves loaded. The adapter now sends both from the confirmed policies, and a live campaign without them is refused as `policy_urls_missing` before Twilio is called.
+- Editing and resubmitting a FAILED campaign keeps its SID and, per Twilio, does not charge the vetting fee again; by API it needs a Private Beta, so it is done in the Twilio Console. `platform.textingCampaignResubmitted` then moves the registration from rejected back to `campaign_pending` (status `IN_PROGRESS`) so polling picks up the new verdict.
+
 ### Known limits (not hidden)
 
 - **Erasure of private texting routes.** Public `sms_*` tables are erased with the workspace (they are runtime tables). The private `texting_*` route, account and short-name rows are not yet in the retention executor's private list; that needs the executor and its role grants updated together.

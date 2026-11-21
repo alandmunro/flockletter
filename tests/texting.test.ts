@@ -599,6 +599,23 @@ describe('live registration wording', () => {
     expect(stored.profile).toMatchObject({ campaign: wording, businessType: 'Limited Liability Corporation' });
     await db.tenant(w, sql => sql.query(`UPDATE sms_registrations SET state='draft' WHERE id=$1`, [created.registrationId]));
   });
+  it('records a campaign resubmitted in the Twilio Console and goes back to waiting on its status', async () => {
+    const w = A.workspaceId;
+    const companyId = randomUUID();
+    await db.tenant(w, sql => sql.query(`INSERT INTO companies(workspace_id,id,name,is_default) VALUES($1,$2,'Synthetic E',false)`, [w, companyId]));
+    const created = await op<{ carrierBrandId: string; registrationId: string }>('platform.textingCarrierBrand', { workspaceId: w, companyId, legalName: 'Synthetic E LLC', dbaName: 'Synthetic E', entityType: 'private_profit', profile: { ...profile, vertical: 'HOSPITALITY' }, campaign: wording, helpContact: 'help@example.com', reason: 'Synthetic resubmitted campaign.' });
+    const resubmitted = () => op<{ state: string }>('platform.textingCampaignResubmitted', { workspaceId: w, registrationId: created.registrationId, reason: 'Added policy URLs and resubmitted in the Twilio Console.' });
+    await expect(resubmitted()).rejects.toMatchObject({ code: 'campaign_not_failed' });
+    const sid = 'QE' + 'e'.repeat(32);
+    await db.tenant(w, sql => sql.query(`UPDATE sms_registrations SET state='rejected',campaign_sid=$2,campaign_status='FAILED',rejection_reason='campaign: 30908' WHERE id=$1`, [created.registrationId, sid]));
+    await expect(resubmitted()).resolves.toMatchObject({ state: 'campaign_pending' });
+    expect((await rows(w, 'SELECT state,campaign_status,rejection_reason FROM sms_registrations WHERE id=$1', [created.registrationId]))[0]).toEqual({ state: 'campaign_pending', campaign_status: 'IN_PROGRESS', rejection_reason: null });
+    await expect(resubmitted()).rejects.toMatchObject({ code: 'campaign_not_failed' });
+    // The carrier's verdict on the same campaign now applies as a forward move.
+    await db.tenant(w, sql => texting.registration.status(sql, w, 'campaign', sid, 'VERIFIED', null, 'worker'));
+    expect((await rows<{ campaign_status: string }>(w, 'SELECT campaign_status FROM sms_registrations WHERE id=$1', [created.registrationId]))[0]!.campaign_status).toBe('VERIFIED');
+    await db.tenant(w, sql => sql.query(`UPDATE sms_registrations SET state='draft' WHERE id=$1`, [created.registrationId]));
+  });
   it('widens the checkbox wording and its policy version when the campaign covers stay texts', () => {
     expect(smsConsentWording('Synthetic D', 4)).toMatch(/^Yes, text me offers and updates from Synthetic D\./);
     expect(smsConsentWording('Synthetic D', 4, true)).toMatch(/^Yes, text me offers, updates and info about my stays from Synthetic D\. Up to 4 msgs\/month\./);

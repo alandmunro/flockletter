@@ -567,6 +567,11 @@ export class Texting {
         const result = await write(p.workspaceId, sql => this.registration.submit(sql, p.workspaceId, p.registrationId, actor, operator.via));
         await this.wake(p.workspaceId); return result;
       }
+      case 'platform.textingCampaignResubmitted': {
+        const p = input as unknown as { workspaceId: string; registrationId: string };
+        const result = await write(p.workspaceId, sql => this.registration.campaignResubmitted(sql, p.workspaceId, p.registrationId, actor, operator.via));
+        await this.wake(p.workspaceId); return result;
+      }
       case 'platform.textingApprove': {
         const p = input as unknown as { workspaceId: string; registrationId: string; step: 'brand' | 'campaign' | 'number'; costNote: string; reason: string };
         requireCondition(this.options.mode === 'live', 409, 'approval_not_needed', 'Separate approvals apply only to live registration.');

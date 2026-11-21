@@ -13,7 +13,7 @@ export type BusinessProfile = {
   contact: { firstName: string; lastName: string; email: string; phone: string; title: string };
   notificationEmail: string;
 };
-export type CampaignInput = { useCase: CampaignUseCase; description: string; messageFlow: string; samples: string[]; optInMessage: string; optOutMessage: string; helpMessage: string; hasLinks: boolean };
+export type CampaignInput = { useCase: CampaignUseCase; privacyPolicyUrl?: string; termsUrl?: string; description: string; messageFlow: string; samples: string[]; optInMessage: string; optOutMessage: string; helpMessage: string; hasLinks: boolean };
 export type CallbackUrls = { inbound: string; status: string; registration: string };
 export type ProvisionKind = Exclude<RegistrationStep, 'subaccount'> | 'subaccount';
 export type ProvisionFacts = { sid: string; status?: string; e164?: string; parentSid?: string };
