@@ -220,7 +220,7 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
     const url = kind === 'brand' ? `${messaging}/a2p/BrandRegistrations/${resource}` : `${messaging}/Services/${parentSid}/Compliance/Usa2p/${resource}`;
     const r = await request(this.call, this.auth(account), 'GET', url).catch(() => null);
     if (!r || r.status !== 200) return { outcome: 'unknown' };
-    const parsed = z.object({ status: z.string().optional(), campaign_status: z.string().nullable().optional(), failure_reason: z.string().nullable().optional(), errors: z.array(z.unknown()).optional() }).safeParse(r.json);
+    const parsed = z.object({ status: z.string().optional(), campaign_status: z.string().nullable().optional(), failure_reason: z.string().nullable().optional() }).safeParse(r.json); // Twilio sends `errors: null` on an approved brand; it is not read.
     if (!parsed.success) return { outcome: 'unknown' };
     const status = (kind === 'brand' ? parsed.data.status : parsed.data.campaign_status) ?? 'PENDING';
     return { outcome: 'accepted', value: { status: status.toUpperCase(), ...(parsed.data.failure_reason ? { reason: parsed.data.failure_reason.slice(0, 300) } : {}) } };
