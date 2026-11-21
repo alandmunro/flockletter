@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { textingSettingKeys, registrationSteps } from './texting.js';
+import { textingSettingKeys, registrationSteps, campaignUseCases } from './texting.js';
 import { mockFaults } from './texting-mock.js';
 import { carrierEntityTypes, twilioBusinessTypes, twilioIndustries } from './texting-business.js';
 
@@ -17,6 +17,10 @@ const businessProfile = z.object({
 const campaignWording = z.object({
   description: z.string().trim().min(40).max(4096),
   samples: z.array(z.string().trim().min(20).max(1024)).min(2).max(5),
+  // LOW_VOLUME is Twilio's Low Volume Mixed campaign: under about 2,000 segments a day on T-Mobile, a lower monthly fee.
+  useCase: z.enum(campaignUseCases).optional(),
+  // The sign-up checkbox also covers texts about the subscriber's booked stays, and the campaign filing says so.
+  stayTexts: z.boolean().optional(),
 }).strict();
 const mockAction = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('fault'), target: z.enum([...registrationSteps, 'send']), faults: z.array(z.enum(mockFaults)).min(1).max(10) }).strict(),
@@ -33,6 +37,8 @@ export const textingPlatformCommands = {
   'platform.textingCarrierBrand': define('Create, or correct while draft or rejected, the one carrier brand for a company (FL-SMS-002). Live registration also needs the campaign description and 2 to 5 sample texts written for this business.', true, {
     operationKey, workspaceId, companyId: z.uuid(), legalName: text(200), dbaName: text(200).nullable(),
     entityType: z.enum(carrierEntityTypes), profile: businessProfile, campaign: campaignWording.optional(), helpContact: text(120), reason }),
+  'platform.textingCampaignWording': define('Set the campaign description, samples, use case and stay-text coverage for one carrier brand, any time before its campaign is filed. Changing stay-text coverage clears the policy confirmation, so the SMS terms are confirmed again before filing.', true, {
+    operationKey, workspaceId, carrierBrandId: z.uuid(), campaign: campaignWording, reason }),
   'platform.textingConfirmPolicies': define('Record that the business’s website privacy policy and SMS terms are live. Carrier registration waits for this.', true, {
     operationKey, workspaceId, carrierBrandId: z.uuid(), privacyPolicyUrl: z.url().max(300), smsTermsUrl: z.url().max(300), reason }),
   'platform.textingSubmit': define('Start, or restart after correction, carrier registration for one carrier brand. In live mode each brand, campaign and number step also needs platform.textingApprove.', true, {

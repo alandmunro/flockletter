@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { lockWorkspace } from '../workspace-lock.js';
 import { requireCondition } from '../errors.js';
-import { registrationSteps, type RegistrationState, type RegistrationStep } from '../../shared/texting.js';
+import { registrationSteps, type CampaignUseCase, type RegistrationState, type RegistrationStep } from '../../shared/texting.js';
 import { businessRefusals, twilioBusiness, type TwilioBusinessType } from '../../shared/texting-business.js';
 import { audit, readSettings, type Interface } from './storage.js';
 import { registrationRank, type AccountCredentials, type BusinessProfile, type CredentialSeal, type ProvisionFacts, type Result, type TwilioPlatformPort } from './twilio.js';
@@ -21,10 +21,10 @@ export type RegistrationOptions = {
 };
 const gated: RegistrationStep[] = ['brand', 'campaign', 'number'];
 /** The business's own campaign description and samples, stored with the carrier brand profile. */
-function campaignWording(profile: Record<string, unknown>): { description: string; samples: string[] } | null {
-  const c = profile.campaign as { description?: unknown; samples?: unknown } | undefined;
+function campaignWording(profile: Record<string, unknown>): { description: string; samples: string[]; useCase: CampaignUseCase; stayTexts: boolean } | null {
+  const c = profile.campaign as { description?: unknown; samples?: unknown; useCase?: unknown; stayTexts?: unknown } | undefined;
   return c && typeof c.description === 'string' && Array.isArray(c.samples) && c.samples.length >= 2 && c.samples.every(x => typeof x === 'string')
-    ? { description: c.description, samples: c.samples as string[] } : null;
+    ? { description: c.description, samples: c.samples as string[], useCase: c.useCase === 'LOW_VOLUME' ? 'LOW_VOLUME' : 'MARKETING', stayTexts: c.stayTexts === true } : null;
 }
 export const operationKey = (registration: string, revision: number, step: RegistrationStep) => `sms-reg/${registration}/${revision}/${step}`;
 
@@ -110,6 +110,8 @@ export class TextingRegistration {
       if (step.state === 'rejected') return null;
       // The carrier must approve the brand before the campaign is filed.
       if (step.step === 'campaign' && !['APPROVED', 'VERIFIED'].includes(reg.brand_status ?? '')) return { kind: 'wait' as const, at: null };
+      // Wording changed after submit (platform.textingCampaignWording) clears the policy confirmation: file only once it is confirmed again.
+      if (step.step === 'campaign' && !(await sql.query('SELECT 1 FROM sms_carrier_brands WHERE id=$1 AND privacy_policy_confirmed_at IS NOT NULL AND sms_terms_confirmed_at IS NOT NULL', [reg.carrier_brand_id])).rowCount) return { kind: 'wait' as const, at: null };
       if (step.next_check_at && step.next_check_at > now) return { kind: 'wait' as const, at: step.next_check_at };
       if (step.state === 'held' || step.state === 'queued') {
         if (!await this.approval(sql, reg, step)) {
@@ -180,9 +182,11 @@ export class TextingRegistration {
       if (!signupUrl && platform.mode === 'live') return { outcome: 'rejected', reason: 'signup_page_missing' };
       const optIn = signupUrl ? ` Sign-up page: ${signupUrl}. The SMS box appears there once this campaign's number is active; until then the same form with the SMS box can be viewed at ${signupUrl}?preview=sms.` : '';
       const policies = p.privacyPolicyUrl && p.smsTermsUrl ? ` SMS terms: ${p.smsTermsUrl}. Privacy policy: ${p.privacyPolicyUrl}.` : '';
+      const stay = wording?.stayTexts ? ` The same checkbox also covers texts about the subscriber's own booked stays (arrival details, check-in and checkout reminders). Stay texts go only to subscribers who opted in this way and confirmed with YES.` : '';
       return platform.submitCampaign(account, op, facts('messaging_service')!.sid, facts('brand')!.sid, {
+      useCase: wording?.useCase ?? 'MARKETING',
       description: wording?.description ?? `${name} sends marketing texts (offers, events and updates) to customers who opted in on ${name}'s Flockletter-hosted sign-up page.`,
-      messageFlow: `Customers opt in on ${name}'s hosted sign-up page by checking an optional, unchecked SMS box that shows the program name, message frequency, "Msg & data rates may apply", STOP and HELP instructions, and links to the privacy policy and SMS terms. They then reply YES to a confirmation text before any other message.${optIn}${policies}`,
+      messageFlow: `Customers opt in on ${name}'s hosted sign-up page by checking an optional, unchecked SMS box that shows the program name, message frequency, "Msg & data rates may apply", STOP and HELP instructions, and links to the privacy policy and SMS terms. They then reply YES to a confirmation text before any other message.${stay}${optIn}${policies}`,
       samples: wording?.samples ?? [`${name}: This week only, 15% off in store. Reply STOP to opt out.`, `${name}: Our spring hours start Monday, 9am-6pm. Reply STOP to opt out.`],
       optInMessage: `${name}: Reply YES to confirm you want texts from us. Msg & data rates may apply. Reply STOP to opt out.`,
       optOutMessage: `${name}: You are unsubscribed and will receive no more texts. Reply START to resubscribe.`,

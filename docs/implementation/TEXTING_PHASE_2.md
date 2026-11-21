@@ -299,6 +299,13 @@ Carrier vetting checks the opt-in, but the hosted sign-up page only shows the SM
 - The SMS box (live and preview) links the confirmed SMS terms and privacy policy.
 - The campaign's message flow names the sign-up page and its preview. A live campaign with no enabled sign-up page showing the phone field is refused as `signup_page_missing` before Twilio is called, so no campaign fee is spent on a filing reviewers can't verify.
 
+### Low Volume Mixed campaigns and stay texts (2026-11-21)
+
+- The campaign wording can set `useCase`: `MARKETING` (the default) or `LOW_VOLUME` (Twilio's Low Volume Mixed: about 2,000 segments a day on T-Mobile, $1.50 a month instead of $10). The adapter files it as `UsAppToPersonUsecase`.
+- `stayTexts: true` means the one sign-up checkbox also covers texts about the subscriber's booked stays. The checkbox then reads "Yes, text me offers, updates and info about my stays from ..." and consent is recorded as `sms-consent-stay-v1`. The campaign's message flow says so. Flockletter does not send stay texts yet; this only makes the opt-in and filing cover them.
+- `platform.textingCampaignWording` changes the wording any time before the campaign step is called (draft, rejected, or the campaign step still queued or held). Once the campaign has gone to the carrier it is refused as `campaign_already_filed`.
+- Changing `stayTexts` clears the policy confirmation, because the SMS terms must describe stay texts. The campaign step waits, even with an operator approval, until `platform.textingConfirmPolicies` is run again.
+
 ### Known limits (not hidden)
 
 - **Erasure of private texting routes.** Public `sms_*` tables are erased with the workspace (they are runtime tables). The private `texting_*` route, account and short-name rows are not yet in the retention executor's private list; that needs the executor and its role grants updated together.
