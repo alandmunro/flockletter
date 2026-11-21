@@ -83,6 +83,14 @@ describe('live adapter business profile', () => {
     }
     expect(posts.map(p => p.get('UsAppToPersonUsecase'))).toEqual(['LOW_VOLUME', 'MARKETING']);
   });
+  it('reads an approved brand whose errors field is null, as Twilio sends it', async () => {
+    const fakeFetch = (async () => new Response(JSON.stringify({ sid: 'BN' + '8'.repeat(32), status: 'APPROVED', identity_status: 'VETTED_VERIFIED', failure_reason: null, errors: null }),
+      { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const platform = new TwilioHttpPlatform({ user: 'SK' + '0'.repeat(32), secret: 'synthetic', accountSid: 'AC' + '0'.repeat(32) },
+      { secondaryProfile: 'RN' + '1'.repeat(32), a2pProfile: 'RN' + '2'.repeat(32), primaryProfileSid: 'BU' + '3'.repeat(32) }, fakeFetch);
+    const account: AccountCredentials = { accountSid: 'AC' + '4'.repeat(32), keySid: 'SK' + '5'.repeat(32), keySecret: 'synthetic', authToken: 'synthetic' };
+    await expect(platform.status('brand', account, 'BN' + '8'.repeat(32))).resolves.toEqual({ outcome: 'accepted', value: { status: 'APPROVED' } });
+  });
   it('keeps short names and shortens long ones the same way every time', () => {
     expect(twilioName('sms-reg/abc/1/number')).toBe('sms-reg/abc/1/number');
     const long = 'sms-reg/b01f8848-5818-4d53-b554-1e89fd55dc58/1/customer_profile/address';
