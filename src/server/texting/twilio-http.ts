@@ -149,7 +149,7 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
     const found = await this.find('campaign', account, op, serviceSid);
     if (found.outcome !== 'not_submitted') return found;
     const r = await request(this.call, this.auth(account), 'POST', `${messaging}/Services/${serviceSid}/Compliance/Usa2p`, {
-      BrandRegistrationSid: brandSid, Description: c.description, MessageFlow: c.messageFlow, MessageSamples: c.samples, UsAppToPersonUsecase: 'MARKETING',
+      BrandRegistrationSid: brandSid, Description: c.description, MessageFlow: c.messageFlow, MessageSamples: c.samples, UsAppToPersonUsecase: c.useCase,
       HasEmbeddedLinks: String(c.hasLinks), HasEmbeddedPhone: 'false', OptInMessage: c.optInMessage, OptOutMessage: c.optOutMessage, HelpMessage: c.helpMessage,
       OptInKeywords: ['YES'], OptOutKeywords: ['STOP'], HelpKeywords: ['HELP'] }).catch(() => null);
     if (!r) return { outcome: 'unknown' };

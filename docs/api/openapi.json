@@ -1110,6 +1110,16 @@
                           "minLength": 20,
                           "maxLength": 1024
                         }
+                      },
+                      "useCase": {
+                        "type": "string",
+                        "enum": [
+                          "MARKETING",
+                          "LOW_VOLUME"
+                        ]
+                      },
+                      "stayTexts": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -1138,6 +1148,108 @@
                   "entityType",
                   "profile",
                   "helpContact",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Exact case-scoped operator result."
+          },
+          "403": {
+            "description": "Separate operator organization, named membership, recent two-factor verification and exact case required."
+          },
+          "409": {
+            "description": "Changed action, version, review or protected evidence."
+          },
+          "503": {
+            "description": "Required protected operator configuration is missing."
+          }
+        }
+      }
+    },
+    "/api/operator/v1/commands/platform.textingCampaignWording": {
+      "post": {
+        "operationId": "platform_textingCampaignWording",
+        "summary": "Set the campaign description, samples, use case and stay-text coverage for one carrier brand, any time before its campaign is filed. Changing stay-text coverage clears the policy confirmation, so the SMS terms are confirmed again before filing.",
+        "security": [
+          {
+            "operatorSession": []
+          }
+        ],
+        "x-operator-mfa-required": true,
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "operationKey": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^org_[A-Za-z0-9_-]{1,120}$"
+                  },
+                  "carrierBrandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "campaign": {
+                    "type": "object",
+                    "properties": {
+                      "description": {
+                        "type": "string",
+                        "minLength": 40,
+                        "maxLength": 4096
+                      },
+                      "samples": {
+                        "minItems": 2,
+                        "maxItems": 5,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 20,
+                          "maxLength": 1024
+                        }
+                      },
+                      "useCase": {
+                        "type": "string",
+                        "enum": [
+                          "MARKETING",
+                          "LOW_VOLUME"
+                        ]
+                      },
+                      "stayTexts": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "description",
+                      "samples"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 12,
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "operationKey",
+                  "workspaceId",
+                  "carrierBrandId",
+                  "campaign",
                   "reason"
                 ],
                 "additionalProperties": false

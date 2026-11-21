@@ -21,7 +21,7 @@ import { TextingRegistration, signupPage } from '../src/server/texting/registrat
 import express from 'express';
 import { customerAudienceRoutes } from '../src/server/customer-audience/routes.js';
 import { twilioSignature, verifyTwilioSignature } from '../src/server/texting/twilio.js';
-import { encodeText, normalizeUsPhone, composeBroadcast } from '../src/shared/texting.js';
+import { encodeText, normalizeUsPhone, composeBroadcast, smsConsentWording, smsConsentPolicyVersion } from '../src/shared/texting.js';
 import { textingPlatformCommands, type TextingPlatformCommand } from '../src/shared/texting-platform.js';
 import type { Connection } from '../src/shared/contracts.js';
 
@@ -597,6 +597,52 @@ describe('live registration wording', () => {
     await expect(submit()).resolves.toMatchObject({ state: 'provisioning' });
     const stored = (await rows<{ profile: { campaign: unknown; businessType: string } }>(w, 'SELECT profile FROM sms_carrier_brands WHERE id=$1', [created.carrierBrandId]))[0]!;
     expect(stored.profile).toMatchObject({ campaign: wording, businessType: 'Limited Liability Corporation' });
+    await db.tenant(w, sql => sql.query(`UPDATE sms_registrations SET state='draft' WHERE id=$1`, [created.registrationId]));
+  });
+  it('widens the checkbox wording and its policy version when the campaign covers stay texts', () => {
+    expect(smsConsentWording('Synthetic D', 4)).toMatch(/^Yes, text me offers and updates from Synthetic D\./);
+    expect(smsConsentWording('Synthetic D', 4, true)).toMatch(/^Yes, text me offers, updates and info about my stays from Synthetic D\. Up to 4 msgs\/month\./);
+    expect([smsConsentPolicyVersion(), smsConsentPolicyVersion(true)]).toEqual(['sms-consent-v1', 'sms-consent-stay-v1']);
+  });
+  it('changes campaign wording after submit, holds the campaign until the SMS terms are confirmed again, and refuses once filed', async () => {
+    const w = A.workspaceId;
+    const companyId = randomUUID();
+    await db.tenant(w, sql => sql.query(`INSERT INTO companies(workspace_id,id,name,is_default) VALUES($1,$2,'Synthetic D',false)`, [w, companyId]));
+    const created = await op<{ carrierBrandId: string; registrationId: string }>('platform.textingCarrierBrand', { workspaceId: w, companyId, legalName: 'Synthetic D LLC', dbaName: 'Synthetic D', entityType: 'private_profit', profile: { ...profile, vertical: 'HOSPITALITY' }, campaign: wording, helpContact: 'help@example.com', reason: 'Synthetic campaign wording change.' });
+    const confirm = () => op('platform.textingConfirmPolicies', { workspaceId: w, carrierBrandId: created.carrierBrandId, privacyPolicyUrl: 'https://example.com/privacy', smsTermsUrl: 'https://example.com/sms-terms', reason: 'Synthetic policies are live.' });
+    await confirm();
+    const mock = texting.registration.options.platform;
+    const calls: string[] = [];
+    const livePlatform = new Proxy(mock, { get(target, name, receiver) {
+      if (name === 'mode') return 'live';
+      const value = Reflect.get(target, name, receiver) as unknown;
+      return typeof value === 'function' ? (...args: unknown[]) => { calls.push(String(name)); return (value as (...a: unknown[]) => unknown).apply(target, args); } : value;
+    } });
+    const live = new TextingRegistration({ ...texting.registration.options, platform: livePlatform });
+    await expect(db.tenant(w, sql => live.submit(sql, w, created.registrationId, 'user_operator', 'operator_api'))).resolves.toMatchObject({ state: 'provisioning' });
+    const stay = { ...wording, useCase: 'LOW_VOLUME', stayTexts: true };
+    const change = (campaign: Record<string, unknown>) => op<{ policiesCleared: boolean }>('platform.textingCampaignWording', { workspaceId: w, carrierBrandId: created.carrierBrandId, campaign, reason: 'Cover stay texts on a Low Volume Mixed campaign.' });
+    await expect(change(stay)).resolves.toMatchObject({ policiesCleared: true });
+    const stored = (await rows<{ profile: { campaign: unknown }; terms: Date | null }>(w, 'SELECT profile,sms_terms_confirmed_at terms FROM sms_carrier_brands WHERE id=$1', [created.carrierBrandId]))[0]!;
+    expect(stored).toMatchObject({ profile: { campaign: stay }, terms: null });
+    // Same coverage again: wording changes, confirmation is kept.
+    await confirm();
+    await expect(change({ ...stay, samples: [...stay.samples, 'Synthetic D: Your check-in code arrives the morning of arrival. Reply STOP to opt out.'] })).resolves.toMatchObject({ policiesCleared: false });
+    await expect(change(wording)).resolves.toMatchObject({ policiesCleared: true });
+    await change(stay);
+    // Brand approved and earlier steps done: the campaign still waits while the terms are unconfirmed, even with an approval.
+    const reg = (await rows<{ revision: number }>(w, 'SELECT revision FROM sms_registrations WHERE id=$1', [created.registrationId]))[0]!;
+    await db.tenant(w, async sql => {
+      await sql.query(`UPDATE sms_registrations SET brand_status='APPROVED',state='brand_pending' WHERE id=$1`, [created.registrationId]);
+      await sql.query(`UPDATE sms_registration_steps SET state='done' WHERE registration_id=$1 AND revision=$2 AND step IN ('subaccount','customer_profile','brand','messaging_service')`, [created.registrationId, reg.revision]);
+      await sql.query(`INSERT INTO sms_operator_approvals(workspace_id,id,registration_id,revision,step,cost_note,approved_by) VALUES($1,$2,$3,$4,'campaign','Synthetic','user_operator')`, [w, randomUUID(), created.registrationId, reg.revision]);
+    });
+    await expect(live.advance(w, created.registrationId)).resolves.toBeNull();
+    expect(calls).not.toContain('submitCampaign');
+    expect((await rows<{ state: string }>(w, `SELECT state FROM sms_registration_steps WHERE registration_id=$1 AND revision=$2 AND step='campaign'`, [created.registrationId, reg.revision]))[0]!.state).toBe('queued');
+    // Once the campaign has gone to the carrier, its wording is fixed.
+    await db.tenant(w, sql => sql.query(`UPDATE sms_registration_steps SET state='calling' WHERE registration_id=$1 AND revision=$2 AND step='campaign'`, [created.registrationId, reg.revision]));
+    await expect(change(stay)).rejects.toMatchObject({ code: 'campaign_already_filed' });
     await db.tenant(w, sql => sql.query(`UPDATE sms_registrations SET state='draft' WHERE id=$1`, [created.registrationId]));
   });
 });

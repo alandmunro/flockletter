@@ -65,6 +65,24 @@ describe('live adapter business profile', () => {
     for (const name of names) expect(name.length).toBeLessThanOrEqual(64);
     expect(names).toContain(twilioName(op + '/address'));
   });
+  it('files the campaign with its use case, Low Volume Mixed or Marketing', async () => {
+    const posts: URLSearchParams[] = [];
+    const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if ((init?.method ?? 'GET') === 'GET') return new Response(JSON.stringify({ compliance: [], meta: { next_page_url: null } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      posts.push(new URLSearchParams(String(init?.body ?? '')));
+      return new Response(JSON.stringify({ sid: 'QE' + randomBytes(16).toString('hex'), campaign_status: 'IN_PROGRESS' }), { status: 201, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    const platform = new TwilioHttpPlatform({ user: 'SK' + '0'.repeat(32), secret: 'synthetic', accountSid: 'AC' + '0'.repeat(32) },
+      { secondaryProfile: 'RN' + '1'.repeat(32), a2pProfile: 'RN' + '2'.repeat(32), primaryProfileSid: 'BU' + '3'.repeat(32) }, fakeFetch);
+    const account: AccountCredentials = { accountSid: 'AC' + '4'.repeat(32), keySid: 'SK' + '5'.repeat(32), keySecret: 'synthetic', authToken: 'synthetic' };
+    const input = { description: 'Synthetic texts about open dates and booked stays.', messageFlow: 'Sign-up page checkbox.', samples: ['Sample one text here.', 'Sample two text here.'],
+      optInMessage: 'Reply YES', optOutMessage: 'Unsubscribed', helpMessage: 'Help', hasLinks: true };
+    for (const useCase of ['LOW_VOLUME', 'MARKETING'] as const) {
+      const result = await platform.submitCampaign(account, `sms-reg/x/1/campaign-${useCase}`, 'MG' + '6'.repeat(32), 'BN' + '7'.repeat(32), { ...input, useCase });
+      expect(result.outcome).toBe('accepted');
+    }
+    expect(posts.map(p => p.get('UsAppToPersonUsecase'))).toEqual(['LOW_VOLUME', 'MARKETING']);
+  });
   it('keeps short names and shortens long ones the same way every time', () => {
     expect(twilioName('sms-reg/abc/1/number')).toBe('sms-reg/abc/1/number');
     const long = 'sms-reg/b01f8848-5818-4d53-b554-1e89fd55dc58/1/customer_profile/address';

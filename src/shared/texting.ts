@@ -157,8 +157,11 @@ export type RegistrationStep = typeof registrationSteps[number];
 export const consentStates = ['none', 'pending_confirmation', 'opted_in', 'opted_out', 'pending_reenrollment'] as const;
 export type ConsentState = typeof consentStates[number];
 /** The exact SMS checkbox wording recorded as consent evidence (CON-2). */
-export const smsConsentWording = (business: string, perMonth: number) =>
-  `Yes, text me offers and updates from ${business}. Up to ${perMonth} msgs/month. Msg & data rates may apply. Reply STOP to opt out, HELP for help. Consent is not a condition of purchase.`;
-export const smsConsentPolicyVersion = 'sms-consent-v1';
+export const smsConsentWording = (business: string, perMonth: number, stayTexts = false) =>
+  `Yes, text me offers${stayTexts ? ', updates and info about my stays' : ' and updates'} from ${business}. Up to ${perMonth} msgs/month. Msg & data rates may apply. Reply STOP to opt out, HELP for help. Consent is not a condition of purchase.`;
+export const smsConsentPolicyVersion = (stayTexts = false) => stayTexts ? 'sms-consent-stay-v1' : 'sms-consent-v1';
+/** Twilio A2P campaign use cases Flockletter files. MARKETING is the default; LOW_VOLUME is Low Volume Mixed. */
+export const campaignUseCases = ['MARKETING', 'LOW_VOLUME'] as const;
+export type CampaignUseCase = typeof campaignUseCases[number];
 export const confirmationText = (business: string) => `${business}: Reply YES to confirm you want texts from us. Msg & data rates may apply. Reply STOP to opt out.`;
 export const helpText = (business: string, contact: string) => `${business}: For help contact ${contact}. Reply STOP to opt out.`;

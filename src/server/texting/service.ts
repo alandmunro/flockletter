@@ -365,7 +365,9 @@ export class Texting {
     const settings = await readSettings(sql, w);
     if (settings.contact_monthly_limit === undefined || settings.unconfirmed_expiry_days === undefined) return null;
     const business = await businessName(sql, company.company_id);
-    return { companyId: company.company_id, wording: smsConsentWording(business, settings.contact_monthly_limit), business, expiryDays: settings.unconfirmed_expiry_days,
+    // A brand whose campaign covers stay texts shows (and records) the wider checkbox wording.
+    const stayTexts = (await sql.query<{ stay: boolean | null }>(`SELECT (profile->'campaign'->>'stayTexts')::boolean stay FROM sms_carrier_brands WHERE company_id=$1`, [company.company_id])).rows[0]?.stay === true;
+    return { companyId: company.company_id, wording: smsConsentWording(business, settings.contact_monthly_limit, stayTexts), policyVersion: smsConsentPolicyVersion(stayTexts), business, expiryDays: settings.unconfirmed_expiry_days,
       smsTermsUrl: links?.sms_terms_url ?? null, privacyPolicyUrl: links?.privacy_policy_url ?? null };
   }
   async recordSignup(sql: Sql, w: string, brandId: string, subscriberId: string | null, input: { phone?: string; smsConsent?: boolean; wordingShown?: string; birthday?: { month: number; day: number }; anniversary?: { month: number; day: number; year?: number } }) {
@@ -384,9 +386,9 @@ export class Texting {
       const wordingDigest = createHash('sha256').update(offer.wording).digest('hex');
       if (current === 'opted_out' || current === 'pending_reenrollment') {
         // Phase 2 never clears a carrier opt-out by API; the contact must text START (CON-6).
-        await setConsent(sql, w, offer.companyId, contactId, 'pending_reenrollment', 'reenrollment_pending', 'signup_page', 'subscriber', 'signup_page', { wording: offer.wording, wordingDigest, policyVersion: smsConsentPolicyVersion });
+        await setConsent(sql, w, offer.companyId, contactId, 'pending_reenrollment', 'reenrollment_pending', 'signup_page', 'subscriber', 'signup_page', { wording: offer.wording, wordingDigest, policyVersion: offer.policyVersion });
       } else if (current !== 'opted_in') {
-        await setConsent(sql, w, offer.companyId, contactId, 'pending_confirmation', 'checkbox_opt_in', 'signup_page', 'subscriber', 'signup_page', { wording: offer.wording, wordingDigest, policyVersion: smsConsentPolicyVersion, pendingDays: offer.expiryDays });
+        await setConsent(sql, w, offer.companyId, contactId, 'pending_confirmation', 'checkbox_opt_in', 'signup_page', 'subscriber', 'signup_page', { wording: offer.wording, wordingDigest, policyVersion: offer.policyVersion, pendingDays: offer.expiryDays });
         await queueText(sql, w, { companyId: offer.companyId, contactId, purpose: 'confirmation', to: phone!, body: confirmationText(offer.business) });
       }
     } else if (contactId && offer) {
@@ -530,6 +532,24 @@ export class Texting {
           await sql.query(`INSERT INTO sms_registrations(workspace_id,id,carrier_brand_id,state) VALUES($1,$2,$3,'draft')`, [p.workspaceId, registrationId, id]);
           await audit(sql, p.workspaceId, actor, operator.via, 'carrier_brand.create', id, null, { company: p.companyId, legalName: p.legalName, reason: p.reason });
           return { carrierBrandId: id, registrationId };
+        });
+      }
+      case 'platform.textingCampaignWording': {
+        const p = input as unknown as { workspaceId: string; carrierBrandId: string; campaign: { description: string; samples: string[]; useCase?: 'MARKETING' | 'LOW_VOLUME'; stayTexts?: boolean }; reason: string };
+        return write(p.workspaceId, async sql => {
+          const brand = (await sql.query<{ id: string; profile: { campaign?: { stayTexts?: boolean } } }>('SELECT id,profile FROM sms_carrier_brands WHERE id=$1 FOR UPDATE', [p.carrierBrandId])).rows[0];
+          requireCondition(brand, 404, 'not_found', 'This carrier brand is unavailable.');
+          // Once the campaign has been sent to the carrier its wording is fixed; a change needs a new campaign.
+          const filed = (await sql.query(`SELECT 1 FROM sms_registrations r JOIN sms_registration_steps s ON s.registration_id=r.id AND s.revision=r.revision AND s.step='campaign'
+            WHERE r.carrier_brand_id=$1 AND r.state NOT IN ('draft','rejected') AND s.state NOT IN ('queued','held')`, [brand.id])).rowCount;
+          requireCondition(!filed, 409, 'campaign_already_filed', 'This campaign has already been sent to the carrier. Its wording can no longer change.');
+          const stayChanged = (brand.profile.campaign?.stayTexts === true) !== (p.campaign.stayTexts === true);
+          // Stay-text coverage changes what the SMS terms must say, so they are confirmed again before filing.
+          await sql.query(`UPDATE sms_carrier_brands SET profile=profile||jsonb_build_object('campaign',$2::jsonb),updated_at=clock_timestamp(),
+            privacy_policy_confirmed_at=CASE WHEN $3 THEN NULL ELSE privacy_policy_confirmed_at END,sms_terms_confirmed_at=CASE WHEN $3 THEN NULL ELSE sms_terms_confirmed_at END WHERE id=$1`,
+            [brand.id, JSON.stringify(p.campaign), stayChanged]);
+          await audit(sql, p.workspaceId, actor, operator.via, 'carrier_brand.campaign_wording', brand.id, { campaign: brand.profile.campaign ?? null }, { campaign: p.campaign, policiesCleared: stayChanged, reason: p.reason });
+          return { carrierBrandId: brand.id, policiesCleared: stayChanged };
         });
       }
       case 'platform.textingConfirmPolicies': {
