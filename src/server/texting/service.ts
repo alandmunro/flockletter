@@ -346,9 +346,20 @@ export class Texting {
     if (this.options.mode === 'off') return null;
     const profile = await this.profile(sql);
     if (!profile || (!profile.phone_field && !profile.birthday_field && !profile.anniversary_field)) return null;
-    const offer = profile.phone_field ? await this.smsOffer(sql, w, brandId, smsPreview) : null;
+    let offer = profile.phone_field ? await this.smsOffer(sql, w, brandId, smsPreview) : null;
+    // While carrier registration is under way the live page shows the same SMS box greyed out, with its disclosures and
+    // policy links, so carrier vetting (which reads this page) sees the opt-in. It cannot be ticked and records nothing.
+    let pending = false;
+    if (profile.phone_field && !offer && !smsPreview && await this.registrationUnderway(sql, brandId)) {
+      offer = await this.smsOffer(sql, w, brandId, true);
+      pending = offer !== null;
+    }
     return { phone: profile.phone_field, birthday: profile.birthday_field, anniversary: profile.anniversary_field, anniversaryLabel: profile.anniversary_label,
-      smsWording: offer?.wording ?? null, smsTermsUrl: offer?.smsTermsUrl ?? null, privacyPolicyUrl: offer?.privacyPolicyUrl ?? null };
+      smsWording: offer?.wording ?? null, smsTermsUrl: offer?.smsTermsUrl ?? null, privacyPolicyUrl: offer?.privacyPolicyUrl ?? null, ...(pending ? { smsPending: true } : {}) };
+  }
+  private async registrationUnderway(sql: Sql, brandId: string) {
+    return Boolean((await sql.query(`SELECT 1 FROM company_brands cb JOIN sms_carrier_brands c ON c.company_id=cb.company_id JOIN sms_registrations r ON r.carrier_brand_id=c.id
+      WHERE cb.brand_id=$1 AND r.state IN ('provisioning','brand_pending','campaign_pending','rejected')`, [brandId])).rowCount);
   }
   /**
    * The SMS checkbox shows only when the brand's company has an approved number. `preview` drops that one condition
@@ -565,6 +576,11 @@ export class Texting {
       case 'platform.textingSubmit': {
         const p = input as unknown as { workspaceId: string; registrationId: string };
         const result = await write(p.workspaceId, sql => this.registration.submit(sql, p.workspaceId, p.registrationId, actor, operator.via));
+        await this.wake(p.workspaceId); return result;
+      }
+      case 'platform.textingCampaignResubmitted': {
+        const p = input as unknown as { workspaceId: string; registrationId: string };
+        const result = await write(p.workspaceId, sql => this.registration.campaignResubmitted(sql, p.workspaceId, p.registrationId, actor, operator.via));
         await this.wake(p.workspaceId); return result;
       }
       case 'platform.textingApprove': {

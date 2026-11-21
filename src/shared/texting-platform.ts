@@ -45,6 +45,8 @@ export const textingPlatformCommands = {
     operationKey, workspaceId, registrationId: z.uuid(), reason }),
   'platform.textingApprove': define('Live mode only: approve one real carrier or cost action (brand, campaign or number) for the current registration revision.', true, {
     operationKey, workspaceId, registrationId: z.uuid(), step: z.enum(['brand', 'campaign', 'number']), costNote: text(200), reason }),
+  'platform.textingCampaignResubmitted': define('Record that a FAILED campaign was edited and resubmitted in the Twilio Console (same campaign, no new vetting fee). Registration goes back to waiting on its status.', true, {
+    operationKey, workspaceId, registrationId: z.uuid(), reason }),
   'platform.textingRegistration': define('Read registration state, every step with its operation key, and numbers for one workspace.', false, { workspaceId }),
   'platform.textingProcess': define('Run one texting worker pass for a workspace now.', true, { operationKey, workspaceId }),
   'platform.textingMock': define('Staging mock only: script provider faults, decide brand or campaign status, deliver queued callbacks, or receive a text from a phone.', true, {

@@ -151,7 +151,9 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
     const r = await request(this.call, this.auth(account), 'POST', `${messaging}/Services/${serviceSid}/Compliance/Usa2p`, {
       BrandRegistrationSid: brandSid, Description: c.description, MessageFlow: c.messageFlow, MessageSamples: c.samples, UsAppToPersonUsecase: c.useCase,
       HasEmbeddedLinks: String(c.hasLinks), HasEmbeddedPhone: 'false', OptInMessage: c.optInMessage, OptOutMessage: c.optOutMessage, HelpMessage: c.helpMessage,
-      OptInKeywords: ['YES'], OptOutKeywords: ['STOP'], HelpKeywords: ['HELP'] }).catch(() => null);
+      OptInKeywords: ['YES'], OptOutKeywords: ['STOP'], HelpKeywords: ['HELP'],
+      // Twilio's automated check rejects a campaign without these fields (30908, 30882), even when the message flow links the pages.
+      ...(c.privacyPolicyUrl ? { PrivacyPolicyUrl: c.privacyPolicyUrl } : {}), ...(c.termsUrl ? { TermsAndConditionsUrl: c.termsUrl } : {}) }).catch(() => null);
     if (!r) return { outcome: 'unknown' };
     if (r.status !== 201 && r.status !== 200) return failed(r);
     const campaign = z.object({ sid: sid('QE'), campaign_status: z.string().nullable() }).safeParse(r.json);
