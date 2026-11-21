@@ -19,6 +19,9 @@ import type { AudienceSettingsView } from '../src/shared/customer-audience.js';
 import { Texting, type OperatorActor } from '../src/server/texting/service.js';
 import { TextingRegistration, signupPage } from '../src/server/texting/registration.js';
 import express from 'express';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { SignupFields } from '../src/shared/SignupPostcard.js';
 import { customerAudienceRoutes } from '../src/server/customer-audience/routes.js';
 import { twilioSignature, verifyTwilioSignature } from '../src/server/texting/twilio.js';
 import { encodeText, normalizeUsPhone, composeBroadcast, smsConsentWording, smsConsentPolicyVersion } from '../src/shared/texting.js';
@@ -339,11 +342,16 @@ describe('FL-AT-043 consent', () => {
       const live = await texting.smsOffer(sql, w, brandId);
       const preview = await texting.smsOffer(sql, w, brandId, true);
       const page = await signupPage(sql, companyId, 'http://127.0.0.1:4310');
+      // Registration under way: the live page shows the same box greyed out, so carrier vetting sees the opt-in.
+      const pendingView = await texting.signupView(sql, w, brandId);
+      await sql.query(`UPDATE sms_registrations SET state='draft'`);
+      const draftView = await texting.signupView(sql, w, brandId);
+      await sql.query(`UPDATE sms_registrations SET state='campaign_pending'`);
       await sql.query(`UPDATE sms_workspace_profile SET phone_field=false`);
       const noPhone = await signupPage(sql, companyId, 'http://127.0.0.1:4310');
       const brandContext = (await sql.query<{ v: string | null }>("SELECT current_setting('app.intake_brand_id', true) v")).rows[0]!.v;
       await sql.query('ROLLBACK TO SAVEPOINT preview');
-      return { unconfirmed, live, preview, page, noPhone, brandContext };
+      return { unconfirmed, live, preview, page, noPhone, brandContext, pendingView, draftView };
     });
     expect(offers.unconfirmed).toBeNull(); // the preview needs the confirmed policies
     expect(offers.live).toBeNull();
@@ -352,6 +360,15 @@ describe('FL-AT-043 consent', () => {
     expect(offers.page).toBe(status.signupUrl);
     expect(offers.noPhone).toBeNull(); // no phone field, no SMS box to show carriers
     expect(offers.brandContext ?? '').toBe(''); // the lookup clears the brand context it set
+    expect(offers.pendingView).toMatchObject({ smsPending: true, smsWording: offers.preview!.wording, smsTermsUrl: terms, privacyPolicyUrl: privacy });
+    expect(offers.draftView).toMatchObject({ smsWording: null });
+    expect(offers.draftView).not.toHaveProperty('smsPending');
+    const pendingHtml = renderToStaticMarkup(createElement(SignupFields, { consent: 'Email me.', version: 'v1', texting: offers.pendingView! }));
+    expect(pendingHtml).toMatch(/<input type="checkbox" disabled="" name="smsConsent"/);
+    expect(pendingHtml).not.toContain('name="smsWording"'); // nothing to record as consent
+    expect(pendingHtml).toContain('Text messages start soon');
+    expect(pendingHtml).toContain(`href="${terms}"`);
+    expect(pendingHtml).toMatch(/<button[^>]*type="submit"/); // email sign-up still works
     // Over HTTP (the number is active again here): the slug route keeps ?preview=sms, submitting is off, links show.
     await db.tenant(w, sql => sql.query(`UPDATE sms_carrier_brands SET profile=profile||jsonb_build_object('smsTermsUrl',$2::text,'privacyPolicyUrl',$3::text),
       sms_terms_confirmed_at=now(), privacy_policy_confirmed_at=now() WHERE company_id=$1`, [companyId, terms, privacy]));

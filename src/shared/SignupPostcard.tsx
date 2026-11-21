@@ -41,7 +41,9 @@ export function SignupPostcard({
     </div>
   );
 }
-export type SignupTexting = { phone: boolean; birthday: boolean; anniversary: boolean; anniversaryLabel: string; smsWording: string | null; smsTermsUrl?: string | null; privacyPolicyUrl?: string | null };
+export type SignupTexting = { phone: boolean; birthday: boolean; anniversary: boolean; anniversaryLabel: string; smsWording: string | null; smsTermsUrl?: string | null; privacyPolicyUrl?: string | null;
+  /** Registration under way: the SMS box is shown greyed out with its disclosures and cannot be ticked. */
+  smsPending?: boolean };
 const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 function MonthDay({ prefix, label, year = false }: { prefix: string; label: string; year?: boolean }) {
   return (
@@ -71,10 +73,13 @@ function TextingFields({ texting }: { texting: SignupTexting }) {
       )}
       {texting.phone && texting.smsWording && (
         <label className="postcard-consent">
-          <input type="checkbox" name="smsConsent" value="yes" />
+          <input type="checkbox" name="smsConsent" value="yes" disabled={texting.smsPending} />
           {texting.smsWording}
-          <input type="hidden" name="smsWording" value={texting.smsWording} />
+          {!texting.smsPending && <input type="hidden" name="smsWording" value={texting.smsWording} />}
         </label>
+      )}
+      {texting.phone && texting.smsWording && texting.smsPending && (
+        <p className="postcard-consent-links">Text messages start soon. This box can be ticked once texting is live.</p>
       )}
       {texting.phone && texting.smsWording && (texting.smsTermsUrl || texting.privacyPolicyUrl) && (
         <p className="postcard-consent-links">
