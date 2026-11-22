@@ -338,6 +338,22 @@ it('reconciles live confirmation delivery without resending and requires real co
   expect(await db.brand(a.workspace,a.brand,sql=>productionConsentEligibleBatch(sql,[subscriber]))).toEqual([subscriber]);
 });
 
+it('labels a sign-up from the framed form on the brand site as the embed channel (FL-BRD-002)', async () => {
+  const a = await setup();
+  const form = (await a.settings()).publicUrl!.split('/newsletter/')[1]!;
+  await a.customer.publicSignup(form, { email: 'framed@shop.com', consentAffirmed: true, policyVersion: 'v1', channel: 'embed' });
+  await a.customer.publicSignup(form, { email: 'hosted@shop.com', consentAffirmed: true, policyVersion: 'v1' });
+  const sources = await db.brand(a.workspace, a.brand, async (sql) => (await sql.query<{ email_normalized: string; source: string }>(
+    `SELECT s.email_normalized,e.source FROM subscriber_consent_events e JOIN subscribers s ON s.id=e.subscriber_id
+     WHERE e.event='signup_requested' ORDER BY s.email_normalized`)).rows);
+  expect(sources).toEqual([
+    { email_normalized: 'framed@shop.com', source: 'customer-embed-exercise-signup' },
+    { email_normalized: 'hosted@shop.com', source: 'customer-public-exercise-signup' },
+  ]);
+  // Both still wait for the same email confirmation.
+  expect((await a.settings()).messages).toHaveLength(2);
+});
+
 const delegatedImport = (brandId: string, address = 'delegated@retailer.test') => ({
   brandId,
   operationKey: randomUUID(),

@@ -1,0 +1,10 @@
+/* FL-BRD-002: compact framed sign-up form. Shares the postcard field styles. */
+.embed-page { margin:0; background:#fff }
+.signup-postcard.signup-embed { padding:2px 2px 8px; background:#fff; font-size:15px; line-height:1.5 }
+.signup-embed form { gap:14px }
+.signup-embed label.postcard-consent { font-size:13px; line-height:1.45 }
+.signup-embed .postcard-consent-links { font-size:13px }
+.signup-embed button { justify-self:stretch; border-radius:8px }
+.signup-embed h2 { margin:4px 0 8px; color:#4a0a1e; font:bold 20px/1.25 Arial,Helvetica,sans-serif }
+.signup-embed .embed-foot { margin:12px 0 0; color:#69515d; font-size:12px }
+.signup-embed .embed-error { margin:0 0 12px; padding:10px 12px; border:1px solid #b3261e; border-radius:6px; color:#8c1d18; background:#fdf0ef }
