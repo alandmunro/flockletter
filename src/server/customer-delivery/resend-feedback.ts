@@ -9,7 +9,17 @@ import {locked,deliveryRow} from './storage.js';
 import type {CustomerDeliveryWorker} from './worker.js';
 import {resendReceipt,resendReceiptMaxBytes,receiptTag,routeReceipt,type customerResendRuntime} from './resend.js';
 
-const eventSchema=z.object({type:z.string().max(80),created_at:z.iso.datetime({offset:true}),data:z.object({email_id:z.uuid(),from:z.string().max(420),to:z.array(z.email()).length(1),bounce:z.object({type:z.string().max(80)}).optional()})});
+const eventSchema=z.object({type:z.string().max(80),created_at:z.iso.datetime({offset:true}),data:z.object({email_id:z.uuid(),from:z.string().max(420),to:z.array(z.email()).length(1),bounce:z.object({type:z.string().max(80)}).optional(),
+ tags:z.union([z.record(z.string().max(256),z.string().max(256)),z.array(z.object({name:z.string().max(256),value:z.string().max(256)}))]).optional().catch(undefined)})});
+/**
+ * Resend delivers every account event to every webhook endpoint. Confirmation mail (and any other mail sent from the
+ * shared account) therefore reaches this endpoint too. Those events are not ours to settle; answering them with a
+ * non-2xx status makes Resend retry and eventually disable this endpoint, so they are acknowledged and ignored.
+ * Tags only classify the event as foreign here; they never grant authority over a delivery.
+ */
+export const signedEventTag=(tags:z.infer<typeof eventSchema>['data']['tags'],name:string)=>
+ Array.isArray(tags)?receiptTag(tags,name):tags&&Object.hasOwn(tags,name)?tags[name]!:'';
+const foreignTags=['fl_confirmation','fl_confirmation_route'],customerTags=['fl_kind','fl_operation','fl_route'];
 type Receipt=z.infer<typeof resendReceipt>;
 /** Signed provider event + independently retrieved receipt + frozen DB intent bind every fact. */
 export class CustomerResendFeedback {
@@ -40,7 +50,12 @@ export class CustomerResendFeedback {
   const event=eventSchema.parse(raw);
   const kind=event.type==='email.sent'||event.type==='email.failed'?'accepted':event.type==='email.delivered'?'delivered':event.type==='email.complained'?'complaint':event.type==='email.delivery_delayed'?'temporary_bounce':event.type==='email.bounced'?(event.data.bounce?.type==='Permanent'?'hard_bounce':'temporary_bounce'):null;
   if(!kind)return {received:true};
+  // Signed by Resend: a confirmation (or other non-customer) message is ignored before any provider read.
+  const payloadTags=event.data.tags;
+  if(payloadTags&&(foreignTags.some(name=>signedEventTag(payloadTags,name))||!customerTags.some(name=>signedEventTag(payloadTags,name))))return {received:true,ignored:true};
   const sent=await this.receipt(event.data.email_id),operation=receiptTag(sent.tags,'fl_operation'),fingerprint=receiptTag(sent.tags,'fl_route');
+  // Provider-authoritative fallback when the event carried no tags: mail that Flockletter never tagged as a customer delivery.
+  if(!sent.tags.some(t=>customerTags.includes(t.name)))return {received:true,ignored:true};
   let entry=this.runtime.entries.find(e=>e.route.fingerprint===fingerprint);
   if(!entry&&/^[a-f0-9]{64}$/.test(fingerprint)&&this.resolveRoute){const route=await this.resolveRoute(fingerprint);if(route){this.runtime.register(route,false);entry=this.runtime.entries.find(e=>e.route.fingerprint===fingerprint);}}
   requireCondition(entry&&sent.id===event.data.email_id&&z.uuid().safeParse(operation).success&&routeReceipt(sent,entry.route)&&

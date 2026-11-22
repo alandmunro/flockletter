@@ -79,3 +79,22 @@ it('resumes a throttled original submission only after its retry time and bills 
  expect((await f.rows()).person).toMatchObject({state:'accepted',message_id:finalId});
  expect((await f.billing.status(f.workspaceId)).usage.emails).toBe(1);
 });
+
+it('acknowledges confirmation and other non-customer mail from the shared Resend account without a provider read or state change',async()=>{
+ const f=await setup(),before=await f.rows();
+ const confirmation=signed({type:'email.delivered',created_at:new Date().toISOString(),data:{email_id:randomUUID(),from:'flockletter@confirm.example.com',to:['reader@shop.test'],
+  tags:{fl_confirmation:randomUUID(),fl_confirmation_route:'r'.repeat(43)}}});
+ await expect(f.feedback.receive(confirmation.body,confirmation.headers)).resolves.toMatchObject({received:true,ignored:true});
+ const untagged=signed({type:'email.sent',created_at:new Date().toISOString(),data:{email_id:randomUUID(),from:'other@app.example.com',to:['reader@shop.test'],tags:{campaign:'x'}}});
+ await expect(f.feedback.receive(untagged.body,untagged.headers)).resolves.toMatchObject({ignored:true});
+ expect(f.send).not.toHaveBeenCalled();
+ // No payload tags: the provider receipt decides, and an untagged receipt is foreign.
+ f.setReceipt({...f.receipt,tags:[]});const bare=signed(f.event());
+ await expect(f.feedback.receive(bare.body,bare.headers)).resolves.toMatchObject({ignored:true});
+ expect(await f.rows()).toEqual(before);
+ // A forged foreign tag on our own delivery event cannot redirect it: our receipt still needs full verification.
+ f.setReceipt({...f.receipt,tags:[...f.receipt.tags,{name:'fl_operation',value:randomUUID()}]});const tagged=signed({...f.event(),data:{...f.event().data,tags:{fl_kind:'customer'}}});
+ await expect(f.feedback.receive(tagged.body,tagged.headers)).rejects.toMatchObject({code:'delivery_feedback_unmapped'});
+ // A signature failure is still a failure, whatever the event claims to be.
+ await expect(f.feedback.receive(confirmation.body,{...confirmation.headers,'svix-signature':'bad'})).rejects.toMatchObject({code:'invalid_signature'});
+});

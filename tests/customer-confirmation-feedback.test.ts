@@ -150,3 +150,15 @@ it('commits a concurrent duplicate receipt once and exposes only its verified tr
  const status=await a.audience.execute('audienceOnboarding.status',{brandId:a.brand},a.actor) as {messages:{transport:unknown}[]};
  expect(status.messages[0]?.transport).toMatchObject({kind:'delivered'});expect(JSON.stringify(status)).not.toContain(a.message().routeToken);
 });
+it('acknowledges newsletter deliveries from other senders on the shared Resend account without a provider read',async()=>{
+ const a=await setup();
+ const newsletter=signed({type:'email.delivered',created_at:new Date().toISOString(),data:{email_id:randomUUID(),from:'"Alpine" <news@shop.example.test>',to:['reader@retailer.test'],tags:{fl_kind:'customer'}}});
+ await expect(a.feedback.receive(newsletter.body,newsletter.headers)).resolves.toMatchObject({received:true,ignored:true});
+ const odd=signed({type:'email.bounced',created_at:new Date().toISOString(),data:{email_id:randomUUID(),from:'not an address',to:['reader@retailer.test'],bounce:{type:'Permanent'}}});
+ await expect(a.feedback.receive(odd.body,odd.headers)).resolves.toMatchObject({ignored:true});
+ expect(a.fetches()).toBe(0);expect((await a.rows()).events).toHaveLength(0);expect((await a.rows()).person.state).toBe('pending');
+ await expect(a.feedback.receive(newsletter.body,{...newsletter.headers,'svix-signature':'bad'})).rejects.toMatchObject({code:'invalid_signature'});
+ // Our own sender, even with a display name, still goes through full provider verification.
+ const own=signed({...a.event(),data:{...a.event().data,from:'"Alpine" <'+sender+'>'}});await a.feedback.receive(own.body,own.headers);
+ expect(a.fetches()).toBe(1);expect((await a.rows()).job.state).toBe('accepted');
+});
