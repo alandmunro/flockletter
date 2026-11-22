@@ -1,0 +1,143 @@
+name: Deploy to staging
+run-name: Deploy to staging · ${{ inputs.request_id || 'manual' }}
+
+# Deploys ONE exact main commit, with passing release checks, to the Flockletter staging web service.
+# Dispatched from Mission Control (Tailscale-gated) or by hand. Like production promotion it never runs
+# database migrations: staging migrations use the protected release runner (docs/implementation/STAGING.md).
+#
+# Uses the repository secret RENDER_API_KEY. Optional variables: RENDER_STAGING_SERVICE_ID (defaults to the
+# staging service named in docs/implementation/STAGING.md) and FLOCKLETTER_STAGING_URL.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact 40-character main commit to deploy to staging
+        required: true
+        type: string
+      migrations_applied:
+        description: The protected staging migration for this commit was already applied
+        required: true
+        type: choice
+        default: 'false'
+        options: ['false', 'true']
+      request_id:
+        description: Mission Control release correlation ID (optional for manual runs)
+        required: false
+        type: string
+
+# Shares the production group so a staging deploy never changes staging under a running promotion.
+concurrency:
+  group: flockletter-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment:
+      name: staging
+      url: ${{ vars.FLOCKLETTER_STAGING_URL || 'https://flockletter-staging.onrender.com' }}
+    env:
+      SHA: ${{ inputs.sha }}
+      MIGRATIONS_APPLIED: ${{ inputs.migrations_applied }}
+      STAGING_URL: ${{ vars.FLOCKLETTER_STAGING_URL || 'https://flockletter-staging.onrender.com' }}
+      RENDER_STAGING_SERVICE_ID: ${{ vars.RENDER_STAGING_SERVICE_ID || 'srv-dbn5lb6gekts738v63ag' }}
+    steps:
+      - name: Validate release inputs
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::A full lowercase 40-character commit SHA is required."; exit 1; }
+          [[ "${MIGRATIONS_APPLIED}" =~ ^(true|false)$ ]] || { echo "::error::migrations_applied must be true or false."; exit 1; }
+          [[ -z "${REQUEST_ID}" || "${REQUEST_ID}" =~ ^[0-9a-f]{32}$ ]] || { echo "::error::request_id must be 32 hex characters."; exit 1; }
+          [[ "${RENDER_STAGING_SERVICE_ID}" =~ ^srv-[a-z0-9]{20}$ ]] || { echo "::error::RENDER_STAGING_SERVICE_ID is malformed."; exit 1; }
+
+      # Release tooling comes from the reviewed workflow commit; the candidate is only inspected with git.
+      - name: Check out the trusted release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+
+      - name: Check out the exact release commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Confirm the commit is on main
+        run: |
+          set -euo pipefail
+          [ "${GITHUB_REF}" = "refs/heads/main" ] || { echo "::error::Releases must be dispatched from main."; exit 1; }
+          [ "$(git -C candidate rev-parse HEAD)" = "${SHA}" ] || { echo "::error::Checkout did not resolve to the requested commit."; exit 1; }
+          git -C candidate merge-base --is-ancestor "${SHA}" origin/main || { echo "::error::The requested commit is not on main."; exit 1; }
+
+      - name: Require the release checks for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for workflow in ci.yml selfhost.yml; do
+            gh api "repos/${REPO}/actions/workflows/${workflow}/runs?head_sha=${SHA}&per_page=100" |
+              jq -e --arg sha "$SHA" --arg path ".github/workflows/$workflow" '
+                any(.workflow_runs[]; .head_sha == $sha and .path == $path and
+                  .status == "completed" and .conclusion == "success")
+              ' >/dev/null || { echo "::error::${workflow} requires a successful completed run for ${SHA}."; exit 1; }
+          done
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+
+      - name: Read the current staging commit
+        run: |
+          set -euo pipefail
+          # Free compute sleeps; a cold start can take a couple of minutes. An unreachable staging is still
+          # deployable (that may be what this release fixes), but then migrations cannot be ruled out.
+          version="$(curl -fsS --retry 5 --retry-all-errors --retry-delay 20 --max-time 120 "${STAGING_URL}/api/health/version" || echo null)"
+          echo "${version}" > staging-version.json
+          echo "staging_sha=$(jq -r '.buildSha // "unknown"' staging-version.json 2>/dev/null || echo unknown)"
+
+      - name: Require the protected migration when the schema changed
+        run: |
+          set -euo pipefail
+          staging_sha="$(jq -r '.buildSha // empty' staging-version.json 2>/dev/null || true)"
+          changed=unknown
+          if [[ "${staging_sha}" =~ ^[0-9a-f]{40}$ ]] && git -C candidate cat-file -e "${staging_sha}^{commit}" 2>/dev/null; then
+            if git -C candidate diff --quiet "${staging_sha}" "${SHA}" -- migrations; then changed=false; else changed=true; fi
+          fi
+          echo "staging_sha=${staging_sha:-unknown} migrations_changed=${changed}"
+          if [ "${changed}" != "false" ] && [ "${MIGRATIONS_APPLIED}" != "true" ]; then
+            echo "::error::Database migrations changed or cannot be ruled out. Apply them with the protected staging migration runner, then re-run with migrations_applied=true."
+            exit 1
+          fi
+
+      - name: Confirm the Render service is Flockletter staging
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY}" ] || { echo "::error::The RENDER_API_KEY secret is not available to this workflow."; exit 1; }
+          # Read-only. Refuse to deploy to anything that is not the Flockletter staging web service.
+          service="$(curl -fsS --max-time 30 -H "Authorization: Bearer ${RENDER_API_KEY}" "https://api.render.com/v1/services/${RENDER_STAGING_SERVICE_ID}")" \
+            || { echo "::error::Render rejected the API key or the staging service id (read-only check failed)."; exit 1; }
+          jq -nc --argjson web "${service}" --slurpfile version staging-version.json '{web:$web,version:$version[0]}' | \
+            node control/scripts/verify-render-staging-target.mjs "https://github.com/${{ github.repository }}" \
+              "${STAGING_URL}" "${RENDER_STAGING_SERVICE_ID}"
+
+      - name: Deploy staging
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: control/scripts/render-deploy.sh "${RENDER_STAGING_SERVICE_ID}" "${SHA}"
+
+      - name: Verify staging serves the exact release
+        run: node control/scripts/verify-release.mjs --environment staging --url "${STAGING_URL}" --expected-sha "${SHA}" --timeout-ms 600000
