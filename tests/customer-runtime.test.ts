@@ -215,6 +215,17 @@ it('drains due campaign work beyond eight transitions and returns its actual pac
   expect(delay).toBeLessThanOrEqual(251);
   expect(maintenance).not.toHaveBeenCalled();
 });
+it('records a failed texting pass as a reviewable workspace failure instead of losing it',async()=>{
+  const f=await factory();
+  const error=vi.spyOn(console,'error').mockImplementation(()=>undefined);
+  await f.runtime.wake(f.workspaceId);
+  Object.defineProperty(f.runtime,'texting',{value:{tick:async()=>{throw new Error('provider detail that must not be logged');}},configurable:true});
+  await expect(f.runtime.processWorkspace(f.workspaceId,false)).resolves.toBeGreaterThan(0);
+  const status=(await f.runtime.db.tenant(f.workspaceId,sql=>sql.query<{last_failure_code:string|null}>('SELECT * FROM flockletter_customer_jobs.scope_status($1)',[f.workspaceId]))).rows[0];
+  expect(status?.last_failure_code).toBe('workspace_job_requires_review');
+  expect(JSON.stringify(error.mock.calls)).not.toContain('provider detail');
+  error.mockRestore();
+});
 it('shares activated Growth company and brand limits through the ordinary command dispatcher', async () => {
   const f = await factory();
 
