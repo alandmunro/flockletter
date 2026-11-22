@@ -121,7 +121,7 @@ function TestSend({api,brandId,draft,restoreId,onSelectTest,onRestoreConsumed,on
       setChecks(preflight);if(preflight.gaps.length){setNotice('Resolve the test setup gaps before preparing a review.');return;}
       const value=await mutate<TestDeliveryReview>('delivery.reviewTest',{brandId,campaignId:draft.id,expectedVersion:draft.version,subscriberId:recipient.id},'review');
       assertReview(value,undefined,recipient.id);if(value.version!==draft.version)throw Error('The saved campaign changed. Refresh it before reviewing a test.');
-      pending.current.delete('review');if(!current())return;setReview(value);setRecipientLabel(recipient.email);setCanApprove(true);setApprovalUnknown(false);
+      pending.current.delete('review');if(!current())return;setReview(value);setRecipientLabel(recipient.email ?? '');setCanApprove(true);setApprovalUnknown(false);
       setNotice('Review the frozen details below, then explicitly approve this one-recipient test.');await loadHistory();
       try{await onChanged?.();}catch{/* The review remains saved; the owner can refresh its history. */}
     }catch(error){if(current())setError(explain(error));}

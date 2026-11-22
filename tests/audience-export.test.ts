@@ -10,6 +10,12 @@ const revision = 'a'.repeat(64);
 const sample = (email: string): ExportContact => ({
   email,
   state: 'pending',
+  firstName: null,
+  lastName: null,
+  phone: null,
+  text: 'no_phone',
+  birthday: null,
+  anniversary: null,
   createdAt: '2026-01-01T00:00:00Z',
   confirmedAt: null,
 });
@@ -37,7 +43,7 @@ describe('complete private CSV generation', () => {
     for (const value of inputs.slice(0, 6)) expect(text).toContain('"\'' + value + '"');
     expect(text).toContain('"line""break\nordinary"');
     expect(text).toContain('"reader@example.test"');
-    expect(text.split('\r\n')[0]).toBe('"Email","Status","Added at (UTC)","Confirmed at (UTC)"');
+    expect(text.split('\r\n')[0]).toBe('"Email","Email status","First name","Last name","Phone","Text status","Birthday","Anniversary","Anniversary label","Added at (UTC)","Confirmed at (UTC)"');
   });
   it('rejects partial files, page failures, over-limit requests and user cancellations', async () => {
     const first: ExportPage = {

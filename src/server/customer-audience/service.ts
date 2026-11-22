@@ -100,6 +100,10 @@ export type CustomerAudienceOptions = {
   feedback?: CustomerConfirmationFeedback;
 };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+const phoneReceipt = {
+  status: 'check_phone',
+  message: 'Check your phone. If this number can receive our texts, we sent one asking you to reply YES.',
+};
 const genericReceipt = {
   status: 'pending_confirmation',
   message: 'Check your email for a confirmation if this address is eligible.',
@@ -817,12 +821,16 @@ export class CustomerAudience {
   async publicSignup(form: string, raw: unknown) {
     const { workspace, brand } = parseForm(form),
       input = raw as Record<string, unknown>;
+    const texting = input?.texting as { phone?: string; smsConsent?: boolean } | undefined;
+    const typedEmail = typeof input?.email === 'string' && input.email.trim() !== '';
+    // D1: where the workspace allows it, a sign-up for texts alone needs no email.
+    if (!typedEmail && texting?.phone && texting.smsConsent && this.options.texting) return this.textOnlySignup(form, workspace, brand, input.texting);
     const email = normalizedEmail.safeParse(input?.email);
     requireCondition(
       email.success && input?.consentAffirmed === true,
       422,
       'consent_required',
-      'Enter your email and affirm the displayed consent.',
+      texting ? 'Enter your email and affirm the displayed consent, or sign up for texts with your mobile number.' : 'Enter your email and affirm the displayed consent.',
     );
     return this.db.brand(workspace, brand, async (sql) => {
       await lockWorkspace(sql,workspace);
@@ -859,6 +867,32 @@ export class CustomerAudience {
         await this.options.texting.recordSignup(sql, workspace, brand, subscriber, input.texting as Parameters<NonNullable<CustomerAudienceOptions['texting']>['recordSignup']>[4]);
       }
       return receipt;
+    });
+  }
+  /** A sign-up with a phone and the text box ticked, and no email (D1). It must subscribe to texts or it is refused. */
+  private async textOnlySignup(form: string, workspace: string, brand: string, fields: unknown) {
+    const texting = this.options.texting!;
+    return this.db.brand(workspace, brand, async (sql) => {
+      await lockWorkspace(sql, workspace);
+      const row = await settings(sql);
+      if (!row?.enabled || row.form_token !== form || this.options.mode === 'off') throw invalidLink();
+      const view = await texting.signupView(sql, workspace, brand);
+      requireCondition(view?.phoneOnly, 422, 'consent_required', 'Enter your email and affirm the displayed consent.');
+      const digits = String((fields as { phone?: string }).phone ?? '').replace(/\D/g, '');
+      const budget = (
+        await sql.query<{ requests: number }>(
+          `INSERT INTO subscriber_rate_buckets(workspace_id,brand_id,bucket,window_at,requests)
+        VALUES($1,$2,$3,now(),1) ON CONFLICT(workspace_id,brand_id,bucket) DO UPDATE SET
+        requests=CASE WHEN subscriber_rate_buckets.window_at<now()-interval '24 hours' THEN 1 ELSE least(subscriber_rate_buckets.requests+1,11) END,
+        window_at=CASE WHEN subscriber_rate_buckets.window_at<now()-interval '24 hours' THEN now() ELSE subscriber_rate_buckets.window_at END RETURNING requests`,
+          [workspace, brand, 'customer-signup/' + hash('phone:' + digits)],
+        )
+      ).rows[0]!;
+      if (budget.requests > 10) return phoneReceipt;
+      const result = await texting.recordSignup(sql, workspace, brand, null, fields as Parameters<typeof texting.recordSignup>[4]);
+      requireCondition(result.text !== 'none', 422, 'text_consent_required', 'Tick the text message box, or enter your email.');
+      // The receipt is the same whatever the number's history, so it reveals nothing about who is subscribed.
+      return phoneReceipt;
     });
   }
   async confirm(form: string, token: string) {

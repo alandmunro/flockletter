@@ -1,5 +1,4 @@
 import type {
-  AudienceContact,
   AudienceSummary,
   ConsentEvent,
   ContactDetail,
@@ -9,14 +8,8 @@ import type {
 import type { Sql } from '../db.js';
 import { requireCondition } from '../errors.js';
 import { suppress } from './intake.js';
+import { listPeople, personRow, personTexting, personView, sharedWith, signupFields, type PeopleQuery } from './people.js';
 
-type ContactRow = {
-  id: string;
-  email_normalized: string;
-  state: SubscriberState;
-  created_at: Date;
-  confirmed_at: Date | null;
-};
 type EventRow = {
   id: string;
   event: ConsentEvent['event'];
@@ -28,17 +21,6 @@ type EventRow = {
   evidence_source: string;
   recorded_by: string;
 };
-const contactColumns = 'id,email_normalized,state,created_at,confirmed_at';
-function contactView(row: ContactRow): AudienceContact {
-  return {
-    id: row.id,
-    email: row.email_normalized,
-    state: row.state,
-    createdAt: row.created_at.toISOString(),
-    confirmedAt: row.confirmed_at?.toISOString() ?? null,
-  };
-}
-
 // Callers verify brand ownership and set app.intake_brand_id inside the same workspace transaction.
 export async function audienceSummary(sql: Sql): Promise<AudienceSummary> {
   const { rows } = await sql.query<{ state: SubscriberState; count: string }>(
@@ -59,43 +41,18 @@ export async function audienceSummary(sql: Sql): Promise<AudienceSummary> {
   return counts;
 }
 
-type DirectoryQuery = {
-  state?: SubscriberState | undefined;
-  email?: string | undefined;
-  cursor?: string | undefined;
-  limit: number;
-};
-export async function listContacts(sql: Sql, query: DirectoryQuery): Promise<ContactPage> {
-  let after: string | null = null;
-  if (query.cursor) {
-    const cursor = (
-      await sql.query<{ email_normalized: string }>('SELECT email_normalized FROM subscribers WHERE id=$1', [
-        query.cursor,
-      ])
-    ).rows[0];
-    requireCondition(
-      cursor,
-      422,
-      'invalid_cursor',
-      'This audience page is unavailable. Return to the first page.',
-    );
-    after = cursor.email_normalized;
-  }
-  const { rows } = await sql.query<ContactRow>(
-    `SELECT ${contactColumns} FROM subscribers
-    WHERE ($1::text IS NULL OR state=$1) AND ($2::text IS NULL OR email_normalized=$2)
-      AND ($3::text IS NULL OR email_normalized>$3) ORDER BY email_normalized LIMIT $4`,
-    [query.state ?? null, query.email ?? null, after, query.limit + 1],
-  );
-  const items = rows.slice(0, query.limit).map(contactView);
-  return { items, nextCursor: rows.length > query.limit ? items[items.length - 1]!.id : null };
+export async function listContacts(sql: Sql, brand: string, query: PeopleQuery): Promise<ContactPage> {
+  return listPeople(sql, brand, query);
 }
 
 const historySize = 15;
-export async function contactDetail(sql: Sql, id: string, cursor?: string): Promise<ContactDetail> {
-  const person = (await sql.query<ContactRow>(`SELECT ${contactColumns} FROM subscribers WHERE id=$1`, [id]))
-    .rows[0];
-  requireCondition(person, 404, 'contact_unavailable', 'This contact is unavailable for this brand.');
+export async function contactDetail(sql: Sql, brand: string, id: string, cursor?: string): Promise<ContactDetail> {
+  const person = await personRow(sql, brand, id);
+  const extra = { texting: await personTexting(sql, brand, person), sharedWith: await sharedWith(sql, brand, person), fields: await signupFields(sql) };
+  if (person.kind === 'phone') {
+    requireCondition(!cursor, 422, 'invalid_cursor', 'This history page is unavailable. Reopen the contact.');
+    return { contact: personView(person), events: [], nextCursor: null, ...extra };
+  }
   if (cursor) {
     const event = await sql.query(
       'SELECT id FROM subscriber_consent_events WHERE subscriber_id=$1 AND id=$2',
@@ -138,10 +95,11 @@ export async function contactDetail(sql: Sql, id: string, cursor?: string): Prom
       AND o.result @> jsonb_build_object('rows',jsonb_build_array(jsonb_build_object('subscriberId',$1::text)))
       AND item->>'subscriberId'=$1 AND item->>'outcome'='pending_added' LIMIT 1`,[id])).rows[0];
   return {
-    contact: contactView(person),
+    contact: personView(person),
     events,
     nextCursor: rows.length > historySize ? events[historySize - 1]!.id : null,
     ...(origin ? { practiceImport: { row: origin.row, recordedAt: origin.recorded_at.toISOString() } } : {}),
+    ...extra,
   };
 }
 

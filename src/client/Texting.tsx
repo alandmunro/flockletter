@@ -3,7 +3,7 @@ import { operationKey, type Api } from './api.js';
 import { blockedCharacters, encodeText, plainText } from '../shared/texting.js';
 
 // FL-SMS-007/008/011/015: the workspace texting page. Every action calls the same commands as the API and MCP.
-type Status = { mode: string; profile: null | { shortName: string | null; notificationEmail: string | null; timeZone: string; phoneField: boolean; birthdayField: boolean; anniversaryField: boolean; anniversaryLabel: string; revision: number };
+type Status = { mode: string; profile: null | { shortName: string | null; notificationEmail: string | null; timeZone: string; phoneField: boolean; birthdayField: boolean; anniversaryField: boolean; anniversaryLabel: string; nameField: boolean; phoneOnlySignup: boolean; revision: number };
   companies: { id: string; name: string; registration: string; number: string | null; canSend: boolean }[]; usage: { month: string; used: number; reserved: number; allowance: number | null }; settingsNeeded: string[] };
 type Review = { id: string; revision: number; preview: string; encoding: string; perSegment: number; recipients: number; segments: number; gsm7Recipients: number; ucs2Recipients: number;
   allowance: { total: number | null; remaining: number | null; afterSend: number | null }; daysNeeded: number | null; links: { link: string; allowed: boolean }[]; gaps: string[]; digest?: string };
@@ -39,7 +39,7 @@ export function Texting({ api }: { api: Api }) {
 type Act = (action: () => Promise<unknown>) => Promise<void>;
 function Profile({ api, status, busy, act }: { api: Api; status: Status; busy: boolean; act: Act }) {
   const p = status.profile;
-  const [form, setForm] = useState({ shortName: p?.shortName ?? '', notificationEmail: p?.notificationEmail ?? '', timeZone: p?.timeZone ?? 'America/New_York', phoneField: p?.phoneField ?? false, birthdayField: p?.birthdayField ?? false, anniversaryField: p?.anniversaryField ?? false, anniversaryLabel: p?.anniversaryLabel ?? 'Anniversary' });
+  const [form, setForm] = useState({ shortName: p?.shortName ?? '', notificationEmail: p?.notificationEmail ?? '', timeZone: p?.timeZone ?? 'America/New_York', phoneField: p?.phoneField ?? false, birthdayField: p?.birthdayField ?? false, anniversaryField: p?.anniversaryField ?? false, anniversaryLabel: p?.anniversaryLabel ?? 'Anniversary', nameField: p?.nameField ?? false, phoneOnlySignup: p?.phoneOnlySignup ?? false });
   const key = useRef(operationKey());
   const [saved, setSaved] = useState(false);
   const save = (e: FormEvent) => { e.preventDefault(); setSaved(false); void act(async () => { await api.call('sms.configure', { operationKey: key.current, expectedRevision: p?.revision ?? 1, ...form, shortName: form.shortName || undefined, notificationEmail: form.notificationEmail || null }); key.current = operationKey(); setSaved(true); }); };
@@ -49,7 +49,9 @@ function Profile({ api, status, busy, act }: { api: Api; status: Status; busy: b
     <label>Email for text replies<input type="email" value={form.notificationEmail} onChange={e => set({ notificationEmail: e.target.value })} /></label>
     <label>Workspace time zone<select value={form.timeZone} onChange={e => set({ timeZone: e.target.value })}>{['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu'].map(z => <option key={z}>{z}</option>)}</select></label>
     <fieldset><legend>Optional sign-up page fields (never required)</legend>
-      <label className="asset-option"><input type="checkbox" checked={form.phoneField} onChange={e => set({ phoneField: e.target.checked })} />Mobile number, with a separate unchecked texting checkbox</label>
+      <label className="asset-option"><input type="checkbox" checked={form.nameField} onChange={e => set({ nameField: e.target.checked })} />First and last name</label>
+      <label className="asset-option"><input type="checkbox" checked={form.phoneField} onChange={e => set({ phoneField: e.target.checked, ...(e.target.checked ? {} : { phoneOnlySignup: false }) })} />Mobile number, with a separate unchecked texting checkbox</label>
+      {form.phoneField && <label className="asset-option"><input type="checkbox" checked={form.phoneOnlySignup} onChange={e => set({ phoneOnlySignup: e.target.checked })} />Let people sign up for texts without an email (they still need an email or a ticked text box)</label>}
       <label className="asset-option"><input type="checkbox" checked={form.birthdayField} onChange={e => set({ birthdayField: e.target.checked })} />Birthday (month and day)</label>
       <label className="asset-option"><input type="checkbox" checked={form.anniversaryField} onChange={e => set({ anniversaryField: e.target.checked })} />Anniversary</label>
       {form.anniversaryField && <label>Anniversary label<input maxLength={40} value={form.anniversaryLabel} onChange={e => set({ anniversaryLabel: e.target.value })} /></label>}

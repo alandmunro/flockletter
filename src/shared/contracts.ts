@@ -2,7 +2,7 @@ import {senderSetupCommands} from './sender-setup.js';
 import { z } from 'zod';
 import { studioSchema, studioAssetIds } from './studio.js';
 import { normalizedEmail } from './subscriber.js';
-import { stateFilter } from './audience.js';
+import { contactUpdate, dateFilter, emailStateFilter, textStateFilter } from './audience.js';
 import { productFields, templateIds } from './authoring.js';
 import { rehearsalAudiences, rehearsalTransports } from './rehearsal.js';
 import { applyImportInput, importPreviewInput } from './import-preview.js';
@@ -144,12 +144,19 @@ export const commands = {
   'segment.members': descriptor('Add or remove existing brand contacts from a group. Returns counts only.', 'owner', true, { brandId: audienceId, operationKey: key, segmentId: audienceId, action: segmentAction, emails: segmentEmails }),
   'segment.summary': descriptor('Read aggregate states for one known group in the granted brand.', 'audience:summary', false, { brandId: audienceId, segmentId: audienceId }),
   'audience.summary': descriptor('Count subscriber states for one granted brand. Returns counts only.', 'audience:summary', false, { brandId: audienceId }),
-  'audience.list': descriptor('Find contacts for one brand by status or exact email. Owner session required.', 'owner', false, {
-    brandId: audienceId, state: stateFilter.optional(), email: normalizedEmail.optional(),
+  'audience.list': descriptor('Find people for one brand by email status, text status, special dates, exact email, or a search of email, name and phone. Owner session required.', 'owner', false, {
+    brandId: audienceId, state: emailStateFilter.optional(), text: textStateFilter.optional(), email: normalizedEmail.optional(),
+    search: z.string().trim().min(1).max(100).optional(), dates: dateFilter.optional(), month: z.number().int().min(1).max(12).optional(),
     cursor: audienceId.optional(), limit: z.number().int().min(1).max(50).default(25),
   }),
   'audience.contact': descriptor('Read one contact and a page of its consent history. Owner session required.', 'owner', false, {
     brandId: audienceId, id: audienceId, cursor: audienceId.optional(),
+  }),
+  'audience.updateContact': descriptor('Edit one person: first and last name, phone (email subscribers only) and special dates. Null clears a field. Never changes email or text consent. Owner session required.', 'owner', true, {
+    brandId: audienceId, id: audienceId, operationKey: key, ...contactUpdate,
+  }),
+  'audience.stopTexts': descriptor('Stop all texts to this person\'s phone for the brand\'s company. There is no command that starts texts; only the person can, by signing up and replying YES, or texting START. Owner session required.', 'owner', true, {
+    brandId: audienceId, id: audienceId, operationKey: key,
   }),
   'audience.unsubscribe': descriptor('Stop marketing for this contact and brand. The contact identity makes retries idempotent. Owner session required.', 'owner', true, { brandId: audienceId, id: audienceId }),
   'intake.configure': descriptor('Enable or pause subscriber intake for one configured brand. Does not enable campaigns.', 'owner', true, { brandId: id, enabled: z.boolean(), operationKey: key }),

@@ -60,9 +60,10 @@ function signupTexting(body: Record<string, unknown>) {
     const month = int(prefix + 'Month', 1, 12), day = int(prefix + 'Day', 1, 31), year = withYear ? int(prefix + 'Year', 1900, 2100) : undefined;
     return month && day ? { month, day, ...(year ? { year } : {}) } : undefined;
   };
-  return { phone: text('phone'), smsConsent: body.smsConsent === 'yes', wordingShown: typeof body.smsWording === 'string' ? body.smsWording : undefined,
+  return { phone: text('phone'), firstName: text('firstName'), lastName: text('lastName'), smsConsent: body.smsConsent === 'yes', wordingShown: typeof body.smsWording === 'string' ? body.smsWording : undefined,
     birthday: date('birthday', false), anniversary: date('anniversary', true) };
 }
+const receiptTitle = (status: string) => status === 'request_received' ? 'Request received' : status === 'check_phone' ? 'Check your phone' : 'Check your email';
 export function customerAudienceRoutes(service: CustomerAudience) {
   const router = express.Router();
   router.use((req, res, next) => {
@@ -214,7 +215,7 @@ export function customerAudienceRoutes(service: CustomerAudience) {
       try {
         const receipt = await submit();
         sendEmbed(res, form, 'submitted', [
-          h('h2', { key: 'title' }, receipt.status === 'request_received' ? 'Request received' : 'Check your email'),
+          h('h2', { key: 'title' }, receiptTitle(receipt.status)),
           h('p', { key: 'message' }, receipt.message),
         ]);
       } catch (error) {
@@ -229,7 +230,7 @@ export function customerAudienceRoutes(service: CustomerAudience) {
       return;
     }
     const receipt = await submit();
-    sendPostcard(res, String(req.params.form), form, receipt.status === 'request_received' ? 'Request received' : 'Check your email',
+    sendPostcard(res, String(req.params.form), form, receiptTitle(receipt.status),
       'You can unsubscribe from any newsletter.', h('p', {}, receipt.message));
   });
   return router;

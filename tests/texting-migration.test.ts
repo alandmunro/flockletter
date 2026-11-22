@@ -8,7 +8,7 @@ let fixture: Awaited<ReturnType<typeof startDatabase>>;
 beforeAll(async () => { fixture = await startDatabase(); });
 afterAll(async () => { await fixture?.stop(); });
 
-describe('040_texting migration (CHG-3)', () => {
+describe('040_texting and 041_audience_people migrations (CHG-3)', () => {
   it('keeps the runtime boundary, seeds only public defaults, and rolls back and reapplies cleanly', async () => {
     const runtime = new pg.Client({ connectionString: fixture.url });
     await runtime.connect();
@@ -26,6 +26,11 @@ describe('040_texting migration (CHG-3)', () => {
     const admin = new pg.Client({ connectionString: fixture.adminUrl });
     await admin.connect();
     try {
+      // 041 builds on 040, so it rolls back first and its own rollback leaves 040 intact.
+      await admin.query(await readFile('migrations/rollback/041_audience_people.down.sql', 'utf8'));
+      expect((await admin.query("SELECT to_regclass('public.sms_contact_subscribers') r")).rows[0].r).toBeNull();
+      expect((await admin.query("SELECT count(*)::int n FROM information_schema.columns WHERE table_name='subscribers' AND column_name='first_name'")).rows[0].n).toBe(0);
+      expect((await admin.query("SELECT to_regclass('public.sms_contacts') r")).rows[0].r).not.toBeNull();
       await admin.query(await readFile('migrations/rollback/040_texting.down.sql', 'utf8'));
       expect((await admin.query("SELECT to_regclass('public.sms_messages') r")).rows[0].r).toBeNull();
       expect((await admin.query("SELECT count(*)::int n FROM information_schema.columns WHERE table_name='team_grants' AND column_name='sms_send'")).rows[0].n).toBe(0);
@@ -33,6 +38,9 @@ describe('040_texting migration (CHG-3)', () => {
       // Reapplying twice is a no-op (IF NOT EXISTS everywhere, defaults not duplicated).
       await admin.query(await readFile('migrations/040_texting.sql', 'utf8'));
       expect((await admin.query("SELECT count(*)::int n FROM flockletter_customer_jobs.texting_settings WHERE key='contact_monthly_limit'")).rows[0].n).toBe(1);
+      await admin.query(await readFile('migrations/041_audience_people.sql', 'utf8'));
+      await admin.query(await readFile('migrations/041_audience_people.sql', 'utf8'));
+      expect((await admin.query("SELECT to_regclass('public.sms_contact_subscribers') r")).rows[0].r).not.toBeNull();
     } finally { await admin.end(); }
   });
 });

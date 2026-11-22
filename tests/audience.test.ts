@@ -138,6 +138,10 @@ describe('brand audience workspace', () => {
       unsubscribed: 1,
       hard_bounced: 1,
       complained: 1,
+      people: {
+        people: 6, phoneOnly: 0, birthdays: 0, anniversaries: 0, thisMonth: 0,
+        text: { no_phone: 6, phone_only: 0, pending_confirmation: 0, expired: 0, opted_in: 0, opted_out: 0, pending_reenrollment: 0, not_textable: 0 },
+      },
     });
     let cursor: string | null = null;
     const seen: string[] = [];
@@ -147,7 +151,7 @@ describe('brand audience workspace', () => {
         limit: 2,
         cursor: cursor ?? undefined,
       });
-      seen.push(...page.items.map((x) => x.email));
+      seen.push(...page.items.map((x) => x.email ?? ''));
       cursor = page.nextCursor;
       if (i === 0) await seed('0-before-cursor@example.com', 'pending');
     }

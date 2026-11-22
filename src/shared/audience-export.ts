@@ -13,7 +13,7 @@ export const exportPageInput = z
   })
   .strict();
 export type ExportPageInput = z.infer<typeof exportPageInput>;
-export type ExportContact = Pick<AudienceContact, 'email' | 'state' | 'createdAt' | 'confirmedAt'>;
+export type ExportContact = Pick<AudienceContact, 'email' | 'state' | 'firstName' | 'lastName' | 'phone' | 'text' | 'birthday' | 'anniversary' | 'createdAt' | 'confirmedAt'>;
 export type ExportPage = {
   rows: ExportContact[];
   total: number;

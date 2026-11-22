@@ -688,3 +688,111 @@ describe('live registration wording', () => {
     await db.tenant(w, sql => sql.query(`UPDATE sms_registrations SET state='draft' WHERE id=$1`, [created.registrationId]));
   });
 });
+
+describe('FL-AT-046 audience people: email, texts, names and special dates together', () => {
+  const w = A.workspaceId;
+  type Person = { id: string; kind: string; email: string | null; state: string | null; firstName: string | null; lastName: string | null; phone: string | null; text: string;
+    birthday: { month: number; day: number; year: number | null } | null; anniversary: { month: number; day: number; year: number | null; label: string } | null };
+  const list = async (filter: Record<string, unknown>) => (await run<{ items: Person[] }>('audience.list', { brandId, limit: 50, ...filter })).items;
+  const find = async (search: string) => (await list(search.includes('@') ? { email: search } : { search }))[0]!;
+  let brandId = '', form = '', wording = '';
+  let audience: CustomerAudience;
+  it('accepts an email, a phone with the text box ticked, or both, and refuses a sign-up that subscribes to nothing (D1)', async () => {
+    brandId = (await rows<{ id: string }>(w, 'SELECT id FROM brands'))[0]!.id;
+    audience = new CustomerAudience(db, { mode: 'exercise', origin: 'http://127.0.0.1:4310', checkOwner: async () => true, contactLimit: async () => 250, texting });
+    await audience.execute('audienceOnboarding.configure', { brandId, enabled: true, purpose: 'shop_news', policyVersion: 'v46', confirmationMode: 'double_opt_in',
+      consentText: 'Send me Shop newsletters. I can unsubscribe anytime.', sourceDomain: 'shop.example.test', operationKey: key() }, A);
+    form = ((await audience.execute('audienceOnboarding.status', { brandId }, A)) as AudienceSettingsView).publicUrl!.split('/newsletter/')[1]!;
+    const status = await run<{ profile: { revision: number } }>('sms.status', {});
+    await expect(run('sms.configure', { operationKey: key(), expectedRevision: status.profile.revision, phoneField: false, phoneOnlySignup: true })).rejects.toMatchObject({ code: 'phone_field_required' });
+    expect((await audience.publicForm(form)).texting).toMatchObject({ name: false, phoneOnly: false });
+    await run('sms.configure', { operationKey: key(), expectedRevision: status.profile.revision, nameField: true, phoneOnlySignup: true, anniversaryField: true, anniversaryLabel: 'Wedding date' });
+    const view = await audience.publicForm(form);
+    expect(view.texting).toMatchObject({ name: true, phoneOnly: true, anniversary: true, anniversaryLabel: 'Wedding date' });
+    wording = view.texting!.smsWording!;
+    const html = renderToStaticMarkup(createElement(SignupFields, { consent: 'c', version: 'v46', texting: view.texting! }));
+    expect(html).toContain('name="firstName"');
+    expect(html).toContain('Email address (optional if you sign up for texts)');
+    expect(html).not.toMatch(/<input required="" type="email"/);
+
+    // Text only: no email, a phone and the ticked box.
+    const receipt = await audience.publicSignup(form, { email: '', policyVersion: 'v46', texting: { phone: '212-555-0601', smsConsent: true, wordingShown: wording,
+      firstName: 'Sam', lastName: 'Lee', birthday: { month: 3, day: 14 } } });
+    expect(receipt).toMatchObject({ status: 'check_phone' });
+    expect(await find('0601')).toMatchObject({ kind: 'phone', email: null, state: null, firstName: 'Sam', lastName: 'Lee', phone: '+12125550601', text: 'pending_confirmation', birthday: { month: 3, day: 14 } });
+    // Nothing chosen, or a phone with the box unticked and no email: refused, nothing stored.
+    await expect(audience.publicSignup(form, { email: '', policyVersion: 'v46', texting: {} })).rejects.toMatchObject({ code: 'consent_required' });
+    await expect(audience.publicSignup(form, { email: '', policyVersion: 'v46', texting: { phone: '212-555-0602' } })).rejects.toMatchObject({ code: 'consent_required' });
+    expect(await list({ search: '0602' })).toEqual([]);
+    // Email with a phone but the box unticked: the number is on file, not subscribed.
+    await audience.publicSignup(form, { email: 'unticked@example.com', policyVersion: 'v46', consentAffirmed: true, texting: { phone: '212-555-0603' } });
+    expect(await find('unticked@example.com')).toMatchObject({ kind: 'subscriber', state: 'pending', phone: '+12125550603', text: 'phone_only' });
+    // Email only.
+    await audience.publicSignup(form, { email: 'emailonly@example.com', policyVersion: 'v46', consentAffirmed: true, texting: {} });
+    expect(await find('emailonly@example.com')).toMatchObject({ phone: null, text: 'no_phone' });
+  });
+  it('links one household phone to both emails, and the newest sign-up wins for names and dates (D2, D3, D4)', async () => {
+    for (const email of ['one@example.com', 'two@example.com'])
+      await audience.publicSignup(form, { email, policyVersion: 'v46', consentAffirmed: true, texting: { phone: '212-555-0604', smsConsent: true, wordingShown: wording } });
+    await op('platform.textingMock', { workspaceId: w, action: { kind: 'inbound', from: '+12125550604', to: number[w], body: 'YES' } });
+    // Texts confirmed, email still waiting for its link: the two statuses are separate.
+    for (const email of ['one@example.com', 'two@example.com']) expect(await find(email)).toMatchObject({ state: 'pending', phone: '+12125550604', text: 'opted_in' });
+    const one = await find('one@example.com');
+    expect((await run<{ sharedWith: string[] }>('audience.contact', { brandId, id: one.id })).sharedWith).toEqual(['two@example.com']);
+    await run('audience.updateContact', { brandId, id: one.id, operationKey: key(), birthday: { month: 4, day: 4 } });
+    await audience.publicSignup(form, { email: 'one@example.com', policyVersion: 'v46', consentAffirmed: true,
+      texting: { firstName: 'Una', birthday: { month: 5, day: 5 }, anniversary: { month: 6, day: 1, year: 2015 } } });
+    expect(await find('one@example.com')).toMatchObject({ firstName: 'Una', birthday: { month: 5, day: 5 }, anniversary: { month: 6, day: 1, year: 2015, label: 'Wedding date' } });
+    expect((await list({ text: 'opted_in', search: '0604' })).map(p => p.email).sort()).toEqual(['one@example.com', 'two@example.com']);
+    expect((await list({ state: 'no_email' })).map(p => p.phone)).toContain('+12125550601');
+    expect((await list({ dates: 'anniversary', month: 6 })).map(p => p.email)).toEqual(['one@example.com']);
+  });
+  it('lets the owner edit names, phone and dates, but never email or consent', async () => {
+    const one = await find('one@example.com'), two = await find('two@example.com');
+    const changed = await run<{ contact: Person; warning?: string }>('audience.updateContact', { brandId, id: one.id, operationKey: key(), lastName: 'Ortiz', phone: '(212) 555-0605', anniversary: null });
+    expect(changed.contact).toMatchObject({ firstName: 'Una', lastName: 'Ortiz', phone: '+12125550605', text: 'phone_only', anniversary: null });
+    expect(changed.warning).toMatch(/never subscribes anyone/);
+    expect(await find('two@example.com')).toMatchObject({ phone: '+12125550604', text: 'opted_in' });
+    // Removing the phone keeps the number, with its consent history, as its own text contact.
+    await run('audience.updateContact', { brandId, id: two.id, operationKey: key(), phone: null });
+    expect(await find('two@example.com')).toMatchObject({ phone: null, text: 'no_phone' });
+    expect(await find('0604')).toMatchObject({ kind: 'phone', email: null, text: 'opted_in' });
+    // A text-only contact's number is its identity.
+    const sam = await find('0601');
+    await expect(run('audience.updateContact', { brandId, id: sam.id, operationKey: key(), phone: '212 555 0699' })).rejects.toMatchObject({ code: 'phone_fixed' });
+    await run('audience.updateContact', { brandId, id: sam.id, operationKey: key(), firstName: 'Samuel', birthday: null });
+    expect(await find('0601')).toMatchObject({ firstName: 'Samuel', birthday: null });
+    await expect(run('audience.updateContact', { brandId, id: one.id, operationKey: key(), email: 'new@example.com' })).rejects.toMatchObject({ code: 'invalid_audience_input' });
+    await expect(run('audience.updateContact', { brandId, id: one.id, operationKey: key(), birthday: { month: 2, day: 30 } })).rejects.toMatchObject({ code: 'invalid_audience_input' });
+    expect((await rows(w, `SELECT 1 FROM sms_audit WHERE action='contact.update' AND target=$1`, [one.id])).length).toBeGreaterThan(0);
+  });
+  it('stops texts on the owner’s word, cancels queued texts, and shows it in the history', async () => {
+    const sam = await find('0601');
+    const queued = await rows<{ state: string }>(w, `SELECT state FROM sms_messages WHERE to_e164='+12125550601'`);
+    const stopped = await run<{ contact: Person; changed: boolean }>('audience.stopTexts', { brandId, id: sam.id, operationKey: key() });
+    expect(stopped).toMatchObject({ changed: true, contact: { text: 'opted_out' } });
+    if (queued.some(m => m.state === 'pending'))
+      expect(await rows(w, `SELECT 1 FROM sms_messages WHERE to_e164='+12125550601' AND state='pending'`)).toEqual([]);
+    expect((await run<{ changed: boolean }>('audience.stopTexts', { brandId, id: sam.id, operationKey: key() })).changed).toBe(false);
+    const detail = await run<{ texting: { state: string; events: { event: string; source: string }[] } }>('audience.contact', { brandId, id: sam.id });
+    expect(detail.texting.state).toBe('opted_out');
+    expect(detail.texting.events[0]).toMatchObject({ event: 'opted_out', source: 'owner' });
+    await expect(run('audience.stopTexts', { brandId, id: (await find('emailonly@example.com')).id, operationKey: key() })).rejects.toMatchObject({ code: 'no_phone' });
+  });
+  it('counts and exports every person, including text-only contacts', async () => {
+    const summary = await run<{ people: { phoneOnly: number; anniversaries: number; text: Record<string, number> } }>('audience.summary', { brandId });
+    // Text-only people are counted apart from the phone_only text status (numbers on file without consent).
+    const textOnly = (await list({ state: 'no_email' })).length;
+    expect(summary.people.phoneOnly).toBe(textOnly);
+    expect(summary.people.text.phone_only).toBe((await list({ text: 'phone_only' })).length);
+    expect(summary.people.text.opted_out).toBeGreaterThanOrEqual(1);
+    const exported: { email: string | null; phone: string | null; text: string }[] = [];
+    let cursor: string | undefined, revision: string | undefined;
+    do {
+      const page = await run<{ rows: typeof exported; nextCursor: string | null; revision: string }>('audience.exportPage', { brandId, ...(cursor ? { cursor, revision } : {}) });
+      exported.push(...page.rows); cursor = page.nextCursor ?? undefined; revision = page.revision;
+    } while (cursor);
+    expect(exported).toContainEqual(expect.objectContaining({ email: null, phone: '+12125550601', text: 'opted_out' }));
+    expect(exported).toContainEqual(expect.objectContaining({ email: 'one@example.com', phone: '+12125550605' }));
+  });
+});
