@@ -46,6 +46,12 @@ export class CustomerConfirmationFeedback {
     const kinds:Record<string,Kind>={'email.sent':'accepted','email.delivered':'delivered','email.complained':'complaint','email.failed':'failed','email.delivery_delayed':'delayed'};
     const kind=event.type==='email.bounced'?(event.data.bounce?.type==='Permanent'?'hard_bounce':'delayed'):Object.hasOwn(kinds,event.type)?kinds[event.type]:undefined;
     if(!kind)return {received:true};
+    // Resend sends every account event to every webhook endpoint, including newsletter deliveries from customer senders.
+    // Those are not confirmations; answering non-2xx makes Resend retry and then disable this endpoint. The signed sender
+    // only classifies the event as foreign here; it grants no authority, and our own sender still gets full verification.
+    let from='';
+    try {from=mailbox(event.data.from);} catch {/* an unparseable sender cannot be our confirmation sender */}
+    if(from!==mailbox(this.options.sender))return {received:true,ignored:true};
     // Never trust tags/tenant IDs in webhook JSON. Retrieve the UUID at a fixed provider endpoint first.
     let value:unknown;
     try {
