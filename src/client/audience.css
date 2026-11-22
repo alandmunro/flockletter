@@ -268,3 +268,7 @@
     min-width: 25rem;
   }
 }
+.audience-filter {
+  display: flex;
+  flex-direction: column;
+}

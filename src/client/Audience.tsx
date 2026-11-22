@@ -1,6 +1,6 @@
 import {Segments} from './Segments.js';
 import {AudienceOnboarding} from './AudienceOnboarding.js';
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type { Brand } from '../shared/contracts.js';
 import {
   notTextableLabel,
@@ -64,8 +64,6 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
   const [pages, setPages] = useState<(string | null)[]>([null]);
   const [id, setId] = useState('');
   const [revision, setRevision] = useState(0);
-  const [summary, setSummary] = useState<Summary>();
-  const [summaryError, setSummaryError] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const controls = useId();
   const restoreFocus = useRef(false);
@@ -76,21 +74,6 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
       restoreFocus.current = false;
     }
   }, [id]);
-  useEffect(() => {
-    let current = true;
-    setSummaryError('');
-    api
-      .call<Summary>('audience.summary', { brandId: brand.id })
-      .then((value) => {
-        if (current) setSummary(value);
-      })
-      .catch((e) => {
-        if (current) setSummaryError(explain(e));
-      });
-    return () => {
-      current = false;
-    };
-  }, [api, brand.id, revision]);
   function apply(next: Filters) {
     setDraft(next);
     setFilters({ ...next, search: next.search.trim() });
@@ -100,16 +83,11 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
     event.preventDefault();
     apply(draft);
   }
-  function changed() {
+  // Stable, so children that depend on it don't reload when the totals arrive.
+  const changed = useCallback(() => {
     setRevision((value) => value + 1);
     setPages([null]);
-  }
-  const people = summary?.people;
-  const dates: DateColumns = {
-    birthday: (people?.birthdays ?? 0) > 0,
-    anniversary: (people?.anniversaries ?? 0) > 0,
-    anniversaryLabel: 'Anniversary',
-  };
+  }, []);
   const filtered = JSON.stringify(filters) !== JSON.stringify(noFilters);
   if (id)
     return (
@@ -129,7 +107,7 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
     <>
       <p className="eyebrow">{brand.name} / Audience</p>
       <h1 className="page-heading">Audience</h1>
-      <Counts summary={summary} error={summaryError} retry={() => setRevision((v) => v + 1)} />
+      <Counts key={revision} api={api} brandId={brand.id} />
       <section className="card" aria-labelledby="contact-heading">
         <h2 id="contact-heading">Contacts</h2>
         <form className="audience-controls" onSubmit={applySearch}>
@@ -147,8 +125,8 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
           <button className="btn secondary" type="submit">
             Search
           </button>
-          <label htmlFor={controls + 'email'}>
-            Email
+          <div className="audience-filter">
+            <label htmlFor={controls + 'email'}>Email</label>
             <select
               id={controls + 'email'}
               value={draft.state}
@@ -162,9 +140,9 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
               ))}
               <option value="no_email">No email (text only)</option>
             </select>
-          </label>
-          <label htmlFor={controls + 'text'}>
-            Texts
+          </div>
+          <div className="audience-filter">
+            <label htmlFor={controls + 'text'}>Texts</label>
             <select
               id={controls + 'text'}
               value={draft.text}
@@ -177,9 +155,9 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
                 </option>
               ))}
             </select>
-          </label>
-          <label htmlFor={controls + 'dates'}>
-            Special dates
+          </div>
+          <div className="audience-filter">
+            <label htmlFor={controls + 'dates'}>Special dates</label>
             <select
               id={controls + 'dates'}
               value={draft.dates}
@@ -190,9 +168,9 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
               <option value="birthday">Has a birthday</option>
               <option value="anniversary">Has an anniversary</option>
             </select>
-          </label>
-          <label htmlFor={controls + 'month'}>
-            Date falls in
+          </div>
+          <div className="audience-filter">
+            <label htmlFor={controls + 'month'}>Date falls in</label>
             <select
               id={controls + 'month'}
               value={draft.month}
@@ -205,7 +183,7 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
                 </option>
               ))}
             </select>
-          </label>
+          </div>
           {filtered && (
             <button className="btn secondary" type="button" onClick={() => apply(noFilters)}>
               Clear filters
@@ -219,7 +197,6 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
           filters={filters}
           cursor={cursor}
           page={pages.length}
-          dates={dates}
           onSelect={setId}
           previous={() => setPages((v) => v.slice(0, -1))}
           next={(value) => setPages((v) => [...v, value])}
@@ -236,12 +213,35 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
   );
 }
 
-function Counts({ summary, error, retry }: { summary: Summary | undefined; error: string; retry: () => void }) {
+function Counts({ api, brandId }: { api: Api; brandId: string }) {
+  const [summary, setSummary] = useState<Summary>();
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let current = true;
+    api
+      .call<Summary>('audience.summary', { brandId })
+      .then((value) => {
+        if (current) setSummary(value);
+      })
+      .catch((e) => {
+        if (current) setError(explain(e));
+      });
+    return () => {
+      current = false;
+    };
+  }, [api, brandId, retry]);
   if (error)
     return (
       <div role="alert">
         {error}{' '}
-        <button className="btn secondary" onClick={retry}>
+        <button
+          className="btn secondary"
+          onClick={() => {
+            setError('');
+            setRetry((v) => v + 1);
+          }}
+        >
           Retry counts
         </button>
       </div>
@@ -297,12 +297,11 @@ type ResultsProps = {
   filters: Filters;
   cursor: string | null;
   page: number;
-  dates: DateColumns;
   onSelect: (id: string) => void;
   previous: () => void;
   next: (cursor: string) => void;
 };
-function DirectoryResults({ api, brandId, filters, cursor, page, dates, onSelect, previous, next }: ResultsProps) {
+function DirectoryResults({ api, brandId, filters, cursor, page, onSelect, previous, next }: ResultsProps) {
   const [result, setResult] = useState<ContactPage>();
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -328,7 +327,13 @@ function DirectoryResults({ api, brandId, filters, cursor, page, dates, onSelect
       current = false;
     };
   }, [api, brandId, filters, cursor, retry]);
-  const label = result?.items.find((c) => c.anniversary)?.anniversary?.label;
+  // Date columns appear only when someone on this page has that date.
+  const items = result?.items ?? [];
+  const dates: DateColumns = {
+    birthday: items.some((c) => c.birthday) || filters.dates === 'birthday',
+    anniversary: items.some((c) => c.anniversary) || filters.dates === 'anniversary',
+    anniversaryLabel: items.find((c) => c.anniversary)?.anniversary?.label ?? 'Anniversary',
+  };
   return (
     <>
       {error ? (
@@ -345,7 +350,7 @@ function DirectoryResults({ api, brandId, filters, cursor, page, dates, onSelect
           </button>
         </div>
       ) : result ? (
-        <AudienceTable contacts={result.items} onSelect={onSelect} dates={{ ...dates, anniversaryLabel: label ?? dates.anniversaryLabel }} />
+        <AudienceTable contacts={result.items} onSelect={onSelect} dates={dates} />
       ) : (
         <p role="status">Loading contacts…</p>
       )}

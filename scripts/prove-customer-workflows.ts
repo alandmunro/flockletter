@@ -173,11 +173,11 @@ async function phaseOne(page: Page, db: Database, brand: string) {
   await confirmSignup(page, 'outside@trail.example.com');
   await assertContact(db, brand, reader, 'confirmed');
   await assertContact(db, brand, suppressed, 'confirmed');
-  await page.getByLabel('Find an exact email', { exact: true }).fill(suppressed);
+  await page.getByLabel('Search email, name or phone', { exact: true }).fill(suppressed);
   await button(page, 'Search').click();
   await button(page, suppressed).click();
-  await button(page, 'Unsubscribe contact').click();
-  await waitForCommand(page, 'audience.unsubscribe', () => button(page, 'Confirm unsubscribe').click());
+  await button(page, 'Unsubscribe from email').click();
+  await waitForCommand(page, 'audience.unsubscribe', () => button(page, 'Confirm email unsubscribe').click());
   await assertContact(db, brand, suppressed, 'unsubscribed');
   await navigate(page, 'Campaigns');
   await navigate(page, 'Audience');
