@@ -345,7 +345,12 @@ export class CustomerWorkflows {
     }
     if(this.texting&&!this.closing){
       try{const due=await this.texting.tick(workspace);if(due)delay=Math.min(delay,Math.max(15,due.getTime()-Date.now()));}
-      catch{failure='texting_job_requires_review';}
+      catch(error){
+        // The scheduler's receipt only accepts its known codes; a texting failure is recorded as a workspace job needing
+        // review, and logged by type only (no message text, which can carry provider details).
+        failure='workspace_job_requires_review';
+        console.error('A texting pass failed for a workspace.',{workspace,error:error instanceof Error?error.name:'unknown'});
+      }
     }
     if(maintenance||failure){
       await this.db.tenant(workspace,sql=>sql.query('SELECT flockletter_customer_jobs.record_pass($1,$2)',[workspace,failure]));
