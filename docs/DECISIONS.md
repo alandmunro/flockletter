@@ -133,6 +133,7 @@ The owner can resolve these incrementally. Missing decisions must be exposed bef
 
 | Date | Change |
 | --- | --- |
+| 2026-11-22 | D-064 adds FL-BRD-002 and FL-AT-046: a compact sign-up form that only the brand's own source domain may frame. |
 | 2026-11-17 | The CI dependency audit now runs `npm run audit:check`: production dependencies must have no moderate-or-higher advisory, with no exceptions. Development-only advisories need a dated exception in `scripts/audit-exceptions.json`. picomatch GHSA-fc5q-39xc-vjpf (no patched release; reached only through build and test tooling) is accepted until 2026-12-01. |
 | 2026-11-17 | Added O-016 and the public texting and gifting proposal for review. No decision accepted and no implementation authorized. |
 | 2026-11-17 | D-063 accepts the texting add-on with conflict resolutions, resolves O-016, adds FL-SMS-001–015 and FL-AT-041–045, and authorizes phase 2 only. |
@@ -202,3 +203,8 @@ The defaults added on November 17, 2026 are accepted as amended above. Fraud-con
 **Not authorized:** self-serve onboarding, identity checks, customer billing or charges, gifting, coupons, events, outside customers, and texts to anyone other than the owner's opted-in test numbers. Each needs its own decision. D-046's approval threshold for any individual move above USD 25 still applies.
 
 **Already done outside the code (November 17):** the Twilio account is upgraded; its Primary Business Profile is approved as ISV Reseller or Partner; a platform Main API key and a staging subaccount with a Standard key exist; their secrets are in Bitwarden. Twilio support ticket 30421267 asks about hosted pages as tenant websites and API re-opt-in for 10DLC; phase 2 uses START-only re-enrollment until it is answered. [Requirements](SRD.md), [traceability](TRACEABILITY.md)
+
+## D-064 · Brand-site sign-up pop-up (accepted November 22, 2026)
+
+The owner asked for a newsletter and text-alert pop-up on his own short-term-rental website that uses the brand's existing Flockletter sign-up, and authorized building the Flockletter side. Add FL-BRD-002: `?embed=1` on a brand's public sign-up address serves a compact form that only that brand's consent source domain (and its `www.` twin) may frame. Every other page and site keeps `frame-ancestors 'none'`. The framed form posts to its own origin, so the existing origin and fetch-metadata checks, rate limits, consent wording, policy version, double opt-in default and SMS checkbox rules (FL-SMS-005/007) are unchanged. Sign-ups record the source `customer-embed-<mode>-signup`; texting consent evidence is unchanged. A small same-origin script tells the host page the form height and whether a request was submitted, without personal data. This adds no new setting, migration, provider call, live flag or charge; the owner sets the brand's source domain to the framing site. The host-page pop-up is the brand's own code, outside this repository. [Embed guide](implementation/SIGNUP_EMBED.md)
+

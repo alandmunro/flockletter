@@ -851,7 +851,7 @@ export class CustomerAudience {
         brand,
         row,
         email.data,
-        'customer-public-' + this.options.mode + '-signup',
+        'customer-' + (input.channel === 'embed' ? 'embed' : 'public') + '-' + this.options.mode + '-signup',
       );
       // Optional texting fields ride in the same transaction; email confirmation is unchanged (D-054).
       if (this.options.texting && input.texting) {

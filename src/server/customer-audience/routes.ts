@@ -1,7 +1,7 @@
 import { createElement as h } from 'react';
 import { ConfirmationFormContent } from '../../shared/ConfirmationFormContent.js';
 import { SignupFields } from '../../shared/SignupPostcard.js';
-import { sendPostcard } from './postcard.js';
+import { sendEmbed, sendPostcard } from './postcard.js';
 import express, { type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import type { CustomerAudience } from './service.js';
@@ -30,6 +30,28 @@ const page = (heading: string, body: string) =>
   '</h1>' +
   body +
   '</main></body></html>';
+/**
+ * FL-BRD-002: a brand's own website (its consent source domain, with or without `www.`) may frame the
+ * compact form at `?embed=1`. Every other site, and every other page here, stays `frame-ancestors 'none'`.
+ */
+export function embedAncestors(sourceDomain: string | undefined) {
+  const domain = (sourceDomain ?? '').toLowerCase();
+  if (!/^(?=.{3,253}$)(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(domain)) return [];
+  const bare = domain.startsWith('www.') ? domain.slice(4) : domain;
+  return ['https://' + bare, 'https://www.' + bare];
+}
+function allowEmbed(res: Response, sourceDomain: string | undefined) {
+  const ancestors = embedAncestors(sourceDomain);
+  // Helmet's legacy X-Frame-Options would refuse every framing site; CSP frame-ancestors governs instead.
+  res.removeHeader('X-Frame-Options');
+  res.set(
+    'Content-Security-Policy',
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors " +
+      (ancestors.length ? ancestors.join(' ') : "'none'") +
+      "; base-uri 'none'",
+  );
+}
+const embedRequested = (query: Record<string, unknown>) => query.embed === '1';
 /** Optional texting fields from the hosted form. Blank fields are simply absent; none is required. */
 function signupTexting(body: Record<string, unknown>) {
   const text = (name: string) => typeof body[name] === 'string' && (body[name] as string).trim() ? (body[name] as string).trim().slice(0, 64) : undefined;
@@ -160,6 +182,16 @@ export function customerAudienceRoutes(service: CustomerAudience) {
     const smsPreview = req.query.preview === 'sms';
     const form = await service.publicForm(String(req.params.form), { smsPreview });
     if (smsPreview && !form.texting?.smsWording) throw new AppError(404, 'preview_unavailable', 'This preview is unavailable.');
+    if (!smsPreview && embedRequested(req.query)) {
+      allowEmbed(res, form.sourceDomain);
+      sendEmbed(res, form, 'ready', [
+        form.mode === 'exercise' && h('p', { key: 'mode' }, 'Staging exercise. Messages are captured for the workspace owner.'),
+        h(SignupFields, { key: 'signup', consent: form.consentText, version: form.policyVersion, ...(form.texting ? { texting: form.texting } : {}) }),
+        h('p', { key: 'foot', className: 'embed-foot' },
+          (form.confirmationMode === 'single_opt_in' ? 'No email confirmation is required.' : 'We will email you a link to confirm.') + ' Tracking is off.'),
+      ]);
+      return;
+    }
     sendPostcard(res, String(req.params.form), form, form.design.heading || 'News from '+form.brandName,
       (form.confirmationMode === 'single_opt_in' ? 'No email confirmation is required. You can unsubscribe from any newsletter.' : 'Email confirmation is required.')+' Tracking is off.',
       [form.mode === 'exercise' && h('p',{key:'mode'},'Staging exercise. Messages are captured for the workspace owner.'),
@@ -169,12 +201,34 @@ export function customerAudienceRoutes(service: CustomerAudience) {
   });
   router.post('/:form', async (req, res) => {
     const form = await service.publicForm(String(req.params.form));
-    const receipt = await service.publicSignup(String(req.params.form), {
+    const embed = embedRequested(req.query);
+    const submit = () => service.publicSignup(String(req.params.form), {
       email: req.body?.email,
       consentAffirmed: req.body?.consentAffirmed === 'yes',
       policyVersion: req.body?.policyVersion,
+      ...(embed ? { channel: 'embed' } : {}),
       ...(form.texting ? { texting: signupTexting(req.body ?? {}) } : {}),
     });
+    if (embed) {
+      allowEmbed(res, form.sourceDomain);
+      try {
+        const receipt = await submit();
+        sendEmbed(res, form, 'submitted', [
+          h('h2', { key: 'title' }, receipt.status === 'request_received' ? 'Request received' : 'Check your email'),
+          h('p', { key: 'message' }, receipt.message),
+        ]);
+      } catch (error) {
+        // A framed page cannot show the JSON error page, so ordinary refusals are explained in place.
+        if (!(error instanceof AppError) || error.status >= 500) throw error;
+        res.status(error.status);
+        sendEmbed(res, form, 'error', [
+          h('p', { key: 'error', role: 'alert', className: 'embed-error' }, error.message),
+          h(SignupFields, { key: 'signup', consent: form.consentText, version: form.policyVersion, ...(form.texting ? { texting: form.texting } : {}) }),
+        ]);
+      }
+      return;
+    }
+    const receipt = await submit();
     sendPostcard(res, String(req.params.form), form, receipt.status === 'request_received' ? 'Request received' : 'Check your email',
       'You can unsubscribe from any newsletter.', h('p', {}, receipt.message));
   });
