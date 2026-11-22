@@ -1,6 +1,8 @@
 -- Audience people (FL-AUD-020). Additive only.
 -- Names on email subscribers and text contacts, a phone shared by several subscribers (D2), the per-workspace
 -- name and text-only sign-up options (D1, D3), and removable special dates.
+-- Compatible with the serving revision: no runtime grant changes on existing tables, and the one new table has
+-- forced tenant policies (see runtime-boundary.mjs). A removed date is marked cleared rather than deleted.
 BEGIN;
 
 ALTER TABLE public.subscribers
@@ -9,6 +11,8 @@ ALTER TABLE public.subscribers
 ALTER TABLE public.sms_contacts
   ADD COLUMN IF NOT EXISTS first_name text CHECK(first_name IS NULL OR char_length(first_name) BETWEEN 1 AND 60),
   ADD COLUMN IF NOT EXISTS last_name text CHECK(last_name IS NULL OR char_length(last_name) BETWEEN 1 AND 60);
+-- An owner can remove a date. Readers ignore cleared rows; setting the date again clears the mark.
+ALTER TABLE public.contact_dates ADD COLUMN IF NOT EXISTS cleared_at timestamptz;
 ALTER TABLE public.sms_workspace_profile
   ADD COLUMN IF NOT EXISTS name_field boolean NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS phone_only_signup boolean NOT NULL DEFAULT false;

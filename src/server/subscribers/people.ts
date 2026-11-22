@@ -54,9 +54,9 @@ rows AS (
   FROM base b
   LEFT JOIN sms_contacts c ON c.id=b.contact_id
   LEFT JOIN sms_consents x ON x.contact_id=c.id AND x.company_id=(SELECT company_id FROM co)
-  LEFT JOIN contact_dates bd ON bd.type='birthday' AND CASE WHEN b.kind='subscriber'
+  LEFT JOIN contact_dates bd ON bd.type='birthday' AND bd.cleared_at IS NULL AND CASE WHEN b.kind='subscriber'
     THEN bd.brand_id=$1 AND bd.subscriber_id=b.id ELSE bd.contact_id=b.id AND bd.subscriber_id IS NULL END
-  LEFT JOIN contact_dates an ON an.type='anniversary' AND CASE WHEN b.kind='subscriber'
+  LEFT JOIN contact_dates an ON an.type='anniversary' AND an.cleared_at IS NULL AND CASE WHEN b.kind='subscriber'
     THEN an.brand_id=$1 AND an.subscriber_id=b.id ELSE an.contact_id=b.id AND an.subscriber_id IS NULL END)`;
 
 type PersonRow = {
@@ -188,16 +188,17 @@ export async function setDate(sql: Sql, workspace: string, brand: string, target
   const bySubscriber = target.subscriber !== null;
   if (!bySubscriber && !target.contact) return;
   if (!value) {
+    // Marked cleared rather than deleted: the runtime role has no DELETE on contact_dates (migration 041).
     await sql.query(bySubscriber
-      ? 'DELETE FROM contact_dates WHERE brand_id=$1 AND subscriber_id=$2 AND type=$3'
-      : 'DELETE FROM contact_dates WHERE contact_id=$2 AND subscriber_id IS NULL AND type=$3 AND $1::uuid IS NOT NULL',
+      ? 'UPDATE contact_dates SET cleared_at=clock_timestamp(),updated_at=clock_timestamp() WHERE brand_id=$1 AND subscriber_id=$2 AND type=$3 AND cleared_at IS NULL'
+      : 'UPDATE contact_dates SET cleared_at=clock_timestamp(),updated_at=clock_timestamp() WHERE contact_id=$2 AND subscriber_id IS NULL AND type=$3 AND cleared_at IS NULL AND $1::uuid IS NOT NULL',
     [brand, bySubscriber ? target.subscriber : target.contact, type]);
     return;
   }
   const conflict = bySubscriber ? '(workspace_id,brand_id,subscriber_id,type) WHERE subscriber_id IS NOT NULL' : '(workspace_id,contact_id,type) WHERE subscriber_id IS NULL';
   await sql.query(`INSERT INTO contact_dates(workspace_id,id,contact_id,brand_id,subscriber_id,type,label,month,day,year) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
     ON CONFLICT ${conflict} DO UPDATE SET month=EXCLUDED.month,day=EXCLUDED.day,year=EXCLUDED.year,label=EXCLUDED.label,
-      contact_id=coalesce(EXCLUDED.contact_id,contact_dates.contact_id),updated_at=clock_timestamp()`,
+      contact_id=coalesce(EXCLUDED.contact_id,contact_dates.contact_id),cleared_at=NULL,updated_at=clock_timestamp()`,
   [workspace, randomUUID(), target.contact, bySubscriber ? brand : null, target.subscriber, type, label, value.month, value.day, value.year ?? null]);
 }
 
