@@ -497,7 +497,15 @@ describe('FL-AT-044 sending', () => {
     const late = await run<{ id: string; revision: number }>('sms.draft', { operationKey: key(), companyId: company[w], body: 'Weekend hours' });
     const lateReview = await run<{ digest: string }>('sms.review', { id: late.id, expectedRevision: late.revision });
     await run('sms.confirm', { operationKey: key(), id: late.id, expectedRevision: late.revision, digest: lateReview.digest });
+    // A sign-up during quiet hours gets its YES confirmation at once; one queued long before (sending was down) waits.
+    const brandId = (await rows<{ id: string }>(w, 'SELECT id FROM brands'))[0]!.id;
+    const offer = await db.tenant(w, sql => texting.smsOffer(sql, w, brandId));
+    await db.tenant(w, sql => texting.recordSignup(sql, w, brandId, null, { phone: '212 555 0431', smsConsent: true, wordingShown: offer!.wording }));
+    await db.tenant(w, sql => texting.recordSignup(sql, w, brandId, null, { phone: '212 555 0432', smsConsent: true, wordingShown: offer!.wording }));
+    await db.tenant(w, sql => sql.query(`UPDATE sms_messages SET created_at=clock_timestamp()-interval '11 minutes' WHERE to_e164='+12125550432'`));
     await tick(w);
+    const confirmations = await rows<{ to_e164: string; state: string; reason: string | null }>(w, `SELECT to_e164,state,reason FROM sms_messages WHERE purpose='confirmation' AND to_e164 IN ('+12125550431','+12125550432') ORDER BY to_e164`);
+    expect(confirmations).toEqual([{ to_e164: '+12125550431', state: 'delivered', reason: null }, { to_e164: '+12125550432', state: 'pending', reason: 'quiet_hours' }]);
     const byPhone = await rows<{ to_e164: string; state: string; reason: string | null; next_check_at: Date }>(w, `SELECT to_e164,state,reason,next_check_at FROM sms_messages WHERE send_id=$1`, [late.id]);
     for (const message of byPhone) {
       if (message.to_e164.startsWith('+1212')) { expect(message).toMatchObject({ state: 'pending', reason: 'quiet_hours' }); expect([13, 14]).toContain(message.next_check_at.getUTCHours()); }
