@@ -15,6 +15,8 @@ export type MessagingOptions = { db: Database; port: TwilioMessagingPort; seal: 
 
 const permanentStatusCodes = new Set(['30005', '30006', '21211', '21614', '21612']);
 const purposeNeedsWindow = new Set(['broadcast', 'confirmation']);
+/** A sign-up confirmation admitted this soon after it was queued is sent outside quiet hours (FL-SMS-009). */
+export const confirmationReplyMinutes = 10;
 
 export async function businessName(sql: Sql, companyId: string) {
   const row = (await sql.query<{ name: string }>(`SELECT coalesce(b.dba_name,b.legal_name,c.name) AS name FROM companies c LEFT JOIN sms_carrier_brands b ON b.company_id=c.id WHERE c.id=$1`, [companyId])).rows[0];
@@ -120,7 +122,11 @@ export class TextingMessaging {
       if (row.purpose === 'confirmation' && consent !== 'pending_confirmation') return skip('confirmation_not_pending');
     }
     // 3. Quiet hours in the recipient's time zone (contact, else area code, else workspace).
-    if (purposeNeedsWindow.has(row.purpose)) {
+    // A confirmation sent within minutes of the sign-up is a direct reply to the person's own request, not marketing,
+    // so it goes at once. One delayed past that (an outage, sending still locked) waits for the window like any other text.
+    const freshReply = row.purpose === 'confirmation' && (await sql.query<{ fresh: boolean }>(
+      `SELECT created_at > clock_timestamp() - make_interval(mins => $2) fresh FROM sms_messages WHERE id=$1`, [row.id, confirmationReplyMinutes])).rows[0]?.fresh === true;
+    if (purposeNeedsWindow.has(row.purpose) && !freshReply) {
       const zones = await this.zones(sql, contact, row.to_e164);
       const window = nextWindow(now, zones, required.send_window_start_hour, required.send_window_end_hour);
       if (window > now) return defer(window, 'quiet_hours');
