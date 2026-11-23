@@ -37,7 +37,7 @@ export async function verifyPracticeImport(page: Page, origin: string) {
   assert.equal(requests[0], requests[1]);
   await page.reload();
   await page.getByRole('button', { name: 'Audience', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Find an exact email' }).fill('practice-check@sample.test');
+  await page.getByRole('searchbox', { name: 'Search email, name or phone' }).fill('practice-check@sample.test');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await page.getByRole('button', { name: 'practice-check@sample.test', exact: true }).click();
   await page.getByText('Pending confirmation', { exact: true }).waitFor();

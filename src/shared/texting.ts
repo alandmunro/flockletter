@@ -125,10 +125,10 @@ const body = z.string().min(1).max(1600);
 export const shortName = z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/, 'Use 3–30 lowercase letters, digits or dashes.');
 export const textingCommands = {
   'sms.status': descriptor('Read texting setup for this workspace: registration state and number per company, allowance use and the settings still needed before sending. Never returns provider credentials.', 'read', false, {}),
-  'sms.configure': descriptor('Set the workspace short name, notification email, time zone and the optional sign-up fields (phone, birthday, anniversary).', 'owner', true, {
+  'sms.configure': descriptor('Set the workspace short name, notification email, time zone, the optional sign-up fields (name, phone, birthday, anniversary) and whether people may sign up for texts without an email.', 'owner', true, {
     operationKey: key, expectedRevision: z.number().int().positive(), shortName: shortName.optional(), notificationEmail: z.email().max(254).nullable().optional(),
     timeZone: z.string().max(64).optional(), phoneField: z.boolean().optional(), birthdayField: z.boolean().optional(), anniversaryField: z.boolean().optional(),
-    anniversaryLabel: z.string().trim().min(1).max(40).optional() }),
+    anniversaryLabel: z.string().trim().min(1).max(40).optional(), nameField: z.boolean().optional(), phoneOnlySignup: z.boolean().optional() }),
   'sms.contacts': descriptor('List text contacts with their consent state per company, including numbers that are not textable.', 'owner', false, {
     filter: z.enum(['all', 'not_textable', 'opted_out', 'pending']).default('all'), cursor: id.optional(), limit: z.number().int().min(1).max(100).default(50) }),
   'sms.addContact': descriptor('Add or re-add a contact phone without consent. Imports never carry SMS consent. Re-adding an opted-out contact requires acknowledging that no text goes out until they text START.', 'owner', true, {

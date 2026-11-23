@@ -1,6 +1,7 @@
 // The texting add-on behind the one command layer (customer `sms.*` and operator `platform.texting*`),
 // plus its worker pass, signed webhooks, short-link redirects and the sign-up page hook.
 import { businessRefusals, twilioBusiness } from '../../shared/texting-business.js';
+import { linkPhone, setDate } from '../subscribers/people.js';
 import { randomInt, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { Database, Sql } from '../db.js';
@@ -79,7 +80,7 @@ export class Texting {
     }
   }
   private async profile(sql: Sql) {
-    return (await sql.query<{ short_name: string | null; short_name_changed_at: Date | null; notification_email: string | null; time_zone: string; phone_field: boolean; birthday_field: boolean; anniversary_field: boolean; anniversary_label: string; revision: number }>('SELECT * FROM sms_workspace_profile')).rows[0] ?? null;
+    return (await sql.query<{ short_name: string | null; short_name_changed_at: Date | null; notification_email: string | null; time_zone: string; phone_field: boolean; birthday_field: boolean; anniversary_field: boolean; anniversary_label: string; name_field: boolean; phone_only_signup: boolean; revision: number }>('SELECT * FROM sms_workspace_profile')).rows[0] ?? null;
   }
   private async status(sql: Sql, w: string) {
     const settings = await readSettings(sql, w), profile = await this.profile(sql);
@@ -91,13 +92,13 @@ export class Texting {
     const missing = textingSettingKeys.filter(key => ['sending', 'always'].includes(textingSettings[key].required) && settings[key] === undefined);
     if (settings.reconcile_settle_minutes === undefined && (await sql.query(`SELECT 1 FROM sms_registration_steps s JOIN sms_registrations r ON r.id=s.registration_id AND r.revision=s.revision WHERE s.state='uncertain' LIMIT 1`)).rowCount) missing.push('reconcile_settle_minutes');
     return { mode: this.options.mode, profile: profile ? { shortName: profile.short_name, notificationEmail: profile.notification_email, timeZone: profile.time_zone,
-        phoneField: profile.phone_field, birthdayField: profile.birthday_field, anniversaryField: profile.anniversary_field, anniversaryLabel: profile.anniversary_label, revision: profile.revision } : null,
+        phoneField: profile.phone_field, birthdayField: profile.birthday_field, anniversaryField: profile.anniversary_field, anniversaryLabel: profile.anniversary_label, nameField: profile.name_field, phoneOnlySignup: profile.phone_only_signup, revision: profile.revision } : null,
       companies: companies.map(c => ({ id: c.id, name: c.name, carrierBrand: !!c.carrier_brand_id, registration: c.registration_state ?? 'not_started', number: c.e164, numberState: c.number_state,
         canSend: c.registration_state === 'approved' && c.number_state === 'active' })),
       usage: { month: this.now().toISOString().slice(0, 7), used: usage?.segments_used ?? 0, reserved: usage?.segments_reserved ?? 0, allowance: settings.monthly_segment_allowance ?? null },
       settingsNeeded: missing };
   }
-  private async configure(sql: Sql, w: string, actor: Actor, via: Interface, p: { expectedRevision: number; shortName?: string; notificationEmail?: string | null; timeZone?: string; phoneField?: boolean; birthdayField?: boolean; anniversaryField?: boolean; anniversaryLabel?: string }) {
+  private async configure(sql: Sql, w: string, actor: Actor, via: Interface, p: { expectedRevision: number; shortName?: string; notificationEmail?: string | null; timeZone?: string; phoneField?: boolean; birthdayField?: boolean; anniversaryField?: boolean; anniversaryLabel?: string; nameField?: boolean; phoneOnlySignup?: boolean }) {
     let profile = await this.profile(sql);
     if (!profile) { await sql.query('INSERT INTO sms_workspace_profile(workspace_id) VALUES($1)', [w]); profile = (await this.profile(sql))!; }
     requireCondition(profile.revision === p.expectedRevision, 409, 'revision_conflict', 'These settings changed. Reload and try again.');
@@ -114,12 +115,16 @@ export class Texting {
     }
     const next = { short_name: p.shortName ?? profile.short_name, notification_email: p.notificationEmail === undefined ? profile.notification_email : p.notificationEmail,
       time_zone: p.timeZone ?? profile.time_zone, phone_field: p.phoneField ?? profile.phone_field, birthday_field: p.birthdayField ?? profile.birthday_field,
-      anniversary_field: p.anniversaryField ?? profile.anniversary_field, anniversary_label: p.anniversaryLabel ?? profile.anniversary_label };
-    await sql.query(`UPDATE sms_workspace_profile SET short_name=$1,notification_email=$2,time_zone=$3,phone_field=$4,birthday_field=$5,anniversary_field=$6,anniversary_label=$7,
+      anniversary_field: p.anniversaryField ?? profile.anniversary_field, anniversary_label: p.anniversaryLabel ?? profile.anniversary_label,
+      name_field: p.nameField ?? profile.name_field, phone_only_signup: p.phoneOnlySignup ?? profile.phone_only_signup };
+    // Text-only sign-up needs the phone field (D1).
+    requireCondition(!next.phone_only_signup || next.phone_field, 422, 'phone_field_required', 'Turn on the phone field to allow text-only sign-up.');
+    await sql.query(`UPDATE sms_workspace_profile SET short_name=$1,notification_email=$2,time_zone=$3,phone_field=$4,birthday_field=$5,anniversary_field=$6,anniversary_label=$7,name_field=$8,phone_only_signup=$9,
       short_name_changed_at=CASE WHEN $1 IS DISTINCT FROM short_name THEN clock_timestamp() ELSE short_name_changed_at END,revision=revision+1,updated_at=clock_timestamp()`,
-      [next.short_name, next.notification_email, next.time_zone, next.phone_field, next.birthday_field, next.anniversary_field, next.anniversary_label]);
+      [next.short_name, next.notification_email, next.time_zone, next.phone_field, next.birthday_field, next.anniversary_field, next.anniversary_label, next.name_field, next.phone_only_signup]);
     const old = { short_name: profile.short_name, notification_email: profile.notification_email, time_zone: profile.time_zone, phone_field: profile.phone_field,
-      birthday_field: profile.birthday_field, anniversary_field: profile.anniversary_field, anniversary_label: profile.anniversary_label };
+      birthday_field: profile.birthday_field, anniversary_field: profile.anniversary_field, anniversary_label: profile.anniversary_label,
+      name_field: profile.name_field, phone_only_signup: profile.phone_only_signup };
     await audit(sql, w, actor.actorId, via, 'texting.configure', null, old, next);
     return { revision: profile.revision + 1, ...next };
   }
@@ -338,14 +343,14 @@ export class Texting {
     if (this.options.mode === 'off') return null;
     return this.db.read(w, async sql => {
       const profile = await this.profile(sql);
-      return profile ? { phone: profile.phone_field, birthday: profile.birthday_field, anniversary: profile.anniversary_field, anniversaryLabel: profile.anniversary_label } : null;
+      return profile ? { phone: profile.phone_field, birthday: profile.birthday_field, anniversary: profile.anniversary_field, anniversaryLabel: profile.anniversary_label, name: profile.name_field } : null;
     });
   }
   /** What the hosted sign-up page shows: the workspace's optional fields, and the SMS checkbox wording if offered. */
   async signupView(sql: Sql, w: string, brandId: string, smsPreview = false) {
     if (this.options.mode === 'off') return null;
     const profile = await this.profile(sql);
-    if (!profile || (!profile.phone_field && !profile.birthday_field && !profile.anniversary_field)) return null;
+    if (!profile || (!profile.phone_field && !profile.birthday_field && !profile.anniversary_field && !profile.name_field)) return null;
     let offer = profile.phone_field ? await this.smsOffer(sql, w, brandId, smsPreview) : null;
     // While carrier registration is under way the live page shows the same SMS box greyed out, with its disclosures and
     // policy links, so carrier vetting (which reads this page) sees the opt-in. It cannot be ticked and records nothing.
@@ -355,6 +360,9 @@ export class Texting {
       pending = offer !== null;
     }
     return { phone: profile.phone_field, birthday: profile.birthday_field, anniversary: profile.anniversary_field, anniversaryLabel: profile.anniversary_label,
+      name: profile.name_field,
+      // Text-only sign-up is offered only while the text box can actually be ticked (D1).
+      phoneOnly: profile.phone_only_signup && profile.phone_field && !!offer && !pending,
       smsWording: offer?.wording ?? null, smsTermsUrl: offer?.smsTermsUrl ?? null, privacyPolicyUrl: offer?.privacyPolicyUrl ?? null, ...(pending ? { smsPending: true } : {}) };
   }
   private async registrationUnderway(sql: Sql, brandId: string) {
@@ -381,14 +389,30 @@ export class Texting {
     return { companyId: company.company_id, wording: smsConsentWording(business, settings.contact_monthly_limit, stayTexts), policyVersion: smsConsentPolicyVersion(stayTexts), business, expiryDays: settings.unconfirmed_expiry_days,
       smsTermsUrl: links?.sms_terms_url ?? null, privacyPolicyUrl: links?.privacy_policy_url ?? null };
   }
-  async recordSignup(sql: Sql, w: string, brandId: string, subscriberId: string | null, input: { phone?: string; smsConsent?: boolean; wordingShown?: string; birthday?: { month: number; day: number }; anniversary?: { month: number; day: number; year?: number } }) {
-    if (this.options.mode === 'off') return;
+  /**
+   * Records the optional sign-up fields. Returns what happened to text consent, so a text-only sign-up (D1) can refuse
+   * one that subscribed to nothing. A phone joins the subscriber, replacing an earlier phone; the newest sign-up wins
+   * for names and dates too (D4).
+   */
+  async recordSignup(sql: Sql, w: string, brandId: string, subscriberId: string | null, input: { phone?: string; smsConsent?: boolean; wordingShown?: string; firstName?: string; lastName?: string; birthday?: { month: number; day: number }; anniversary?: { month: number; day: number; year?: number } }):
+    Promise<{ text: 'confirmation_sent' | 'needs_start' | 'already_subscribed' | 'none'; contactId: string | null }> {
+    if (this.options.mode === 'off') return { text: 'none', contactId: null };
     const fields = await this.profile(sql);
-    if (!fields) return;
+    if (!fields) return { text: 'none', contactId: null };
     const phone = fields.phone_field && input.phone ? normalizeUsPhone(input.phone) : null;
     requireCondition(!input.phone || !fields.phone_field || phone, 422, 'invalid_phone', 'Enter a valid US mobile number, or leave it blank.');
     let contactId: string | null = null;
-    if (phone) contactId = (await this.upsertContact(sql, w, phone, { brandId, subscriberId })).id;
+    if (phone) {
+      contactId = (await this.upsertContact(sql, w, phone, { brandId })).id;
+      if (subscriberId) await linkPhone(sql, w, brandId, subscriberId, contactId);
+    }
+    if (fields.name_field && (input.firstName || input.lastName)) {
+      const first = input.firstName?.slice(0, 60) || null, last = input.lastName?.slice(0, 60) || null;
+      if (subscriberId) await sql.query('UPDATE subscribers SET first_name=coalesce($2,first_name),last_name=coalesce($3,last_name) WHERE id=$1', [subscriberId, first, last]);
+      else if (contactId) await sql.query(`UPDATE sms_contacts SET first_name=coalesce($2,first_name),last_name=coalesce($3,last_name),
+        name=nullif(concat_ws(' ',coalesce($2,first_name),coalesce($3,last_name)),''),updated_at=clock_timestamp() WHERE id=$1`, [contactId, first, last]);
+    }
+    let text: 'confirmation_sent' | 'needs_start' | 'already_subscribed' | 'none' = 'none';
     const offer = await this.smsOffer(sql, w, brandId);
     if (contactId && offer && input.smsConsent) {
       // The wording recorded is exactly what the page showed; a mismatch is refused.
@@ -398,23 +422,22 @@ export class Texting {
       if (current === 'opted_out' || current === 'pending_reenrollment') {
         // Phase 2 never clears a carrier opt-out by API; the contact must text START (CON-6).
         await setConsent(sql, w, offer.companyId, contactId, 'pending_reenrollment', 'reenrollment_pending', 'signup_page', 'subscriber', 'signup_page', { wording: offer.wording, wordingDigest, policyVersion: offer.policyVersion });
+        text = 'needs_start';
       } else if (current !== 'opted_in') {
         await setConsent(sql, w, offer.companyId, contactId, 'pending_confirmation', 'checkbox_opt_in', 'signup_page', 'subscriber', 'signup_page', { wording: offer.wording, wordingDigest, policyVersion: offer.policyVersion, pendingDays: offer.expiryDays });
         await queueText(sql, w, { companyId: offer.companyId, contactId, purpose: 'confirmation', to: phone!, body: confirmationText(offer.business) });
-      }
+        text = 'confirmation_sent';
+      } else text = 'already_subscribed';
     } else if (contactId && offer) {
       // A phone number alone is not consent (SUB-4).
       await sql.query(`INSERT INTO sms_consents(workspace_id,company_id,contact_id,state) VALUES($1,$2,$3,'none') ON CONFLICT DO NOTHING`, [w, offer.companyId, contactId]);
     }
     for (const [type, value, label] of [['birthday', fields.birthday_field ? input.birthday : undefined, 'Birthday'], ['anniversary', fields.anniversary_field ? input.anniversary : undefined, fields.anniversary_label]] as const) {
       if (!value) continue;
-      const target = subscriberId ? { brand: brandId, subscriber: subscriberId, contact: contactId } : { brand: null, subscriber: null, contact: contactId };
-      if (!target.subscriber && !target.contact) continue;
-      const year = 'year' in value ? value.year ?? null : null;
-      await sql.query(`INSERT INTO contact_dates(workspace_id,id,contact_id,brand_id,subscriber_id,type,label,month,day,year) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-        ON CONFLICT DO NOTHING`, [w, randomUUID(), target.contact, target.brand, target.subscriber, type, label, value.month, value.day, year]);
+      await setDate(sql, w, brandId, { subscriber: subscriberId, contact: contactId }, type, value, label);
     }
     if (contactId) await this.wake(w);
+    return { text, contactId };
   }
 
   // ---------------- Worker ----------------

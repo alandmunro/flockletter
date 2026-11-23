@@ -8377,7 +8377,7 @@
     "/api/v1/commands/sms.configure": {
       "post": {
         "operationId": "sms_configure",
-        "summary": "Set the workspace short name, notification email, time zone and the optional sign-up fields (phone, birthday, anniversary).",
+        "summary": "Set the workspace short name, notification email, time zone, the optional sign-up fields (name, phone, birthday, anniversary) and whether people may sign up for texts without an email.",
         "security": [
           {
             "bearerAuth": []
@@ -8436,6 +8436,12 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 40
+                  },
+                  "nameField": {
+                    "type": "boolean"
+                  },
+                  "phoneOnlySignup": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -15883,7 +15889,7 @@
     "/api/v1/commands/audience.list": {
       "post": {
         "operationId": "audience_list",
-        "summary": "Find contacts for one brand by status or exact email. Owner session required.",
+        "summary": "Find people for one brand by email status, text status, special dates, exact email, or a search of email, name and phone. Owner session required.",
         "security": [
           {
             "bearerAuth": []
@@ -15911,12 +15917,44 @@
                       "confirmed",
                       "unsubscribed",
                       "hard_bounced",
-                      "complained"
+                      "complained",
+                      "no_email"
+                    ]
+                  },
+                  "text": {
+                    "type": "string",
+                    "enum": [
+                      "no_phone",
+                      "phone_only",
+                      "pending_confirmation",
+                      "expired",
+                      "opted_in",
+                      "opted_out",
+                      "pending_reenrollment",
+                      "not_textable"
                     ]
                   },
                   "email": {
                     "type": "string",
                     "maxLength": 254
+                  },
+                  "search": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "dates": {
+                    "type": "string",
+                    "enum": [
+                      "birthday",
+                      "anniversary",
+                      "any"
+                    ]
+                  },
+                  "month": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 12
                   },
                   "cursor": {
                     "type": "string",
@@ -16007,6 +16045,250 @@
                 "required": [
                   "brandId",
                   "id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/audience.updateContact": {
+      "post": {
+        "operationId": "audience_updateContact",
+        "summary": "Edit one person: first and last name, phone (email subscribers only) and special dates. Null clears a field. Never changes email or text consent. Owner session required.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "owner",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  },
+                  "firstName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "lastName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "phone": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 32
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "birthday": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "month": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 12
+                          },
+                          "day": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 31
+                          }
+                        },
+                        "required": [
+                          "month",
+                          "day"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "anniversary": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "month": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 12
+                          },
+                          "day": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 31
+                          },
+                          "year": {
+                            "type": "integer",
+                            "minimum": 1900,
+                            "maximum": 2100
+                          }
+                        },
+                        "required": [
+                          "month",
+                          "day"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "brandId",
+                  "id",
+                  "operationKey"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result in a result envelope. Batch results include per-item failures."
+          },
+          "401": {
+            "description": "Invalid, expired or revoked authentication."
+          },
+          "403": {
+            "description": "Missing scope, owner membership or permitted browser origin."
+          },
+          "404": {
+            "description": "Unavailable command or scoped resource."
+          },
+          "409": {
+            "description": "Operation-key or draft-version conflict."
+          },
+          "413": {
+            "description": "Request or batch too large."
+          },
+          "422": {
+            "description": "Input or preparation limit failure; all schema issues are returned."
+          },
+          "429": {
+            "description": "Rate or concurrency limit; retry with the same operation keys."
+          },
+          "503": {
+            "description": "Required configuration or current membership verification unavailable."
+          }
+        }
+      }
+    },
+    "/api/v1/commands/audience.stopTexts": {
+      "post": {
+        "operationId": "audience_stopTexts",
+        "summary": "Stop all texts to this person's phone for the brand's company. There is no command that starts texts; only the person can, by signing up and replying YES, or texting START. Owner session required.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "owner",
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "brandId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "operationKey": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  }
+                },
+                "required": [
+                  "brandId",
+                  "id",
+                  "operationKey"
                 ],
                 "additionalProperties": false
               }

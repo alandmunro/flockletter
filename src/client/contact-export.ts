@@ -1,4 +1,9 @@
 import { exportLimits, type ExportPage } from '../shared/audience-export.js';
+import { textStateLabel, type SpecialDate } from '../shared/audience.js';
+
+/** ISO-style month and day, with the year when known (YYYY-MM-DD or --MM-DD). */
+const monthDay = (d: SpecialDate | null) =>
+  d ? (d.year ? String(d.year) : '-') + '-' + String(d.month).padStart(2, '0') + '-' + String(d.day).padStart(2, '0') : '';
 
 function csvCell(value: string) {
   // Spreadsheet programs can interpret formula markers in quoted CSV fields.
@@ -11,7 +16,7 @@ export async function collectContactCsv(
   signal: AbortSignal,
   progress: (prepared: number, total: number) => void = () => {},
 ): Promise<{ file: Blob; contacts: number }> {
-  const parts = ['\uFEFF"Email","Status","Added at (UTC)","Confirmed at (UTC)"\r\n'];
+  const parts = ['\uFEFF"Email","Email status","First name","Last name","Phone","Text status","Birthday","Anniversary","Anniversary label","Added at (UTC)","Confirmed at (UTC)"\r\n'];
   const cursors = new Set<string>();
   let cursor: string | undefined,
     revision: string | undefined,
@@ -35,7 +40,8 @@ export async function collectContactCsv(
     total = page.total;
     for (const row of page.rows)
       parts.push(
-        [row.email, row.state, row.createdAt, row.confirmedAt ?? ''].map(csvCell).join(',') + '\r\n',
+        [row.email ?? '', row.state ?? '', row.firstName ?? '', row.lastName ?? '', row.phone ?? '', row.text === 'no_phone' ? '' : textStateLabel[row.text],
+          monthDay(row.birthday), monthDay(row.anniversary), row.anniversary?.label ?? '', row.createdAt, row.confirmedAt ?? ''].map(csvCell).join(',') + '\r\n',
       );
     count += page.rows.length;
     if (

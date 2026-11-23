@@ -13,6 +13,8 @@
 .signup-postcard form { display:grid; gap:18px }
 .signup-postcard label { display:grid; gap:6px }
 .signup-postcard :is(input[type="email"],input[type="tel"],input[type="text"],input[type="number"],input:not([type]),select) { padding:10px; min-height:44px; border:1px solid #927985; border-radius:5px; font:inherit; width:100% }
+.signup-postcard .postcard-names { display:flex; flex-wrap:wrap; gap:12px }
+.signup-postcard .postcard-names label { flex:1 1 10rem }
 .signup-postcard .postcard-date { display:flex; flex-wrap:wrap; gap:8px; border:0; padding:0; margin:0; min-width:0 }
 .signup-postcard .postcard-date legend { padding:0; margin-bottom:6px }
 .signup-postcard .postcard-date :is(select,input) { width:auto; flex:1 1 7rem }

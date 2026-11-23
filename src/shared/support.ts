@@ -38,7 +38,7 @@ export function supportAnswer(topic: SupportTopic) {
     case 'audience':
       return {
         title: 'How do I honor an unsubscribe?',
-        text: 'A workspace owner can open Audience, find the exact email address within the brand, open the contact, and confirm Unsubscribe contact. A repeat signup keeps the opt-out.',
+        text: 'A workspace owner can open Audience, search for the email address within the brand, open the contact, and confirm Unsubscribe from email. A repeat signup keeps the opt-out.',
       };
     case 'campaigns':
       return {

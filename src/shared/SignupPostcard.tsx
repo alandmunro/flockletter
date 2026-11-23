@@ -43,7 +43,11 @@ export function SignupPostcard({
 }
 export type SignupTexting = { phone: boolean; birthday: boolean; anniversary: boolean; anniversaryLabel: string; smsWording: string | null; smsTermsUrl?: string | null; privacyPolicyUrl?: string | null;
   /** Registration under way: the SMS box is shown greyed out with its disclosures and cannot be ticked. */
-  smsPending?: boolean };
+  smsPending?: boolean;
+  /** Optional first and last name fields (D3). */
+  name?: boolean;
+  /** Email is optional: a sign-up needs an email or a phone with the text box ticked (D1). */
+  phoneOnly?: boolean };
 const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 function MonthDay({ prefix, label, year = false }: { prefix: string; label: string; year?: boolean }) {
   return (
@@ -67,7 +71,7 @@ function TextingFields({ texting }: { texting: SignupTexting }) {
     <>
       {texting.phone && (
         <label>
-          Mobile number (optional, US only)
+          {texting.phoneOnly ? "Mobile number (US only)" : "Mobile number (optional, US only)"}
           <input type="tel" name="phone" autoComplete="tel" maxLength={20} />
         </label>
       )}
@@ -104,15 +108,31 @@ export function SignupFields({
   preview?: boolean;
   texting?: SignupTexting;
 }) {
+  const emailOptional = texting?.phoneOnly === true;
   return (
     <form
       method="post"
       onSubmit={preview ? (e) => e.preventDefault() : undefined}
     >
+      {texting?.name && (
+        <div className="postcard-names">
+          <label>
+            First name (optional)
+            <input type="text" name="firstName" autoComplete="given-name" maxLength={60} />
+          </label>
+          <label>
+            Last name (optional)
+            <input type="text" name="lastName" autoComplete="family-name" maxLength={60} />
+          </label>
+        </div>
+      )}
+      {emailOptional && (
+        <p>Sign up with your email, your mobile number, or both.</p>
+      )}
       <label>
-        Email address
+        {emailOptional ? "Email address (optional if you sign up for texts)" : "Email address"}
         <input
-          required
+          required={!emailOptional}
           type="email"
           autoComplete="email"
           name="email"
@@ -121,7 +141,7 @@ export function SignupFields({
       </label>
       <input type="hidden" name="policyVersion" value={version} />
       <label className="postcard-consent">
-        <input required type="checkbox" name="consentAffirmed" value="yes" />
+        <input required={!emailOptional} type="checkbox" name="consentAffirmed" value="yes" />
         {consent}
       </label>
       {texting && <TextingFields texting={texting} />}

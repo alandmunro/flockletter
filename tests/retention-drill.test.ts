@@ -191,6 +191,7 @@ INSERT INTO sms_registration_steps(workspace_id,registration_id,revision,step,op
 INSERT INTO sms_operator_approvals(workspace_id,id,registration_id,revision,step,cost_note,approved_by) VALUES(w,gen_random_uuid(),reg,1,'brand','fixture','fixture');
 INSERT INTO sms_numbers(workspace_id,id,carrier_brand_id,e164,provider_sid,messaging_service_sid,state) VALUES(w,num,cb,phone,'PNfixture','MGfixture','active');
 INSERT INTO sms_contacts(workspace_id,id,phone_e164,subscriber_id,brand_id) VALUES(w,ct,phone,s,b);
+INSERT INTO sms_contact_subscribers(workspace_id,contact_id,brand_id,subscriber_id) VALUES(w,ct,b,s);
 INSERT INTO sms_consents(workspace_id,company_id,contact_id,state) VALUES(w,co,ct,'opted_in');
 INSERT INTO sms_consent_events(workspace_id,id,company_id,contact_id,event,source,recorded_by) VALUES(w,gen_random_uuid(),co,ct,'confirmed','inbound_sms','fixture');
 INSERT INTO contact_dates(workspace_id,id,contact_id,type,label,month,day) VALUES(w,gen_random_uuid(),ct,'birthday','Birthday',1,2);

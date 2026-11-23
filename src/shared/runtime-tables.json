@@ -83,6 +83,7 @@
   {"name":"sms_consents","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"sms_consent_events","scope":"workspace","permissions":["SELECT","INSERT"]},
   {"name":"contact_dates","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
+  {"name":"sms_contact_subscribers","scope":"workspace","permissions":["SELECT","INSERT","DELETE"]},
   {"name":"sms_member_phones","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"sms_sends","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"sms_messages","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},

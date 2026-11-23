@@ -10,6 +10,7 @@ import { comparePlan, verifiedMemberCount } from './billing/plan-comparison.js';
 import { deliveryGaps, digest, inspectImage, preflight, renderPreview } from './content.js';
 import { SubscriberIntake } from './subscribers/intake.js';
 import { audienceSummary, contactDetail, listContacts, unsubscribeContact } from './subscribers/audience.js';
+import { peopleSummary, stopTexts, updatePerson } from './subscribers/people.js';
 import {createSegment,deleteSegment,listSegments,renameSegment,segmentSummary,updateSegmentMembers} from './subscribers/segments.js';
 import { templates, fromTemplateContent, fromProductContent } from '../shared/authoring.js';
 import { invalidateStudioReviews, approveRehearsal, cancelRehearsal, capturedMessage, listRehearsals, processDue, recipientOutcomes, rehearsalReport, reviewRehearsal, type CheckOwner } from './campaign/rehearsal.js';
@@ -206,7 +207,7 @@ export class CommandService {
           return prior.rows[0].result;
         }
         const disablingIntake = name === 'intake.configure' && 'enabled' in input && input.enabled === false;
-        if (name !== 'connection.revoke' && name !== 'team.revoke' && name !== 'rehearsal.cancel' && !disablingIntake && !optOut) {
+        if (name !== 'connection.revoke' && name !== 'team.revoke' && name !== 'rehearsal.cancel' && name !== 'audience.updateContact' && name !== 'audience.stopTexts' && !disablingIntake && !optOut) {
           const count = (await sql.query<{ count: string }>('SELECT count(*) FROM operations')).rows[0];
           requireCondition(Number(count?.count) < limits.preparationOperations, 422, 'preparation_limit', 'This foundation workspace has reached its preparation operation limit. Contact the operator; connection revocation remains available.');
         }
@@ -484,18 +485,29 @@ export class CommandService {
         return updateSegmentMembers(sql,w,brandId,segmentId,action,emails);
       }
       case 'audience.summary': {
-        await audienceBrand(sql, actor, commands[name].schema.parse(raw).brandId);
-        return audienceSummary(sql);
+        const { brandId } = commands[name].schema.parse(raw);
+        await audienceBrand(sql, actor, brandId);
+        return { ...(await audienceSummary(sql)), people: await peopleSummary(sql, brandId) };
       }
       case 'audience.list': {
         const input = commands[name].schema.parse(raw);
         await audienceBrand(sql, actor, input.brandId);
-        return listContacts(sql, input);
+        return listContacts(sql, input.brandId, input);
       }
       case 'audience.contact': {
         const input = commands[name].schema.parse(raw);
         await audienceBrand(sql, actor, input.brandId);
-        return contactDetail(sql, input.id, input.cursor);
+        return contactDetail(sql, input.brandId, input.id, input.cursor);
+      }
+      case 'audience.updateContact': {
+        const { brandId, id, firstName, lastName, phone, birthday, anniversary } = commands[name].schema.parse(raw);
+        await audienceBrand(sql, actor, brandId);
+        return updatePerson(sql, w, brandId, id, { firstName, lastName, phone, birthday, anniversary }, { id: actor.actorId, via: actor.kind === 'session' ? 'ui' : 'api' });
+      }
+      case 'audience.stopTexts': {
+        const { brandId, id } = commands[name].schema.parse(raw);
+        await audienceBrand(sql, actor, brandId);
+        return stopTexts(sql, w, brandId, id, { id: actor.actorId, via: actor.kind === 'session' ? 'ui' : 'api' });
       }
       case 'audience.unsubscribe':
         return unsubscribeContact(sql, commands[name].schema.parse(raw).id);

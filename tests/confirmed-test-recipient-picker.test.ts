@@ -4,11 +4,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ConfirmedTestRecipientPicker } from '../src/client/ConfirmedTestRecipientPicker.js';
 import type { AudienceContact } from '../src/shared/audience.js';
 
+const person = { kind: 'subscriber', firstName: null, lastName: null, phone: null, text: 'no_phone', birthday: null, anniversary: null } as const;
+
 const noop = () => {};
 const base: AudienceContact[] = [
-  { id: 'id1', email: 'confirmed@example.test', state: 'confirmed', createdAt: '2025-01-01T00:00:00Z', confirmedAt: '2025-01-02T00:00:00Z' },
-  { id: 'id2', email: 'pending@example.test', state: 'pending', createdAt: '2025-01-01T00:00:00Z',confirmedAt:null },
-  { id:'id3',email:'unsubscribed@example.test',state:'unsubscribed',createdAt:'2025-01-01T00:00:00Z',confirmedAt:'2025-01-02T00:00:00Z' },
+  { ...person, id: 'id1', email: 'confirmed@example.test', state: 'confirmed', createdAt: '2025-01-01T00:00:00Z', confirmedAt: '2025-01-02T00:00:00Z' },
+  { ...person, id: 'id2', email: 'pending@example.test', state: 'pending', createdAt: '2025-01-01T00:00:00Z',confirmedAt:null },
+  { ...person, id:'id3',email:'unsubscribed@example.test',state:'unsubscribed',createdAt:'2025-01-01T00:00:00Z',confirmedAt:'2025-01-02T00:00:00Z' },
 ];
 
 function render(props: Partial<ComponentProps<typeof ConfirmedTestRecipientPicker>>) {
