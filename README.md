@@ -65,6 +65,7 @@ Read the [foundation scope](docs/implementation/FOUNDATION.md), [API/MCP workflo
 
 ## Planning documents
 
+- [Supplemental requirements review](docs/supplemental-requirements/REVIEW.md) — 14 independent build specifications, remaining work, dependencies and proposed acceptance criteria.
 - [Software requirements](docs/SRD.md) — canonical draft scope and requirements.
 - [Product decisions](docs/DECISIONS.md) — accepted choices, proposals and unresolved questions.
 - [Phase 1 review](docs/PHASE_1.md) — product discussion and approval gates.
