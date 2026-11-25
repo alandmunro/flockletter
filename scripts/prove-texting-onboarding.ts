@@ -73,7 +73,7 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
       if (new URL(req.url()).pathname === '/api/v1/commands/sms.onboardingEvidence') evidence.push(req.postDataJSON());
     });
     assert.ok(await button('Attach practice ownership letter').isVisible());
-    await field('Practice IRS letter').selectOption('147C');
+    await panel.getByRole('combobox', { name: /^Practice IRS letter/ }).selectOption('147C');
     const [download] = await Promise.all([page.waitForEvent('download'), panel.getByRole('link', { name: 'Download practice 147C letter' }).click()]);
     const path = await download.path();
     assert.ok(path);
@@ -97,6 +97,7 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
     assert.equal(evidence[0]!.contents, bytes.toString('utf8'));
     assert.equal(evidence[0]!.document, '147C');
     assert.equal(evidence[0]!.expectedRevision, 1);
+    assert.equal(evidence[0]!.companyId, await panel.getByRole('combobox', { name: /^Company to register/ }).inputValue());
     assert.equal(await button('Confirm practice setup and submit').isEnabled(), false);
   }
   await button('Request email code').waitFor();
