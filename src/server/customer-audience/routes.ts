@@ -5,7 +5,7 @@ import { sendEmbed, sendPostcard } from './postcard.js';
 import express, { type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import type { CustomerAudience } from './service.js';
-import { redeemCustomerOptOut } from './service.js';
+import { customerPreferences, redeemCustomerOptOut } from './service.js';
 import { AppError } from '../errors.js';
 
 const escape = (value: string) =>
@@ -130,6 +130,37 @@ export function customerAudienceRoutes(service: CustomerAudience) {
       .send(
         page('Request received', '<p>Marketing for this brand is stopped for an eligible subscription.</p>'),
       );
+  });
+  const unavailable = (res: Response) => res.status(404).type('html').send(page(
+    'This preferences link is unavailable',
+    '<p>Open a more recent newsletter to manage preferences. You can still use the unsubscribe link in any newsletter.</p>',
+  ));
+  router.get('/preferences', async (req, res) => {
+    const token = typeof req.query.t === 'string' ? req.query.t : '';
+    const view = await customerPreferences(service.db, token);
+    if (!view) return unavailable(res);
+    const groups = view.groups.map(group => '<label><input type="checkbox" name="groups" value="' +
+      escape(group.id) + '"' + (group.selected ? ' checked' : '') + '> ' + escape(group.name) + '</label>').join('<br>');
+    res.type('html').send(page('Newsletter preferences', '<p>Choose which optional groups to hear from at ' +
+      escape(view.brand) + '. General newsletters use your brand subscription.</p><form method="post" action="/newsletter/preferences">' +
+      '<input type="hidden" name="token" value="' + escape(token) + '"><input type="hidden" name="version" value="' +
+      escape(view.version) + '">' + groups + '<p><button type="submit" name="choice" value="save">Save preferences</button></p>' +
+      '<p><button type="submit" name="choice" value="unsubscribe">Unsubscribe from this brand</button></p></form>'));
+  });
+  router.post('/preferences', async (req, res) => {
+    if (!req.is('application/x-www-form-urlencoded')) return res.sendStatus(415);
+    const { token, groups: submitted, version, choice } = req.body ?? {};
+    const groups: unknown[] = submitted === undefined ? [] : Array.isArray(submitted) ? submitted : [submitted];
+    if (typeof token !== 'string' || typeof version !== 'string' || !/^[a-f0-9]{64}$/.test(version) ||
+      !['save', 'unsubscribe'].includes(choice) || groups.length > 50 ||
+      !groups.every(group => typeof group === 'string' && /^[0-9a-f-]{36}$/i.test(group))) return res.sendStatus(400);
+    const result = await customerPreferences(service.db, token, {
+      version, groups: groups as string[], unsubscribe: choice === 'unsubscribe',
+    });
+    if (!result) return unavailable(res);
+    res.type('html').send('unsubscribed' in result
+      ? page('Unsubscribed', '<p>Marketing email from this brand is stopped.</p>')
+      : page('Preferences saved', '<p>Your choices apply to this brand.</p>'));
   });
   router.get('/:form/confirm', async (req, res) => {
     const form = await service.publicForm(String(req.params.form));

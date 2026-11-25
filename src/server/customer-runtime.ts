@@ -1,3 +1,5 @@
+import { coversTextCompany } from './texting/company-access.js';
+import { memberPermissions } from './team.js';
 import {ResendSenderSetup,resendSenderSetupPort,capturedSenderSetupPort} from './customer-delivery/sender-setup.js';
 import {storedResendRoute} from './customer-delivery/resend-route.js';
 import {SendingSafeguards} from './customer-delivery/safeguards.js';
@@ -14,7 +16,7 @@ import type { Config } from './config.js';
 import type { Database } from './db.js';
 import type { Actor } from './service.js';
 import type { IdentityProvider } from './auth.js';
-import { requireCondition } from './errors.js';
+import { AppError, requireCondition } from './errors.js';
 import { commands,type CommandName,type Capability } from '../shared/contracts.js';
 import type { CustomerOperationsStatus } from '../shared/customer-operations.js';
 import { customerSettings } from './customer-settings.js';
@@ -131,7 +133,31 @@ export class CustomerWorkflows {
       ...(settings.provisioningMonthlyLimit>0?{budgetPermit:async(sql,request)=>Boolean((await sql.query<{allowed:boolean}>(
         'SELECT flockletter_customer_jobs.claim_provisioning_budget($1,$2,$3,$4) AS allowed',
         [request.workspaceId,request.brandId,request.operationKey,settings.provisioningMonthlyLimit])).rows[0]?.allowed)}:{})});
-    this.texting=createTexting(db,config,env,{isOwner:identity.isOwner,wake:workspace=>this.wake(workspace)},textingSecrets);
+    this.texting=createTexting(db,config,env,{
+      isOwner:identity.isOwner,wake:workspace=>this.wake(workspace),
+      canDispatch: async (sql, workspace, companyId, actorId) => {
+        if (actorId.startsWith('connection:')) {
+          const grant = (await sql.query<{ issuer_id: string; scopes: string[]; brand_ids: string[] }>(
+            `SELECT issuer_id,scopes,brand_ids FROM connections
+              WHERE id::text=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()`,
+            [actorId.slice('connection:'.length)],
+          )).rows[0];
+          return Boolean(grant?.scopes.includes('sms:send') && grant.scopes.includes('read') &&
+            await identity.isOwner(grant.issuer_id, workspace) && await coversTextCompany(sql, companyId, grant.brand_ids));
+        }
+        if (!actorId.startsWith('user:')) return false;
+        const user = actorId.slice('user:'.length);
+        if (await identity.isOwner(user, workspace)) return true;
+        if (!identity.team || await identity.team.membership(user, workspace) !== 'member') return false;
+        try {
+          const grant = await memberPermissions(sql, workspace, user, identity.team, this.billing.options);
+          return grant.scopes.includes('sms:send') && await coversTextCompany(sql, companyId, grant.brandIds);
+        } catch (error) {
+          if (error instanceof AppError && error.status === 403) return false;
+          throw error;
+        }
+      },
+    },textingSecrets);
     if(this.texting)this.audience.options.texting=this.texting;
     const inboundBinding=env.FLOCKLETTER_CUSTOMER_SES_FEEDBACK_BINDING;
     const inboundRoute=inboundBinding?parseSesRoute(JSON.parse(inboundBinding)):undefined;
@@ -322,6 +348,7 @@ export class CustomerWorkflows {
       await run(()=>this.infrastructure.tickWorkspace(workspace));
       await run(()=>this.hydrateInfrastructure(workspace));
       for(const brand of brands) {
+        await run(()=>this.audience.tickImport(workspace,brand.id));
         await run(()=>this.audience.tick(workspace,brand.id));
       }
       await run(()=>this.team.tickWorkspace(workspace));

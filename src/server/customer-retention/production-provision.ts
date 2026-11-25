@@ -1,3 +1,4 @@
+import { privateWorkspaceTables } from './private-routes.js';
 import pg from 'pg';
 import tables from '../../shared/runtime-tables.json' with {type:'json'};
 import {productionDatabase,productionRestrictedRoles,productionRestrictedRoleGuard,productionRestrictedRoleCreationSql} from '../production-role-provision.js';
@@ -5,7 +6,7 @@ import {productionDatabase,productionRestrictedRoles,productionRestrictedRoleGua
 export type ProductionRetentionKind='planner'|'executor';
 export type ProductionRetentionPhase='role'|'database'|'objects';
 const schemas='public,flockletter_customer_jobs,flockletter_retention_control';
-const privateTables=['flockletter_customer_jobs.scopes','flockletter_customer_jobs.resend_domain_claims','flockletter_customer_jobs.resend_sender_routes','flockletter_customer_jobs.sending_state','flockletter_customer_jobs.sending_admissions','flockletter_customer_jobs.support_reply_routes','flockletter_customer_jobs.confirmation_routes','flockletter_retention_control.platform_records'];
+const privateTables=[...privateWorkspaceTables,'flockletter_retention_control.platform_records'];
 
 /** Fixed production SQL only; no connections, credential generation, LOGIN or erasure. */
 export function productionRetentionGrantSql(kind:ProductionRetentionKind,phase:ProductionRetentionPhase):string {

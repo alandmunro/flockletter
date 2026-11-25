@@ -13,6 +13,6 @@ export const segmentName = z
 export const segmentEmails = z.array(normalizedEmail).min(1).max(segmentBatchLimit);
 export const segmentAction = z.enum(['add', 'remove']);
 export type SegmentAction = z.infer<typeof segmentAction>;
-export type Segment = { id: string; name: string; counts: AudienceSummary };
+export type Segment = { id: string; name: string; subscriberSelectable?: boolean; counts: AudienceSummary };
 export type SegmentDirectory = { items: Segment[]; limit: number };
 export type SegmentMembershipResult = { segmentId: string; changed: number; counts: AudienceSummary };

@@ -159,7 +159,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     }
     // Base64 CSV payload plus the bounded metadata fields and their JSON encoding.
     const csvRequestBytes = 4 * Math.ceil(importLimits.bytes / 3) + 8192;
-    const limit = name==='asset.uploadBatch' ? '29mb' : (name==='campaign.previewImport'||name==='campaign.commitImport') ? '640kb' : (name==='audience.previewImport'||name==='audience.applyPracticeImport'||name==='audienceOnboarding.import') ? csvRequestBytes : (name==='campaign.create'||name==='campaign.update') ? '160kb' : name.startsWith('audience.') ? '4kb' : '64kb';
+    const limit = name==='asset.uploadBatch' ? '29mb' : (name==='campaign.previewImport'||name==='campaign.commitImport') ? '640kb' : (name==='audience.previewImport'||name==='audience.applyPracticeImport'||name==='audienceOnboarding.import'||name==='audienceOnboarding.queueImport') ? csvRequestBytes : (name==='campaign.create'||name==='campaign.update') ? '160kb' : name.startsWith('audience.') ? '4kb' : '64kb';
     express.json({ limit, strict: true })(req, res, error => {
       if (error) return next(error);
       const via = actor.kind === 'connection' && req.get('x-flockletter-interface') === 'mcp' ? 'mcp' : actor.kind === 'session' ? 'ui' : 'api';

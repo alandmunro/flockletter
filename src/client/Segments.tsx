@@ -20,11 +20,12 @@ function GroupName({
 }: {
   value?: string;
   rename?: boolean;
-  onSave: (name: string) => Promise<void>;
+  onSave: (name: string, subscriberSelectable?: boolean) => Promise<void>;
 }) {
   const [name, setName] = useState(value),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const [subscriberSelectable, setSubscriberSelectable] = useState(false);
   const id = useId();
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -32,8 +33,8 @@ function GroupName({
     setBusy(true);
     setError('');
     try {
-      await onSave(name.trim());
-      if (!rename) setName('');
+      await onSave(name.trim(), subscriberSelectable || undefined);
+      if (!rename) { setName(''); setSubscriberSelectable(false); }
     } catch (e) {
       setError(message(e));
     } finally {
@@ -53,6 +54,10 @@ function GroupName({
           disabled={busy}
         />
       </div>
+      {!rename && <label>
+        <input type="checkbox" checked={subscriberSelectable} onChange={event => setSubscriberSelectable(event.target.checked)} />
+        Let subscribers join or leave this group from their newsletter preferences
+      </label>}
       <button
         className="btn secondary"
         type="submit"
@@ -135,8 +140,8 @@ export function Segments({ api, brandId }: { api: Api; brandId: string }) {
             <details>
               <summary>Create a group</summary>
               <GroupName
-                onSave={async (name) => {
-                  const group = await change<Segment>('segment.create', { name });
+                onSave={async (name, subscriberSelectable) => {
+                  const group = await change<Segment>('segment.create', { name, subscriberSelectable });
                   setSelected(group.id);
                   setNotice('Group created.');
                 }}
@@ -157,7 +162,7 @@ export function Segments({ api, brandId }: { api: Api; brandId: string }) {
                 <option value="">Choose a group</option>
                 {data.items.map((group) => (
                   <option key={group.id} value={group.id}>
-                    {group.name}
+                    {group.name}{group.subscriberSelectable ? ' (subscriber-managed)' : ''}
                   </option>
                 ))}
               </select>
@@ -230,7 +235,7 @@ function GroupControls({
           ))}
         </dl>
       </details>
-      <SegmentMembershipForm onSave={onMembers} />
+      {group.subscriberSelectable ? <p>Subscribers join and leave this group through their newsletter preferences.</p> : <SegmentMembershipForm onSave={onMembers} />}
       <details>
         <summary>Rename group</summary>
         <GroupName key={group.name} value={group.name} rename onSave={onRename} />

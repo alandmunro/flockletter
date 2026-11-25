@@ -200,7 +200,10 @@ export class CustomerDelivery {
     requireCondition(!contentGaps(campaign).length,422,'incomplete_content','Complete the subject, sender and message before review.');
     const now=this.options.now?.()??new Date(), due=input.dueAt?new Date(input.dueAt):now;
     requireCondition(!input.dueAt||(due>now&&due.getTime()<=now.getTime()+30*86400000),422,'invalid_schedule','Choose a future time within 30 days.');
-    if(input.segmentId)requireCondition((await sql.query('SELECT id FROM audience_segments WHERE id=$1',[input.segmentId])).rowCount,404,'group_unavailable','Choose an available audience group.');
+    const segment = input.segmentId ? (await sql.query<{ subscriber_selectable: boolean }>(
+      'SELECT subscriber_selectable FROM audience_segments WHERE id=$1', [input.segmentId],
+    )).rows[0] : undefined;
+    if (input.segmentId) requireCondition(segment, 404, 'group_unavailable', 'Choose an available audience group.');
     const population=(await sql.query<{id:string;email_normalized:string;state:string;total:number}>(`
       WITH population AS MATERIALIZED (
         SELECT s.id,s.email_normalized,s.state FROM subscribers s
@@ -229,10 +232,10 @@ export class CustomerDelivery {
     const signupUrl = signupSlug ? new URL('/signup/' + signupSlug, this.options.origin).href : null;
     const preview=renderPreview(snapshot,ordered),rendered=legalFooter(preview.html,preview.text,profile,signupUrl),id=randomUUID();
     await sql.query(`INSERT INTO customer_deliveries(workspace_id,brand_id,id,campaign_id,version,actor_id,creator_id,mode,state,
-      content,rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded,sender_profile,purpose,provider_revision)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+      content,rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded,sender_profile,purpose,provider_revision,preference_segment_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
       [actor.workspaceId,input.brandId,id,draft.id,draft.version,actor.actorId,actor.userId,selectedProvider.mode,JSON.stringify(snapshot.content),
-        rendered.html,rendered.text,JSON.stringify(ordered),senderFingerprint(provider,profile),due,selected.length,(population[0]?.total??0)-selected.length,profile?JSON.stringify(profile):null,purpose,selectedProvider.revision]);
+        rendered.html,rendered.text,JSON.stringify(ordered),senderFingerprint(provider,profile),due,selected.length,(population[0]?.total??0)-selected.length,profile?JSON.stringify(profile):null,purpose,selectedProvider.revision, segment?.subscriber_selectable ? input.segmentId : null]);
     // Freeze only the already selected audience. All batches, the review and its replay record
     // share the workspace transaction: a failed batch cannot expose a partial review to approval.
     for(let offset=0;offset<selected.length;offset+=RECIPIENTS_PER_INSERT) {

@@ -14,8 +14,8 @@ import { AppError, requireCondition } from '../errors.js';
 const unavailable = 'This group is unavailable for the selected brand.';
 const nameConflict = 'This brand already has a group with this name.';
 export async function requireSegment(sql: Sql, id: string, lock = false) {
-  const result = await sql.query<{ id: string; name: string }>(
-    'SELECT id,name FROM audience_segments WHERE id=$1' + (lock ? ' FOR UPDATE' : ''),
+  const result = await sql.query<{ id: string; name: string; subscriber_selectable: boolean }>(
+    'SELECT id,name,subscriber_selectable FROM audience_segments WHERE id=$1' + (lock ? ' FOR UPDATE' : ''),
     [id],
   );
   requireCondition(result.rows[0], 404, 'segment_unavailable', unavailable);
@@ -23,8 +23,8 @@ export async function requireSegment(sql: Sql, id: string, lock = false) {
 }
 
 async function segmentRows(sql: Sql, id: string | null) {
-  const result = await sql.query<{ id: string; name: string } & AudienceSummary>(
-    `SELECT g.id,g.name,count(s.id)::int AS total,
+  const result = await sql.query<{ id: string; name: string; subscriber_selectable: boolean } & AudienceSummary>(
+    `SELECT g.id,g.name,g.subscriber_selectable,count(s.id)::int AS total,
       count(*) FILTER (WHERE s.state='pending')::int AS pending,
       count(*) FILTER (WHERE s.state='confirmed')::int AS confirmed,
       count(*) FILTER (WHERE s.state='unsubscribed')::int AS unsubscribed,
@@ -37,7 +37,7 @@ async function segmentRows(sql: Sql, id: string | null) {
     GROUP BY g.workspace_id,g.brand_id,g.id ORDER BY lower(g.name),g.id`,
     [id],
   );
-  return result.rows.map(({ id: key, name, ...counts }): Segment => ({ id: key, name, counts }));
+  return result.rows.map(({ id: key, name, subscriber_selectable, ...counts }): Segment => ({ id: key, name, ...(subscriber_selectable ? { subscriberSelectable: true } : {}), counts }));
 }
 
 async function segmentDetail(sql: Sql, id: string) {
@@ -51,7 +51,7 @@ export async function listSegments(sql: Sql): Promise<SegmentDirectory> {
 export async function segmentSummary(sql: Sql, id: string): Promise<AudienceSummary> {
   return (await segmentDetail(sql, id)).counts;
 }
-export async function createSegment(sql: Sql, workspace: string, brand: string, name: string) {
+export async function createSegment(sql: Sql, workspace: string, brand: string, name: string, subscriberSelectable = false) {
   // Allocate from 50 physical slots. The scoped unique index enforces this limit even for concurrent inserts.
   const found = await sql.query('SELECT id FROM brands WHERE workspace_id=$1 AND id=$2 FOR UPDATE', [
     workspace,
@@ -74,8 +74,8 @@ export async function createSegment(sql: Sql, workspace: string, brand: string, 
   );
   const id = randomUUID();
   const inserted = await sql.query(
-    'INSERT INTO audience_segments(workspace_id,brand_id,id,name,slot) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id',
-    [workspace, brand, id, name, slot.slot],
+    'INSERT INTO audience_segments(workspace_id,brand_id,id,name,slot,subscriber_selectable) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id',
+    [workspace, brand, id, name, slot.slot, subscriberSelectable],
   );
   requireCondition(inserted.rowCount, 409, 'segment_name_conflict', nameConflict);
   return segmentDetail(sql, id);
@@ -105,7 +105,8 @@ export async function updateSegmentMembers(
   action: SegmentAction,
   emails: string[],
 ): Promise<SegmentMembershipResult> {
-  await requireSegment(sql, segmentId, true);
+  const segment = await requireSegment(sql, segmentId, true);
+  requireCondition(!segment.subscriber_selectable, 409, 'subscriber_managed_group', 'Subscribers manage this group in their preferences.');
   const contacts = (
     await sql.query<{ id: string; email_normalized: string }>(
       'SELECT id,email_normalized FROM subscribers WHERE workspace_id=$1 AND brand_id=$2 AND email_normalized=ANY($3::text[])',

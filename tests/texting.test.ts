@@ -16,6 +16,7 @@ const oneSeatTeam = { members: async () => ({ total: 1, members: [] }) } as unkn
 import type { CustomerWorkflows } from '../src/server/customer-runtime.js';
 import { CustomerAudience } from '../src/server/customer-audience/service.js';
 import type { AudienceSettingsView } from '../src/shared/customer-audience.js';
+import { TextingMessaging } from '../src/server/texting/messaging.js';
 import { Texting, type OperatorActor } from '../src/server/texting/service.js';
 import { TextingRegistration, signupPage } from '../src/server/texting/registration.js';
 import express from 'express';
@@ -436,6 +437,27 @@ describe('FL-AT-043 consent', () => {
   });
 });
 
+it('claims inbound reply forwarding once and holds uncertain acceptance', async () => {
+  const w = A.workspaceId;
+  const id = randomUUID();
+  await db.tenant(w, async sql => {
+    await sql.query("UPDATE sms_workspace_profile SET notification_email='ops@example.test'");
+    await sql.query(`INSERT INTO sms_inbound(workspace_id,id,number_id,from_e164,body,provider_sid,classification,forward_state)
+      SELECT $1,$2,id,'+12125550123','A synthetic reply',$3,'other','queued'
+      FROM sms_numbers WHERE e164=$4`, [w, id, 'test-forward-'+id, number[w]]);
+  });
+  const calls: string[] = [];
+  const messaging = new TextingMessaging({ ...texting.messaging.options, forward: async message => {
+    calls.push(message.id);
+    expect(message).toMatchObject({ to: 'ops@example.test', text: expect.stringContaining('A synthetic reply') });
+    return 'uncertain';
+  } });
+  await Promise.all([messaging.forwardPending(w), messaging.forwardPending(w)]);
+  await messaging.forwardPending(w);
+  expect(calls.filter(value => value === id)).toEqual([id]);
+  expect(await rows(w, 'SELECT forward_state FROM sms_inbound WHERE id=$1', [id])).toEqual([{ forward_state: 'uncertain' }]);
+});
+
 describe('FL-AT-044 sending', () => {
   const w = A.workspaceId;
   it('requires an explicit send grant on every interface', async () => {
@@ -452,6 +474,11 @@ describe('FL-AT-044 sending', () => {
     await db.tenant(w, sql => sql.query(`UPDATE team_grants SET sms_send=true WHERE user_id='user_member'`));
     perms = await db.tenant(w, sql => memberPermissions(sql, w, 'user_member', oneSeatTeam));
     expect(perms.scopes).toContain('sms:send');
+    const sender = { ...member, ...perms };
+    const memberView = await run<{profile: unknown; companies: {id: string}[]}>('sms.status', {}, sender);
+    expect(memberView.profile).toBeNull();
+    expect(memberView.companies.map(c => c.id)).toContain(company[w]);
+    await expect(run('sms.draft', { operationKey: key(), companyId: company[w], body: 'Test draft' }, { ...sender, brandIds: [] })).rejects.toMatchObject({ code: 'not_found' });
     const viewer = { ...member, scopes: ['read'] as Actor['scopes'] };
     expect(() => authorize(viewer, 'sms.confirm')).toThrow();
     const readOnly = await issue(A, ['read']);
@@ -474,6 +501,26 @@ describe('FL-AT-044 sending', () => {
     await expect(run('sms.testSend', { operationKey: key(), id: draft.id, expectedRevision: 1 })).rejects.toMatchObject({ code: 'test_limit' });
     await tick(w);
     expect((await rows(w, `SELECT 1 FROM sms_messages WHERE purpose='test' AND state='delivered' AND rendered_body LIKE '[Test]%'`)).length).toBe(2);
+  });
+  it('skips an unsubmitted broadcast when the confirming actor loses authority', async () => {
+    clock = at(1, 18);
+    const draft = await run<{ id: string; revision: number }>('sms.draft', {
+      operationKey: key(), companyId: company[w], body: 'A draft with revoked send authority.',
+    });
+    const reviewed = await run('sms.review', { id: draft.id, expectedRevision: draft.revision });
+    await run('sms.confirm', { operationKey: key(), id: draft.id, expectedRevision: draft.revision, digest: reviewed.digest });
+    const calls: string[] = [];
+    const guarded = new TextingMessaging({ ...texting.messaging.options, canDispatch: async (_sql, workspace, id, actorId) => {
+      expect(workspace).toBe(w);
+      expect(id).toBe(company[w]);
+      calls.push(actorId);
+      return false;
+    } });
+    await guarded.tick(w);
+    const messages = await rows(w, 'SELECT state,reason,provider_sid FROM sms_messages WHERE send_id=$1', [draft.id]);
+    expect(messages.length).toBeGreaterThan(0);
+    expect(messages.every(message => message.state === 'skipped' && message.reason === 'send_authority_revoked' && message.provider_sid === null)).toBe(true);
+    expect(calls).toContain(A.actorId);
   });
   it('blocks emoji, converts curly quotes, and counts segments per recipient after merge fields', async () => {
     await expect(run('sms.draft', { operationKey: key(), companyId: company[w], body: 'Party time \u{1F389}' })).rejects.toMatchObject({ code: 'text_characters_blocked' });
