@@ -29,7 +29,7 @@ const owner: Actor = {
 };
 const stageSchema = z.enum([
   'not_started', 'target_blocked', 'configuration_blocked', 'busy', 'fixture_blocked',
-  'checkout_creation_blocked', 'awaiting_browser_payment', 'checkout_expired',
+  'checkout_creation_blocked', 'checkout_session_write_required', 'awaiting_browser_payment', 'checkout_expired',
   'payment_verification_blocked', 'catalog_blocked', 'launch_blocked', 'claim_blocked',
   'claim_pending', 'claim_expired', 'expiry_blocked', 'receipt_verification_blocked', 'refund_blocked', 'ledger_blocked', 'passed',
   'private_terminal_required', 'private_link_unavailable', 'private_link_displayed',
@@ -125,7 +125,12 @@ async function run(db: Database, provider: WorkspaceGiftProvider, setBlocker: (s
   const gifts = new WorkspaceGifts(db, provider, options);
   if (!initial.closed) {
     setBlocker('checkout_creation_blocked');
-    const purchase = await gifts.execute('gifts.purchase', { brandId, operationKey: purchaseKey, face: 1000 }, owner);
+    const purchase = await gifts.execute('gifts.purchase', { brandId, operationKey: purchaseKey, face: 1000 }, owner)
+      .catch((error: unknown) => {
+        if (error instanceof Stripe.errors.StripePermissionError && /\bcheckout_session_write\b/i.test(error.message))
+          setBlocker('checkout_session_write_required');
+        throw error;
+      });
     check('id' in purchase && purchase.id === lotId);
     setBlocker('payment_verification_blocked');
     const payment = await gifts.execute('gifts.reconcile', { brandId, operationKey: purchaseKey, purchaseId: lotId }, owner);
