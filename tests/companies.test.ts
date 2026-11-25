@@ -3,6 +3,7 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 import { startDatabase } from '../scripts/database-fixture.js';
+import { applyMigrations } from '../scripts/apply-migrations.mjs';
 import { recordAccess } from '../scripts/complimentary-access.js';
 import { Database } from '../src/server/db.js';
 import { CommandService, type Actor } from '../src/server/service.js';
@@ -53,6 +54,26 @@ function plan(actor: Actor, level: 'starter' | 'growth' | 'pro' | null) {
   });
 }
 describe('workspace companies and brands', () => {
+  it('replays migrations while a worker holds the lock for an already assigned brand', async () => {
+    const { actor, brand, company } = await setup('Active workspace');
+    const worker = new pg.Client({ connectionString: fixture.url });
+    const migration = new pg.Client({ connectionString: fixture.adminUrl });
+    await worker.connect();
+    try {
+      await migration.connect();
+      await worker.query('BEGIN');
+      await worker.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [actor.workspaceId]);
+      await applyMigrations(migration, new URL(fixture.url).username);
+      const result = await db.read(actor.workspaceId, sql =>
+        sql.query('SELECT company_id FROM company_brands WHERE brand_id=$1', [brand.id]),
+      );
+      expect(result.rows).toEqual([{ company_id: company.id }]);
+    } finally {
+      await worker.end();
+      await migration.end();
+    }
+  });
+
   it('atomically creates one default company and first brand, permits the same names in another tenant, and enforces preparation limits', async () => {
     const a = await setup(),
       b = await setup();
