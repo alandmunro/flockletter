@@ -1,9 +1,9 @@
 import { CampaignPreview } from './CampaignPreview.js';
 import { SignupDesignStudio } from './SignupDesignStudio.js';
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useEffectEvent, useId, useRef, useState, type FormEvent } from 'react';
 import { base64, operationKey, type Api } from './api.js';
 import { AudienceImportResults, type AudienceImportRow } from './AudienceImportResults.js';
-import { importLimits, readImportCsv, type ImportPreviewResult } from '../shared/import-preview.js';
+import { importLimits, importProfileFields, readImportCsv, type ImportPreviewResult, type ImportProfileColumns } from '../shared/import-preview.js';
 import type { AudienceSettingsView } from '../shared/customer-audience.js';
 import { PendingContactApproval } from './PendingContactApproval.js';
 
@@ -18,6 +18,10 @@ type Capture = {
   confirmationUrl: string;
   unsubscribeUrl: string;
 };
+const importFieldLabels = {
+  firstName: 'First name', lastName: 'Last name', phone: 'US phone', birthday: 'Birthday (MM-DD)',
+  anniversary: 'Anniversary (MM-DD or YYYY-MM-DD)',
+};
 const explain = (error: unknown) =>
   error instanceof Error ? error.message : 'The audience request could not be completed.';
 
@@ -31,6 +35,7 @@ export function AudienceOnboarding({
   onChanged?: () => void;
 }) {
   const consentFieldId = useId();
+  const importMappingId = useId();
   const [view, setView] = useState<AudienceSettingsView>();
   const [revision, setRevision] = useState(0),
     [error, setError] = useState(''),
@@ -46,12 +51,14 @@ export function AudienceOnboarding({
   const [csv, setCsv] = useState(''),
     [headers, setHeaders] = useState<string[]>([]),
     [column, setColumn] = useState(0);
+  const [profileColumns, setProfileColumns] = useState<ImportProfileColumns>({});
   const [preview, setPreview] = useState<ImportPreviewResult>(),
     [reading, setReading] = useState(false);
   const selection = useRef(0);
   const [source, setSource] = useState(''),
     [permission, setPermission] = useState(false),
     [result, setResult] = useState<ImportResult>();
+  const [importJobId, setImportJobId] = useState<string>();
   const [email, setEmail] = useState(''),
     [affirmed, setAffirmed] = useState(false),
     [capture, setCapture] = useState<Capture>();
@@ -64,6 +71,8 @@ export function AudienceOnboarding({
       .then((next) => {
         if (!active) return;
         setView(next);
+        const queued = next.importJobs?.find(job => job.state === 'queued');
+        if (queued) setImportJobId(current => current ?? queued.id);
         setEnabled(next.enabled);
         setPurpose(next.purpose);
         setVersion(next.policyVersion);
@@ -78,17 +87,57 @@ export function AudienceOnboarding({
       active = false;
     };
   }, [api, brandId, revision]);
+  const refreshAudience = useEffectEvent(() => onChanged?.());
+  useEffect(() => {
+    if (!importJobId) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const job = await api.call<{ state: 'queued' | 'complete' | 'failed'; result?: ImportResult; errorCode?: string }>(
+          'audienceOnboarding.importJob', { brandId, id: importJobId },
+        );
+        if (!alive) return;
+        if (job.state === 'queued') {
+          timer = setTimeout(() => void poll(), 2500);
+          return;
+        }
+        setImportJobId(undefined);
+        if (job.state === 'complete' && job.result) {
+          setResult(job.result);
+          setNotice('Import finished. Review the results.');
+          setRevision(n => n + 1);
+          refreshAudience();
+        } else {
+          setNotice('');
+          setError(job.errorCode === 'consent_changed'
+            ? 'The consent policy changed. Review it before importing again.'
+            : 'The queued import could not finish. Check your access and settings, then preview the file again.');
+          setPreview(undefined);
+          setPermission(false);
+        }
+      } catch {
+        if (!alive) return;
+        setNotice('The import is queued. Waiting for its status.');
+        timer = setTimeout(() => void poll(), 5000);
+      }
+    };
+    void poll();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [api, brandId, importJobId]);
   async function change(
     command:
       | 'audienceOnboarding.configure'
       | 'audienceOnboarding.import'
+      | 'audienceOnboarding.queueImport'
       | 'audienceOnboarding.signup'
       | 'audienceOnboarding.exerciseConfirm'
       | 'audienceOnboarding.requestConfirmation',
     input: Record<string, unknown>,
     message: string,
   ) {
-    if (inFlight.current || (command === 'audienceOnboarding.import' && (!preview || !permission || reading)))
+    if (inFlight.current || ((command === 'audienceOnboarding.import' || command === 'audienceOnboarding.queueImport') &&
+      (!preview || !permission || reading || importJobId)))
       return;
     inFlight.current = true;
     setBusy(true);
@@ -103,6 +152,10 @@ export function AudienceOnboarding({
       const value = await api.call<ImportResult>(command, { brandId, ...input, operationKey: key });
       pending.current.delete(slot);
       if (command === 'audienceOnboarding.import') setResult(value);
+      if (command === 'audienceOnboarding.queueImport') {
+        setResult(undefined);
+        setImportJobId(value.id);
+      }
       setNotice(message);
       setRevision((n) => n + 1);
       onChanged?.();
@@ -119,6 +172,7 @@ export function AudienceOnboarding({
     setError('');
     setCsv('');
     setHeaders([]);
+    setProfileColumns({});
     setResult(undefined);
     setPermission(false);
     setConfirmImport(false);
@@ -155,6 +209,7 @@ export function AudienceOnboarding({
           brandId,
           csvBase64: csv,
           emailColumn: column,
+          ...(Object.keys(profileColumns).length ? { profileColumns } : {}),
         }),
       );
     } catch (cause) {
@@ -319,6 +374,10 @@ export function AudienceOnboarding({
       <SignupDesignStudio key={brandId} api={api} view={view}/>
       <details>
         <summary>2. Import contacts</summary>
+        {importJobId && <p role="status">Import queued. You can leave this page while it runs.</p>}
+        {!importJobId && view.importJobs?.[0]?.state === 'failed' && !result && <p className="notice">
+          A recent background import could not finish. Preview the file again before retrying.
+        </p>}
         <p>
           Import up to 2,500 rows (1 MiB) from a list that opted in to newsletters from {view.brandName}.
           Record where people signed up, then choose immediate subscription or keep them pending for email confirmation.
@@ -329,14 +388,14 @@ export function AudienceOnboarding({
               event,
               () =>
                 void change(
-                  'audienceOnboarding.import',
-                  { csvBase64: csv, emailColumn: column, source, permissionAffirmed: true, confirmWithoutEmail: confirmImport, ...(confirmImport ? {consentPolicyVersion: view.policyVersion} : {}) },
-                  confirmImport ? 'Import finished. Permission recorded; no confirmation emails sent.' : 'Import finished. Review the results and request confirmations for pending contacts.',
+                  (preview?.rows ?? 0) > 500 ? 'audienceOnboarding.queueImport' : 'audienceOnboarding.import',
+                  { csvBase64: csv, emailColumn: column, ...(Object.keys(profileColumns).length ? { profileColumns } : {}), source, permissionAffirmed: true, confirmWithoutEmail: confirmImport, ...(confirmImport ? {consentPolicyVersion: view.policyVersion} : {}) },
+                  (preview?.rows ?? 0) > 500 ? 'Import queued. You can leave this page while it runs.' : confirmImport ? 'Import finished. Permission recorded; no confirmation emails sent.' : 'Import finished. Review the results and request confirmations for pending contacts.',
                 ),
             )
           }
         >
-          <fieldset disabled={busy || reading || view.mode === 'off'}>
+          <fieldset disabled={busy || reading || Boolean(importJobId) || view.mode === 'off'}>
             <label>
               CSV with a header row
               <input
@@ -365,6 +424,25 @@ export function AudienceOnboarding({
                 </select>
               </label>
             )}
+            {headers.length > 0 && <details>
+              <summary>Map optional contact details</summary>
+              <p>Details are saved for new email contacts. Imported phone numbers receive no text permission.</p>
+              {importProfileFields.map(field => <div key={field} className="field">
+                <label htmlFor={importMappingId + field}>{importFieldLabels[field]}</label>
+                <select id={importMappingId + field} value={profileColumns[field] ?? ''} onChange={event => {
+                  const next = { ...profileColumns };
+                  if (event.target.value === '') delete next[field];
+                  else next[field] = Number(event.target.value);
+                  setProfileColumns(next);
+                  setPreview(undefined);
+                  setPermission(false);
+                  setConfirmImport(false);
+                }}>
+                  <option value="">Skip this field</option>
+                  {headers.map((header, index) => <option key={index} value={index}>{index + 1}. {header || 'Unnamed column'}</option>)}
+                </select>
+              </div>)}
+            </details>}
             <button
               type="button"
               className="btn secondary"

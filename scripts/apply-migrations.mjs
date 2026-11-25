@@ -12,6 +12,10 @@ export async function applyMigrations(client, role) {
     await client.query(await readFile(new URL('../migrations/039_signup_routes.sql', import.meta.url), 'utf8'));
     await client.query(await readFile(new URL('../migrations/040_texting.sql', import.meta.url), 'utf8'));
     await client.query(await readFile(new URL('../migrations/041_audience_people.sql', import.meta.url), 'utf8'));
+    await client.query(await readFile(new URL('../migrations/042_texting_reply_forwarding.sql', import.meta.url), 'utf8'));
+    await client.query(await readFile(new URL('../migrations/043_audience_import_jobs.sql', import.meta.url), 'utf8'));
+    await client.query(await readFile(new URL('../migrations/044_subscriber_preferences.sql', import.meta.url), 'utf8'));
+    await client.query(await readFile(new URL('../migrations/045_date_sources.sql', import.meta.url), 'utf8'));
     await client.query('BEGIN');
     await client.query(`GRANT USAGE ON SCHEMA public TO "${role}"`);
     const names = tables.map(table => table.name);

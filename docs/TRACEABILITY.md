@@ -169,3 +169,9 @@ FL-AT-040 sender recovery: the Resend adapter accepts a domain creation receipt 
 
 D-064 / FL-AT-046: [framing, posting and refusal routes](../tests/customer-audience-embed.test.ts) and the [embed source label](../tests/customer-audience.test.ts) (embedded PostgreSQL). Evidence: **local** only. Real-browser framing on the brand's website and staging/production checks are not yet recorded. [Embed guide](implementation/SIGNUP_EMBED.md)
 
+
+### Audience and texting follow-through
+
+FL-AT-013/014 (FL-ONB-005, FL-AUD-002/003) now cover subscriber-managed groups, a scoped expiring preference link, field mapping, and durable background import. Disposable PostgreSQL checks cover capability separation, stale preference forms, existing suppression, dropping a frozen recipient who leaves a group, mapped dates and phone consent, and concurrent worker replay. A local Chromium exercise mapped and queued 501 contacts and completed the mobile preference and unsubscribe forms. [Audience implementation](implementation/AUDIENCE.md)
+
+FL-AT-016, FL-AT-041 and FL-AT-044 (FL-AUD-005, FL-SMS-008/015) cover scoped erasure of private SMS routes, member send controls, and a durable forwarding claim. Local checks use synthetic workspaces, mock Twilio and substituted Resend. The Chromium exercise granted texting in Team and saved a draft through the member portal. Live provider activation and hosted erasure require separate evidence. [Texting implementation](implementation/TEXTING_PHASE_2.md)

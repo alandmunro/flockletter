@@ -59,15 +59,17 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
     let next: string | null = url + (url.includes('?') ? '&' : '?') + 'PageSize=50';
     for (let page = 0; next && page < 20; page++) {
       let r: Response1; try { r = await request(this.call, auth, 'GET', next); } catch { return { outcome: 'unknown' }; }
-      if (r.status !== 200) return { ...failed(r), outcome: failed(r).outcome === 'rejected' ? 'unknown' : failed(r).outcome };
+      if (r.status !== 200) return { ...failed(r), outcome: 'unknown' };
       const parsed = z.object({ meta: z.object({ next_page_url: z.string().nullable() }).partial().optional(), next_page_uri: z.string().nullable().optional() }).passthrough().safeParse(r.json);
       const items = parsed.success ? (parsed.data as Record<string, unknown>)[field] : undefined;
       if (!parsed.success || !Array.isArray(items)) return { outcome: 'unknown', reason: 'unexpected_list' };
       for (const item of items as unknown[]) {
         const found = extract.safeParse(item);
-        if (found.success && found.data.friendly_name === twilioName(name)) return { outcome: 'accepted', value: { sid: found.data.sid, ...(found.data.status ? { status: found.data.status } : {}) } };
+        if (!found.success) return { outcome: 'unknown', reason: 'unexpected_list_item' };
+        if (found.data.friendly_name === twilioName(name)) return { outcome: 'accepted', value: { sid: found.data.sid, ...(found.data.status ? { status: found.data.status } : {}) } };
       }
       next = parsed.data.meta?.next_page_url ?? (parsed.data.next_page_uri ? 'https://api.twilio.com' + parsed.data.next_page_uri : null);
+      if (next && !next.startsWith(new URL(url).origin + '/')) return { outcome: 'unknown', reason: 'unexpected_list_page' };
     }
     return { outcome: next ? 'unknown' : 'not_submitted' };
   }
@@ -159,9 +161,9 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
     const campaign = z.object({ sid: sid('QE'), campaign_status: z.string().nullable() }).safeParse(r.json);
     return campaign.success ? { outcome: 'accepted', value: { sid: campaign.data.sid, ...(campaign.data.campaign_status ? { status: campaign.data.campaign_status } : {}) } } : { outcome: 'unknown' };
   }
-  async buyNumber(account: AccountCredentials, op: string, serviceSid: string, areaCode: string | null): Promise<Result<ProvisionFacts>> {
+  async buyNumber(account: AccountCredentials, op: string, _serviceSid: string, areaCode: string | null): Promise<Result<ProvisionFacts>> {
     const auth = this.auth(account), base = `${api}/Accounts/${account.accountSid}`;
-    let number = await this.find('number', account, op);
+    const number = await this.find('number', account, op);
     if (number.outcome === 'not_submitted') {
       const search = await request(this.call, auth, 'GET', `${base}/AvailablePhoneNumbers/US/Local.json?SmsEnabled=true&PageSize=5${areaCode ? '&AreaCode=' + areaCode : ''}`).catch(() => null);
       if (!search || search.status !== 200) return search ? failed(search) : { outcome: 'not_submitted', reason: 'search_unavailable' };
@@ -172,17 +174,20 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
       if (r.status !== 201 && r.status !== 200) return failed(r);
       const bought = z.object({ sid: sid('PN'), phone_number: z.string() }).safeParse(r.json);
       if (!bought.success) return { outcome: 'unknown' };
-      number = { outcome: 'accepted', value: { sid: bought.data.sid, e164: bought.data.phone_number } };
+      return { outcome: 'accepted', value: { sid: bought.data.sid, e164: bought.data.phone_number } };
     }
-    if (number.outcome !== 'accepted') return number;
-    const attached = await request(this.call, auth, 'GET', `${messaging}/Services/${serviceSid}/PhoneNumbers/${number.value!.sid}`).catch(() => null);
+    return number;
+  }
+  async attachNumber(account: AccountCredentials, serviceSid: string, numberSid: string): Promise<Result<true>> {
+    const auth = this.auth(account);
+    const attached = await request(this.call, auth, 'GET', `${messaging}/Services/${serviceSid}/PhoneNumbers/${numberSid}`).catch(() => null);
     if (!attached) return { outcome: 'unknown' };
     if (attached.status === 404) {
-      const r = await request(this.call, auth, 'POST', `${messaging}/Services/${serviceSid}/PhoneNumbers`, { PhoneNumberSid: number.value!.sid }).catch(() => null);
+      const r = await request(this.call, auth, 'POST', `${messaging}/Services/${serviceSid}/PhoneNumbers`, { PhoneNumberSid: numberSid }).catch(() => null);
       if (!r) return { outcome: 'unknown' };
       if (r.status !== 201 && r.status !== 200) return failed(r);
     } else if (attached.status !== 200) return failed(attached);
-    return number;
+    return { outcome: 'accepted', value: true };
   }
   async find(kind: ProvisionKind, account: AccountCredentials | null, op: string, parentSid?: string): Promise<Result<ProvisionFacts>> {
     if (!account) return { outcome: 'not_submitted' };

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { commandDefinition as descriptor } from './command-definition.js';
 import { usAreaCodeZones } from './us-area-codes.js';
+import { textingOnboardingCommands } from './texting-onboarding.js';
 
 // ---------- Operator settings catalogue (FL-SMS-013, ADM-1–6) ----------
 // Bounds live here; values live only in the database. `required` settings fail closed while unset.
@@ -28,6 +29,13 @@ export const textingSettings = {
   confirm_words: { kind: 'words', mustInclude: ['YES'], required: 'always', description: 'Replies that confirm a pending number.' },
   registration_poll_minutes: { kind: 'int', min: 5, max: 1440, required: 'optional', description: 'Minutes between registration status polls when no callback arrives. Unset: callbacks and operator checks only.' },
   reconcile_settle_minutes: { kind: 'int', min: 1, max: 1440, required: 'optional', description: 'Minutes an uncertain provider call must stay unfound before it may be retried. Unset: it stays uncertain for operator review.' },
+  probation_canary_count: { kind: 'int', min: 1, max: 100, required: 'optional', description: 'Size of the first broadcast test group during probation.' },
+  probation_canary_minutes: { kind: 'int', min: 1, max: 1440, required: 'optional', description: 'Minutes to observe the first broadcast group before releasing the rest.' },
+  probation_min_days: { kind: 'int', min: 1, max: 365, required: 'optional', description: 'Minimum days after registration before probation can end.' },
+  probation_delivered_min: { kind: 'int', min: 1, max: 100000, required: 'optional', description: 'Minimum delivered broadcasts needed before probation can end.' },
+  probation_initial_days: { kind: 'int', min: 1, max: 365, required: 'optional', description: 'Days that use the initial daily limit during probation.' },
+  probation_initial_daily_limit: { kind: 'int', min: 1, max: 10000, required: 'optional', description: 'Daily broadcast limit during initial probation.' },
+  probation_daily_limit: { kind: 'int', min: 1, max: 10000, required: 'optional', description: 'Daily broadcast limit after initial probation.' },
   live_recipient_allow_list: { kind: 'phones', maxItems: 10, required: 'live', description: 'Phase 2 live mode: the only numbers that may receive a real text (D-063).' },
 } as const satisfies Record<string, SettingSpec>;
 export type TextingSettingKey = keyof typeof textingSettings;
@@ -110,8 +118,12 @@ export function mergeText(template: string, contact: { name: string | null }): s
 export const optOutFooter = 'Reply STOP to opt out.';
 /** MSG-3: every broadcast names the business and carries opt-out instructions. */
 export function composeBroadcast(template: string, businessName: string, contact: { name: string | null }): string {
-  let body = mergeText(template, contact).trim();
-  if (!body.toLowerCase().startsWith(businessName.toLowerCase())) body = businessName + ': ' + body;
+  return formatBroadcast(mergeText(template, contact), businessName);
+}
+export function formatBroadcast(text: string, businessName: string): string {
+  let body = plainText(text).trim();
+  const sender = plainText(businessName);
+  if (!body.toLowerCase().startsWith(sender.toLowerCase())) body = sender + ': ' + body;
   if (!/\bstop\b/i.test(body)) body += ' ' + optOutFooter;
   return body;
 }
@@ -124,6 +136,7 @@ const key = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/, 'Use a stable operation 
 const body = z.string().min(1).max(1600);
 export const shortName = z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/, 'Use 3–30 lowercase letters, digits or dashes.');
 export const textingCommands = {
+  ...textingOnboardingCommands,
   'sms.status': descriptor('Read texting setup for this workspace: registration state and number per company, allowance use and the settings still needed before sending. Never returns provider credentials.', 'read', false, {}),
   'sms.configure': descriptor('Set the workspace short name, notification email, time zone, the optional sign-up fields (name, phone, birthday, anniversary) and whether people may sign up for texts without an email.', 'owner', true, {
     operationKey: key, expectedRevision: z.number().int().positive(), shortName: shortName.optional(), notificationEmail: z.email().max(254).nullable().optional(),

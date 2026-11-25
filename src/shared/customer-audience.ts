@@ -21,6 +21,15 @@ export const audiencePolicyInput = {
     .regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/),
   confirmationMode: z.enum(['double_opt_in', 'single_opt_in']).optional(),
 };
+const importInput = {
+  ...importPreviewInput.shape,
+  operationKey,
+  permissionAffirmed: z.literal(true),
+  source: z.string().trim().min(3).max(250),
+  confirmWithoutEmail: z.boolean().optional(),
+  consentPolicyVersion: z.string().trim().min(1).max(80).optional(),
+};
+
 export const customerAudienceCommands = {
   'audienceOnboarding.saveDesign': commandDefinition('Publish the selected brand’s signup page and confirmation design.', 'owner', true, { brandId, operationKey, expectedRevision: z.number().int().nonnegative(), design: signupDesign }),
   'audienceOnboarding.status': commandDefinition(
@@ -39,14 +48,15 @@ export const customerAudienceCommands = {
     'Import up to 2,500 CSV rows (1 MiB) for one brand with permission. Immediate subscription additionally requires audience:confirm and the current consent policy. Existing suppression is preserved.',
     'audience:write',
     true,
-    {
-      ...importPreviewInput.shape,
-      operationKey,
-      permissionAffirmed: z.literal(true),
-      source: z.string().trim().min(3).max(250),
-      confirmWithoutEmail: z.boolean().optional(),
-      consentPolicyVersion: z.string().trim().min(1).max(80).optional(),
-    },
+    importInput,
+  ),
+  'audienceOnboarding.queueImport': commandDefinition(
+    'Queue one reviewed CSV import for background processing and return its job ID.',
+    'audience:write', true, importInput,
+  ),
+  'audienceOnboarding.importJob': commandDefinition(
+    'Read the state and result of a queued CSV import for this brand.',
+    'audience:write', false, { brandId, id: z.uuid() },
   ),
   'audienceOnboarding.confirmContacts': commandDefinition(
     'Subscribe up to 250 selected pending contacts without email verification, recording existing permission and current policy. Requires audience:confirm. Suppressed contacts cannot be reactivated.',
@@ -108,5 +118,6 @@ export type AudienceSettingsView = {
   publicUrl: string | null;
   trackingEnabled: false;
   messages: { id: string; email: string; state: string; mode: string; createdAt: string; transport?: {kind: 'accepted'|'delivered'|'hard_bounce'|'complaint'|'failed'|'delayed'; occurredAt: string}|null }[];
+  importJobs?: { id: string; state: 'queued' | 'complete' | 'failed'; createdAt: string }[];
   imports: { id: string; source: string; createdAt: string; rows: number }[];
 };

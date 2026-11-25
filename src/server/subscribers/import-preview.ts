@@ -1,3 +1,5 @@
+import { normalizeUsPhone } from '../../shared/texting.js';
+import { contactUpdate } from '../../shared/audience.js';
 import type { SubscriberState } from '../../shared/audience.js';
 import {
   importLimits,
@@ -10,7 +12,44 @@ import { normalizedEmail } from '../../shared/subscriber.js';
 import type { Sql } from '../db.js';
 import { AppError, requireCondition } from '../errors.js';
 
-type CsvRow = { row: number; address: string } | { row: number; issue: ImportIssue };
+type ImportedDate = { month: number; day: number; year?: number };
+type ImportProfile = { firstName?: string; lastName?: string; phone?: string; birthday?: ImportedDate; anniversary?: ImportedDate };
+type CsvRow = { row: number; address: string; profile?: ImportProfile } | { row: number; issue: ImportIssue };
+
+function parseDate(raw: string, anniversary: boolean) {
+  const match = /^(?:(\d{4})-)?(\d{2})-(\d{2})$/.exec(raw);
+  if (!match || (!anniversary && match[1])) return null;
+  const [year, month, day] = [match[1] ? Number(match[1]) : undefined, Number(match[2]), Number(match[3])];
+  const date = { month, day, ...(year ? { year } : {}) };
+  const parsed = (anniversary ? contactUpdate.anniversary : contactUpdate.birthday).safeParse(date);
+  if (!parsed.success || (match[1] && (!year || new Date(Date.UTC(year, month - 1, day)).getUTCMonth() !== month - 1))) return null;
+  return date;
+}
+
+function parseProfile(cells: string[], columns: NonNullable<ImportPreviewInput['profileColumns']>): ImportProfile | ImportIssue {
+  const value = (key: keyof typeof columns) => columns[key] === undefined ? '' : cells[columns[key]]!.trim();
+  const profile: ImportProfile = {};
+  for (const field of ['firstName', 'lastName'] as const) {
+    const name = value(field);
+    if (!name) continue;
+    if (!contactUpdate[field].safeParse(name).success || /[\p{Cc}\p{Cf}]/u.test(name)) return 'invalid_name';
+    profile[field] = name;
+  }
+  const inputPhone = value('phone');
+  if (inputPhone) {
+    const phone = normalizeUsPhone(inputPhone);
+    if (!phone) return 'invalid_phone';
+    profile.phone = phone;
+  }
+  for (const field of ['birthday', 'anniversary'] as const) {
+    const raw = value(field);
+    if (!raw) continue;
+    const date = parseDate(raw, field === 'anniversary');
+    if (!date) return 'invalid_date';
+    profile[field] = date;
+  }
+  return profile;
+}
 
 export function importRows(input: ImportPreviewInput): CsvRow[] {
   const bytes = Buffer.from(input.csvBase64, 'base64');
@@ -40,6 +79,9 @@ export function importRows(input: ImportPreviewInput): CsvRow[] {
     'invalid_email_column',
     'Choose an email column from a CSV with a named header row.',
   );
+  const mapped = [input.emailColumn, ...Object.values(input.profileColumns ?? {})];
+  requireCondition(mapped.every(index => index !== undefined && csv.headers[index]?.trim()) &&
+    new Set(mapped).size === mapped.length, 422, 'invalid_profile_columns', 'Map each field to a different named column.');
   const unique = new Set<string>();
   return csv.rows.map((cells, index): CsvRow => {
     const row = index + 2; // Spreadsheet row number, with the header at row one.
@@ -47,8 +89,10 @@ export function importRows(input: ImportPreviewInput): CsvRow[] {
     const address = normalizedEmail.safeParse(cells[input.emailColumn]);
     if (!address.success) return { row, issue: 'invalid_email' };
     if (unique.has(address.data)) return { row, issue: 'duplicate' };
+    const profile = input.profileColumns ? parseProfile(cells, input.profileColumns) : undefined;
+    if (typeof profile === 'string') return { row, issue: profile };
     unique.add(address.data);
-    return { row, address: address.data };
+    return { row, address: address.data, ...(profile ? { profile } : {}) };
   });
 }
 

@@ -1,3 +1,5 @@
+import { dateSources } from '../src/server/date-automations/sources.js';
+import { linkPhone, phoneContact, setDate } from '../src/server/subscribers/people.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -118,6 +120,45 @@ afterEach(async () => {
 });
 
 describe('brand audience workspace', () => {
+  it('keeps a phone-only anniversary with its source brand when two brands share a company', async () => {
+    const phone = await db.brand(alice.workspaceId, brand, async sql => {
+      const contact = await phoneContact(sql, alice.workspaceId, brand, '+13085550100');
+      await sql.query(`INSERT INTO sms_consents(workspace_id,company_id,contact_id,state)
+        SELECT workspace_id,company_id,$2,'none' FROM company_brands WHERE brand_id=$1`, [brand, contact]);
+      await setDate(sql, alice.workspaceId, brand, { contact, subscriber: null }, 'anniversary',
+        { month: 11, day: 25, year: 2020 }, 'Home purchase');
+      return contact;
+    });
+    const read = (brandId: string) => run<ContactDetail>('audience.contact', { brandId, id: phone });
+    expect((await read(sibling)).contact.anniversary).toBeNull();
+    const edit = (anniversary: { month: number; day: number } | null) =>
+      run('audience.updateContact', { brandId: sibling, id: phone, operationKey: id(), anniversary });
+    await expect(edit({ month: 12, day: 1 })).rejects.toMatchObject({ code: 'date_unavailable' });
+    await edit(null);
+    expect((await read(brand)).contact.anniversary).toEqual({ month: 11, day: 25, year: 2020, label: 'Home purchase' });
+  });
+  it('scopes annual dates to their source brand and identifies shared or changed phone links', async () => {
+    const reader = await seed('reader@example.test', 'confirmed');
+    const other = await seed('other@example.test', 'confirmed', sibling);
+    await db.brand(alice.workspaceId, brand, async sql => {
+      const phone = await phoneContact(sql, alice.workspaceId, brand, '+12125550199');
+      await linkPhone(sql, alice.workspaceId, brand, reader, phone);
+      await linkPhone(sql, alice.workspaceId, sibling, other, phone);
+      await setDate(sql, alice.workspaceId, brand, { subscriber: reader, contact: phone }, 'birthday', { month: 2, day: 29 }, 'Birthday');
+      const dates = () => dateSources(sql, brand, 'birthday', [2], null, 10);
+      expect(await dates()).toMatchObject([{ subscriber_id: reader, contact_id: phone, shared_phone: true }]);
+      await linkPhone(sql, alice.workspaceId, brand, reader, null);
+      expect(await dates()).toMatchObject([{ subscriber_id: reader, contact_id: null }]);
+      await setDate(sql, alice.workspaceId, brand, { subscriber: reader, contact: null }, 'birthday', null, 'Birthday');
+      expect(await dates()).toEqual([]);
+      await setDate(sql, alice.workspaceId, brand, { subscriber: null, contact: phone }, 'birthday', { month: 2, day: 28 }, 'Birthday');
+      expect(await dates()).toMatchObject([{ contact_id: phone, shared_phone: true }]);
+      expect(await dateSources(sql, sibling, 'birthday', [2], null, 10)).toEqual([]);
+      await sql.query('UPDATE contact_dates SET brand_id=NULL WHERE contact_id=$1 AND subscriber_id IS NULL', [phone]);
+      expect(await dates()).toEqual([]);
+    });
+    expect(await db.brand(bob.workspaceId, brand, sql => dateSources(sql,brand,'birthday',[2],null,10))).toEqual([]);
+  });
   it('lists stable, bounded pages and exact matches under the existing email policy', async () => {
     const fixtureRows = [
       ['a@example.com', 'confirmed'],

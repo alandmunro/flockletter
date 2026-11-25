@@ -24,7 +24,7 @@ Interactive state lives in the ignored `.local/gifting-lab/v1.sqlite`. Restart t
 
 ## Requirements review and test evidence
 
-The [WA-09 specification](https://github.com/alandmunro/flockletter/blob/3a3aaf741d30ee7aa331ba3c5330378f96d3c284/docs/supplemental-requirements/specs/09-tremendous-gifting.md) defines eight build requirements and five acceptance cases. Its [shared contract](https://github.com/alandmunro/flockletter/blob/3a3aaf741d30ee7aa331ba3c5330378f96d3c284/docs/supplemental-requirements/REVIEW.md) assigns person resolution, consent, eligibility, sending and authenticated roles to other work areas. The [original proposal](../../docs/implementation/PROPOSED_TEXTING_AND_GIFTING.md) and [D-063](../../docs/DECISIONS.md) establish prepayment, purchase on claim and rollout sequencing. Reviewed at `93162f86c5b84387e12c613afeedc8edcd4ccf04`. The prior Tremendous sandbox runoff is historical evidence.
+The [WA-09 specification](../../docs/supplemental-requirements/specs/09-tremendous-gifting.md) defines eight build requirements and five acceptance cases. Its [shared contract](../../docs/supplemental-requirements/REVIEW.md) assigns person resolution, consent, eligibility, sending and authenticated roles to other work areas. The [original proposal](../../docs/implementation/PROPOSED_TEXTING_AND_GIFTING.md) and [D-063](../../docs/DECISIONS.md) establish prepayment, purchase on claim and rollout sequencing. Reviewed at `93162f86c5b84387e12c613afeedc8edcd4ccf04`. The prior Tremendous sandbox runoff is historical evidence.
 
 | Build and source requirements | Local implementation and observed evidence | Remaining integration or decision |
 | --- | --- | --- |

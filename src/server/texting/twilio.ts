@@ -27,6 +27,8 @@ export interface TwilioPlatformPort {
   createMessagingService(account: AccountCredentials, op: string, callbacks: CallbackUrls): Promise<Result<ProvisionFacts>>;
   submitCampaign(account: AccountCredentials, op: string, serviceSid: string, brandSid: string, input: CampaignInput): Promise<Result<ProvisionFacts>>;
   buyNumber(account: AccountCredentials, op: string, serviceSid: string, areaCode: string | null): Promise<Result<ProvisionFacts>>;
+  /** Live numbers are attached by immutable SID after the purchase is recorded. */
+  attachNumber?(account: AccountCredentials, serviceSid: string, numberSid: string): Promise<Result<true>>;
   /** Reconciles an uncertain create. `accepted` means the resource exists. */
   find(kind: ProvisionKind, account: AccountCredentials | null, op: string, parentSid?: string): Promise<Result<ProvisionFacts>>;
   status(kind: 'brand' | 'campaign', account: AccountCredentials, sid: string, parentSid?: string): Promise<Result<{ status: string; reason?: string }>>;

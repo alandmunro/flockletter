@@ -48,6 +48,10 @@ export const textingPlatformCommands = {
   'platform.textingCampaignResubmitted': define('Record that a FAILED campaign was edited and resubmitted in the Twilio Console (same campaign, no new vetting fee). Registration goes back to waiting on its status.', true, {
     operationKey, workspaceId, registrationId: z.uuid(), reason }),
   'platform.textingRegistration': define('Read registration state, every step with its operation key, and numbers for one workspace.', false, { workspaceId }),
+  'platform.textingOnboardingReview': define('Return a practice enrollment for correction or end its probation with an audit reason.', true, {
+    operationKey, workspaceId, companyId: z.uuid(), expectedRevision: z.number().int().positive(),
+    action: z.enum(['request_correction', 'complete_probation']), reason,
+  }),
   'platform.textingProcess': define('Run one texting worker pass for a workspace now.', true, { operationKey, workspaceId }),
   'platform.textingMock': define('Staging mock only: script provider faults, decide brand or campaign status, deliver queued callbacks, or receive a text from a phone.', true, {
     operationKey, workspaceId, action: mockAction }),

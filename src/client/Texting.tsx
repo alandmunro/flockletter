@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { operationKey, type Api } from './api.js';
 import { blockedCharacters, encodeText, plainText } from '../shared/texting.js';
+import { TextingOnboarding } from './TextingOnboarding.js';
 
 // FL-SMS-007/008/011/015: the workspace texting page. Every action calls the same commands as the API and MCP.
-type Status = { mode: string; profile: null | { shortName: string | null; notificationEmail: string | null; timeZone: string; phoneField: boolean; birthdayField: boolean; anniversaryField: boolean; anniversaryLabel: string; nameField: boolean; phoneOnlySignup: boolean; revision: number };
+type Status = { mode: string; onboardingAvailable?: boolean; profile: null | { shortName: string | null; notificationEmail: string | null; timeZone: string; phoneField: boolean; birthdayField: boolean; anniversaryField: boolean; anniversaryLabel: string; nameField: boolean; phoneOnlySignup: boolean; revision: number };
   companies: { id: string; name: string; registration: string; number: string | null; canSend: boolean }[]; usage: { month: string; used: number; reserved: number; allowance: number | null }; settingsNeeded: string[] };
 type Review = { id: string; revision: number; preview: string; encoding: string; perSegment: number; recipients: number; segments: number; gsm7Recipients: number; ucs2Recipients: number;
   allowance: { total: number | null; remaining: number | null; afterSend: number | null }; daysNeeded: number | null; links: { link: string; allowed: boolean }[]; gaps: string[]; digest?: string };
@@ -13,9 +14,12 @@ const gapText: Record<string, string> = {
   text_too_long: 'The text is longer than 10 segments for some recipients.', no_opted_in_recipients: 'No contacts have confirmed texts from this company yet.',
   registration_not_approved: 'Carrier registration for this company is not approved yet.', texting_setting_required: 'The platform operator has not finished texting settings.',
   allowance_insufficient: 'This send needs more segments than remain this month.',
+  probation_settings_required: 'An operator must configure probation limits before this broadcast can send.',
+  probation_paused: 'The first broadcast test group needs operator review.',
+  probation_template_required: 'During probation, use one of your approved campaign message examples.',
 };
 
-export function Texting({ api }: { api: Api }) {
+export function Texting({ api, manage = true }: { api: Api; manage?: boolean }) {
   const [status, setStatus] = useState<Status | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const load = useCallback(async () => { try { setStatus(await api.call<Status>('sms.status', {})); } catch (e) { setError(e instanceof Error ? e.message : 'Texting is unavailable.'); } }, [api]);
   useEffect(() => { void load(); }, [load]);
@@ -30,10 +34,13 @@ export function Texting({ api }: { api: Api }) {
       <p className="help">Segments this month: {status.usage.used} used, {status.usage.reserved} in progress{status.usage.allowance !== null ? `, of ${status.usage.allowance}` : ''}.</p>
       {status.settingsNeeded.length > 0 && <p className="notice">Waiting for platform settings: {status.settingsNeeded.join(', ')}.</p>}
     </section>
-    <Profile api={api} status={status} busy={busy} act={act} />
-    <Composer api={api} companies={status.companies} busy={busy} act={act} />
-    <Contacts api={api} companies={status.companies} busy={busy} act={act} />
-    <Inbound api={api} />
+    {manage && status.onboardingAvailable && <TextingOnboarding api={api} companies={status.companies} />}
+    {manage && <Profile api={api} status={status} busy={busy} act={act} />}
+    {status.companies.length > 0
+      ? <Composer api={api} companies={status.companies} busy={busy} act={act} />
+      : <p className="notice">You need access to all brands in a company to text its audience.</p>}
+    {manage && <Contacts api={api} companies={status.companies} busy={busy} act={act} />}
+    {manage && <Inbound api={api} />}
   </>;
 }
 type Act = (action: () => Promise<unknown>) => Promise<void>;
@@ -112,7 +119,7 @@ function Contacts({ api, companies, busy, act }: { api: Api; companies: Status['
   </section>;
 }
 function Inbound({ api }: { api: Api }) {
-  const [items, setItems] = useState<{ id: string; from: string; contactName: string | null; body: string; classification: string; receivedAt: string }[]>([]);
+  const [items, setItems] = useState<{ id: string; from: string; contactName: string | null; body: string; classification: string; receivedAt: string; forwardState: string }[]>([]);
   useEffect(() => { void api.call<typeof items>('sms.inbound', {}).then(setItems).catch(() => undefined); }, [api]);
-  return <section className="card"><h2>Replies</h2>{items.length ? items.map(i => <p key={i.id}><strong>{i.contactName ?? i.from}</strong> · {new Date(i.receivedAt).toLocaleString()} · {i.classification.replaceAll('_', ' ')}<br />{i.body}</p>) : <p>No replies yet.</p>}</section>;
+  return <section className="card"><h2>Replies</h2>{items.length ? items.map(i => <p key={i.id}><strong>{i.contactName ?? i.from}</strong> · {new Date(i.receivedAt).toLocaleString()} · {i.classification.replaceAll('_', ' ')}{i.forwardState === 'uncertain' && ' · email acceptance unknown'}{i.forwardState === 'failed' && ' · email forwarding failed'}<br />{i.body}</p>) : <p>No replies yet.</p>}</section>;
 }

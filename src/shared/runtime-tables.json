@@ -41,6 +41,7 @@
   {"name":"customer_audience_settings","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"customer_audience_confirmations","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"customer_audience_optouts","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
+  {"name":"customer_audience_import_jobs","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"customer_audience_imports","scope":"brand","permissions":["SELECT","INSERT"]},
   {"name":"customer_team_scenarios","scope":"workspace","permissions":["SELECT","INSERT","UPDATE","DELETE"]},
   {"name":"customer_team_invites","scope":"workspace","permissions":["SELECT","INSERT","UPDATE"]},
