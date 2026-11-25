@@ -118,8 +118,12 @@ export function mergeText(template: string, contact: { name: string | null }): s
 export const optOutFooter = 'Reply STOP to opt out.';
 /** MSG-3: every broadcast names the business and carries opt-out instructions. */
 export function composeBroadcast(template: string, businessName: string, contact: { name: string | null }): string {
-  let body = mergeText(template, contact).trim();
-  if (!body.toLowerCase().startsWith(businessName.toLowerCase())) body = businessName + ': ' + body;
+  return formatBroadcast(mergeText(template, contact), businessName);
+}
+export function formatBroadcast(text: string, businessName: string): string {
+  let body = plainText(text).trim();
+  const sender = plainText(businessName);
+  if (!body.toLowerCase().startsWith(sender.toLowerCase())) body = sender + ': ' + body;
   if (!/\bstop\b/i.test(body)) body += ' ' + optOutFooter;
   return body;
 }
