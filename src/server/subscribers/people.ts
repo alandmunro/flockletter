@@ -55,9 +55,11 @@ rows AS (
   LEFT JOIN sms_contacts c ON c.id=b.contact_id
   LEFT JOIN sms_consents x ON x.contact_id=c.id AND x.company_id=(SELECT company_id FROM co)
   LEFT JOIN contact_dates bd ON bd.type='birthday' AND bd.cleared_at IS NULL AND CASE WHEN b.kind='subscriber'
-    THEN bd.brand_id=$1 AND bd.subscriber_id=b.id ELSE bd.contact_id=b.id AND bd.subscriber_id IS NULL END
+    THEN bd.brand_id=$1 AND bd.subscriber_id=b.id
+    ELSE bd.contact_id=b.id AND bd.subscriber_id IS NULL AND coalesce(bd.brand_id,c.brand_id)=$1 END
   LEFT JOIN contact_dates an ON an.type='anniversary' AND an.cleared_at IS NULL AND CASE WHEN b.kind='subscriber'
-    THEN an.brand_id=$1 AND an.subscriber_id=b.id ELSE an.contact_id=b.id AND an.subscriber_id IS NULL END)`;
+    THEN an.brand_id=$1 AND an.subscriber_id=b.id
+    ELSE an.contact_id=b.id AND an.subscriber_id IS NULL AND coalesce(an.brand_id,c.brand_id)=$1 END)`;
 
 type PersonRow = {
   id: string; kind: 'subscriber' | 'phone'; email: string | null; state: SubscriberState | null;
@@ -191,15 +193,21 @@ export async function setDate(sql: Sql, workspace: string, brand: string, target
     // Marked cleared rather than deleted: the runtime role has no DELETE on contact_dates (migration 041).
     await sql.query(bySubscriber
       ? 'UPDATE contact_dates SET cleared_at=clock_timestamp(),updated_at=clock_timestamp() WHERE brand_id=$1 AND subscriber_id=$2 AND type=$3 AND cleared_at IS NULL'
-      : 'UPDATE contact_dates SET cleared_at=clock_timestamp(),updated_at=clock_timestamp() WHERE contact_id=$2 AND subscriber_id IS NULL AND type=$3 AND cleared_at IS NULL AND $1::uuid IS NOT NULL',
+      : `UPDATE contact_dates d SET cleared_at=clock_timestamp(),updated_at=clock_timestamp() FROM sms_contacts c
+         WHERE d.contact_id=c.id AND c.id=$2 AND d.subscriber_id IS NULL AND d.type=$3 AND d.cleared_at IS NULL
+           AND coalesce(d.brand_id,c.brand_id)=$1`,
     [brand, bySubscriber ? target.subscriber : target.contact, type]);
     return;
   }
   const conflict = bySubscriber ? '(workspace_id,brand_id,subscriber_id,type) WHERE subscriber_id IS NOT NULL' : '(workspace_id,contact_id,type) WHERE subscriber_id IS NULL';
-  await sql.query(`INSERT INTO contact_dates(workspace_id,id,contact_id,brand_id,subscriber_id,type,label,month,day,year) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+  // A phone-only date has a single persistent identity. A sibling brand may also
+  // see the phone through company consent, but it cannot take over that date.
+  const saved = await sql.query(`INSERT INTO contact_dates(workspace_id,id,contact_id,brand_id,subscriber_id,type,label,month,day,year) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
     ON CONFLICT ${conflict} DO UPDATE SET month=EXCLUDED.month,day=EXCLUDED.day,year=EXCLUDED.year,label=EXCLUDED.label,
-      brand_id=EXCLUDED.brand_id,contact_id=coalesce(EXCLUDED.contact_id,contact_dates.contact_id),cleared_at=NULL,updated_at=clock_timestamp()`,
+      brand_id=EXCLUDED.brand_id,contact_id=coalesce(EXCLUDED.contact_id,contact_dates.contact_id),cleared_at=NULL,updated_at=clock_timestamp()
+      WHERE coalesce(contact_dates.brand_id,(SELECT c.brand_id FROM sms_contacts c WHERE c.id=contact_dates.contact_id))=EXCLUDED.brand_id`,
   [workspace, randomUUID(), target.contact, brand, target.subscriber, type, label, value.month, value.day, value.year ?? null]);
+  requireCondition(saved.rowCount, 409, 'date_unavailable', 'This date cannot be updated for this brand.');
 }
 
 const masked = (phone: string | null) => (phone ? '***' + phone.slice(-4) : null);

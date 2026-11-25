@@ -17,6 +17,16 @@ beforeAll(async()=>{
   dates=new DateAutomations(db,'capture',async user=>user==='owner');
 });
 afterAll(async()=>{await db?.close();await fixture?.stop();});
+it('previews an empty brand without creating a definition or occurrence',async()=>{
+  const list=()=>dates.execute('dateAutomation.list',{brandId:brand},actor);
+  const upcoming=()=>dates.execute('dateAutomation.occurrences',{brandId:brand,view:'upcoming'},actor);
+  const before=await list();
+  expect(await upcoming()).toEqual({rows:[]});
+  expect(await dates.execute('dateAutomation.preview',{brandId:brand,kind:'anniversary',settings,cursor:null},actor))
+    .toEqual({rows:[],next:null});
+  expect(await list()).toEqual(before);
+  expect(await upcoming()).toEqual({rows:[]});
+});
 it('replays draft writes and binds recurring approval to a current owner and a saved revision',async()=>{
   const input={operationKey:randomUUID(),kind:'birthday',expectedRevision:0,brandId:brand,settings};
   expect(await dates.execute('dateAutomation.save',input,actor)).toEqual({kind:'birthday',revision:1});

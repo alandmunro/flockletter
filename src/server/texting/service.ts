@@ -10,7 +10,7 @@ import { lockWorkspace } from '../workspace-lock.js';
 import { AppError, requireCondition } from '../errors.js';
 import type { Actor } from '../service.js';
 import { safeLink } from '../content.js';
-import { blockedCharacters, composeBroadcast, encodeText, findLinks, isTextingSetting, maxSegments, plainText, smsConsentPolicyVersion, smsConsentWording, confirmationText,
+import { blockedCharacters, composeBroadcast, formatBroadcast, encodeText, findLinks, isTextingSetting, maxSegments, plainText, smsConsentPolicyVersion, smsConsentWording, confirmationText,
   textingCommands, textingSettingKeys, textingSettingValue, textingSettings, normalizeUsPhone, type ConsentState, type TextingCommand, type TextingSettingKey } from '../../shared/texting.js';
 import { textingPlatformCommands, type TextingPlatformCommand } from '../../shared/texting-platform.js';
 import { audit, once, readSettings, requestHash, requireSettings, sendingSettings, validZone, type Interface } from './storage.js';
@@ -275,7 +275,7 @@ export class Texting {
     if (!people.length) gaps.push('no_opted_in_recipients');
     if (!await sendingNumber(sql, send.company_id)) gaps.push('registration_not_approved');
     try { requireSettings(settings, sendingSettings); } catch { gaps.push('texting_setting_required'); }
-    if (send.kind === 'broadcast') gaps.push(...await probationGaps(sql, send.company_id, sample.text, settings));
+    if (send.kind === 'broadcast') gaps.push(...await probationGaps(sql, send.company_id, formatBroadcast(send.body, business), settings));
     if (remaining !== null && segments > remaining) gaps.push('allowance_insufficient');
     return { id: send.id, revision: send.revision, preview: sample.text, encoding: sample.encoding, perSegment: sample.perSegment,
       recipients: people.length, segments, gsm7Recipients: gsm7, ucs2Recipients: ucs2, allowance: { total: allowance, remaining, afterSend: remaining === null ? null : remaining - segments },

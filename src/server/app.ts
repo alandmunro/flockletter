@@ -1,3 +1,4 @@
+import {giftingRoutes} from './gifting-routes.js';
 import { hostedMcp } from './hosted-mcp.js';
 import {publicSubscriptionOffers} from '../shared/subscription-offers.js';
 import {externalDelivery} from '../shared/customer-delivery.js';
@@ -80,6 +81,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     if (!service || !auth) return next(new AppError(503, 'setup_required', 'Workspace operations require the Flockletter database and Clerk backend connection.'));
     next();
   });
+  giftingRoutes(app,config,service?.db);
   if (service && auth) app.use('/api/v1/mcp', hostedMcp(service, auth));
   const sesNotifications=service?.ses && new SesFeedbackRouter(sesScopes(service.ses).map(s => new SesNotifications(s.route)));
   app.post('/api/v1/campaign-feedback/ses',express.raw({type:['text/plain','application/json'],limit:'256kb'}),async(req,res)=>{

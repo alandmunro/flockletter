@@ -1,3 +1,4 @@
+import { plainText } from '../../shared/texting.js';
 import type { Sql } from '../db.js';
 import { audit, requireSettings, type SettingValues } from './storage.js';
 
@@ -18,13 +19,13 @@ async function update(sql: Sql, id: string, state: State) {
     [id, JSON.stringify(state)]);
 }
 
-export async function probationGaps(sql: Sql, company: string, sample: string, settings: SettingValues) {
+export async function probationGaps(sql: Sql, company: string, template: string, settings: SettingValues) {
   const pending = await profile(sql, company);
   if (!pending || pending.state?.state === 'complete') return [];
   if (pending.state?.state === 'paused') return ['probation_paused'];
   const gaps = [];
   if (policyKeys.some(key => settings[key] === undefined)) gaps.push('probation_settings_required');
-  if (!pending.samples?.includes(sample)) gaps.push('probation_template_required');
+  if (!pending.samples?.some(sample => plainText(sample) === template)) gaps.push('probation_template_required');
   return gaps;
 }
 
