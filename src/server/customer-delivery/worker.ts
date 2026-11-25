@@ -1,3 +1,4 @@
+import {giftSendingHold} from '../workspace-gifts/service.js';
 import {selectedDelivery} from './selection.js';
 import {externalDelivery} from '../../shared/customer-delivery.js';
 import {sameTestDay,testRecipient} from './test-send.js';
@@ -78,6 +79,7 @@ export class CustomerDeliveryWorker {
   }
   async block(sql:Sql,row:DeliveryRow,phase:'prepare'|'submit'='submit'):Promise<string|null> {
     if((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount)return 'workspace_erased';
+    if(await giftSendingHold(sql))return 'gift_dispute_hold';
     if(row.state!=='queued')return row.reason??'cancelled_by_owner';
     if(!deliveryPurposeAllowed(this.options.scope,row.purpose))return 'broadcasts_disabled';
     const selected=await selectedDelivery(sql,this.options,row.workspace_id,row.brand_id);

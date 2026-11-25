@@ -1,3 +1,5 @@
+import {configuredWorkspaceGifts} from './workspace-gifts/service.js';
+import type {WorkspaceGiftCommand} from '../shared/workspace-gifts.js';
 import { annualClaim,dispatchBrand } from './date-automations/dispatch.js';
 import { eachDateBrand, planBrand } from './date-automations/planner.js';
 import { DateAutomations } from './date-automations/service.js';
@@ -51,8 +53,9 @@ import { parseSesRoute, type SesRoute } from './campaign/ses-runtime.js';
 import { createTexting, loadTextingSecrets, type TextingSecrets } from './texting/runtime.js';
 import type { Texting } from './texting/service.js';
 
-const prefixes=['dateAutomation.','senderSetup.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
+const prefixes=['gifts.','dateAutomation.','senderSetup.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
 export class CustomerWorkflows {
+  readonly gifts: ReturnType<typeof configuredWorkspaceGifts>;
   readonly dates:DateAutomations;
   readonly settings;
   readonly billing:CustomerBilling;
@@ -81,6 +84,7 @@ export class CustomerWorkflows {
     return new CustomerWorkflows(db,config,identity,env,await loadTextingSecrets(config,env,fetcher));
   }
   constructor(readonly db:Database,readonly config:Config,readonly identity:IdentityProvider,readonly env:NodeJS.ProcessEnv=process.env,textingSecrets?:TextingSecrets) {
+    this.gifts=configuredWorkspaceGifts(db,config,env);
     const settings=this.settings=customerSettings(config,env);
     const dateMode=env.FLOCKLETTER_DATE_AUTOMATIONS;
     this.dates=new DateAutomations(db,dateMode==='capture'&&config.environment!=='production'?'capture':dateMode==='live'?'live':'off',identity.isOwner);
@@ -328,6 +332,10 @@ export class CustomerWorkflows {
         await audit(sql,actor,name,null);return {fresh:true,result};
       });
       if(intent.fresh)await this.processWorkspace(actor.workspaceId);result=intent.result;
+    } else if(name.startsWith('gifts.')) {
+      requireCondition(this.gifts,503,'gifting_off','Workspace gifting is unavailable.');
+      if(mutation) requireCondition(actor.kind==='session'&&actor.owner&&await this.identity.isOwner(actor.userId,actor.workspaceId),403,'owner_required','A current workspace owner must approve this action.');
+      result=await this.gifts.execute(name as WorkspaceGiftCommand,raw,actor);
     } else if(name.startsWith('customerBilling.'))result=await this.billing.execute(name,raw,actor);
     else if(name.startsWith('audienceOnboarding.'))result=await this.audience.execute(name,raw,actor);
     else if(name.startsWith('teamLifecycle.'))result=await this.team.execute(name,raw,actor);
@@ -353,6 +361,7 @@ export class CustomerWorkflows {
     let failure:string|null=null;
     const run=async(action:()=>Promise<unknown>)=>{if(this.closing)return;try{await action();}catch{failure='workspace_job_requires_review';}};
     if(maintenance){
+      if(this.gifts)await run(()=>this.gifts!.tick(workspace));
       const brands=await this.db.tenant(workspace,async sql=>(await sql.query<{id:string}>('SELECT id FROM brands ORDER BY id LIMIT 5')).rows);
       for(const brand of brands)if(this.settings.infrastructure==='aws'||externalDelivery(this.settings.delivery))
         await run(()=>refreshCustomerSender(this.db,workspace,brand.id));
