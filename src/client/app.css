@@ -156,3 +156,5 @@ select:focus-visible { outline: 3px solid #af4d70; outline-offset: 3px; }
 .brand-snapshots { margin: 20px 0 28px; }
 .brand-snapshots section { padding: 18px; background: #fff8fa; border-radius: 10px; }
 .brand-snapshots h3, .brand-snapshots p:last-child { margin-bottom: 0; }
+
+.gift-balance{display:flex;flex-wrap:wrap;gap:1.5rem;margin-block:1.5rem}.gift-balance dt{color:var(--muted)}.gift-balance dd{margin:0;font-size:1.5rem;font-variant-numeric:tabular-nums}
