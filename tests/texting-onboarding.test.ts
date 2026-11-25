@@ -17,7 +17,7 @@ const owner = (workspaceId: string): Actor => ({
 });
 const a = owner('org_onboarding_a'), b = owner('org_onboarding_b'), c = owner('org_onboarding_stripe');
 const business = {
-  legalName: 'Synthetic Garden LLC', ein: '00-0072321', businessType: 'Limited Liability Corporation', vertical: 'RETAIL',
+  legalName: 'Robin’s Garden LLC', ein: '00-0072321', businessType: 'Limited Liability Corporation', vertical: 'RETAIL',
   website: 'https://garden.example.test', privacyPolicyUrl: 'https://garden.example.test/privacy', smsTermsUrl: 'https://garden.example.test/terms',
   street: '1 Example Street', city: 'New York', region: 'NY', postalCode: '10001',
   firstName: 'Sample', lastName: 'Owner', title: 'Owner', email: 'owner@garden.example.test', phone: '+12125550120',
@@ -169,8 +169,14 @@ it('resumes the verified and paid owner flow, isolates EIN claims and holds a fa
   const draft = await run<{ id: string; revision: number }>(a, 'sms.draft', {
     operationKey: randomUUID(), companyId: company, body: (await status(a)).samples[0],
   });
-  const review = await run<{ digest: string; gaps: string[] }>(a, 'sms.review', { id: draft.id, expectedRevision: draft.revision });
+  const review = await run<{ digest: string; gaps: string[]; preview: string }>(a, 'sms.review', { id: draft.id, expectedRevision: draft.revision });
+  expect(review.preview).toBe("Robin's Garden LLC: Our latest business update is available. Reply STOP to opt out.");
   expect(review.gaps).toEqual([]);
+  const custom = await run<{ id: string; revision: number }>(a, 'sms.draft', {
+    operationKey: randomUUID(), companyId: company, body: 'Here is a different update.',
+  });
+  const customReview = await run<{ gaps: string[] }>(a, 'sms.review', { id: custom.id, expectedRevision: custom.revision });
+  expect(customReview.gaps).toContain('probation_template_required');
   await run(a, 'sms.confirm', { operationKey: randomUUID(), id: draft.id, expectedRevision: draft.revision, digest: review.digest });
   clock = Date.UTC(new Date(clock).getUTCFullYear(), new Date(clock).getUTCMonth(), new Date(clock).getUTCDate() + 1, 18);
   await texting.operator('platform.textingMock', {
