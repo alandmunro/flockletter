@@ -35,7 +35,7 @@ test('the shell command emits exactly one sanitized stage for denied inputs', ()
 function sandbox() {
   const session = 'cs_test_FixturePrivate', payment = 'pi_fixture', charge = 'ch_fixture', refund = 're_fixture';
   const account = 'acct_fixture', reward = 'REWARD01', order = 'ORDER001';
-  const state = { paid: false, expired: false, wrongCharge: false, wrongAccount: false, orders: 0, creates: 0, refunds: 0,
+  const state = { paid: false, expired: false, wrongCharge: false, wrongAccount: false, checkoutDenied: false, orders: 0, creates: 0, refunds: 0,
     loseOrderReply: true, wrongRefund: true, privateLinks: 0, requests: 0 };
   const meta: Record<string, string> = {};
   let externalId = '';
@@ -54,6 +54,9 @@ function sandbox() {
       switch (method + ' ' + url.pathname) {
         case 'GET /v1/account': return Response.json({ id: state.wrongAccount ? 'acct_other' : account });
         case 'POST /v1/checkout/sessions': {
+          if (state.checkoutDenied) return Response.json({ error: {
+            type: 'invalid_request_error', message: 'Fixture-private detail. Missing permission: checkout_session_write.',
+          } }, { status: 403 });
           state.creates++;
           assert.equal(form.get('line_items[0][price_data][unit_amount]'), '1100');
           assert.equal(form.get('mode'), 'payment');
@@ -171,6 +174,11 @@ test('the configured gateway resumes the bounded fixture across unpaid, ambiguou
     assert.deepEqual(await advance(), stage('checkout_creation_blocked'));
     assert.equal(gateway.state.creates, 0);
     gateway.state.wrongAccount = false;
+    gateway.state.checkoutDenied = true;
+    assert.deepEqual(await advance(), stage('checkout_session_write_required'));
+    assert.deepEqual(await readCheckoutProofStage(db), stage('checkout_session_write_required'));
+    assert.equal(gateway.state.creates, 0);
+    gateway.state.checkoutDenied = false;
     for (let i = 0; i < 2; i++) assert.deepEqual(await advance(), stage('awaiting_browser_payment'));
     const app = express(), qa = { userId: 'user_qa', workspaceId: 'org_qa', owner: true };
     const env = { ...bindings, FLOCKLETTER_GIFT_QA_CLERK_USER: 'user_qa', FLOCKLETTER_GIFT_QA_CLERK_ORG: 'org_qa' };
