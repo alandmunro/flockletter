@@ -1,3 +1,4 @@
+import { eachDateBrand, planBrand } from './date-automations/planner.js';
 import { DateAutomations } from './date-automations/service.js';
 import type { DateCommand } from '../shared/date-automations.js';
 import { coversTextCompany } from './texting/company-access.js';
@@ -357,6 +358,7 @@ export class CustomerWorkflows {
         await run(()=>this.audience.tickImport(workspace,brand.id));
         await run(()=>this.audience.tick(workspace,brand.id));
       }
+      if(this.dates.mode!=='off') await eachDateBrand(this.db,workspace,brand=>run(()=>planBrand(this.db,workspace,brand,this.dates.mode,new Date())));
       await run(()=>this.team.tickWorkspace(workspace));
       await run(()=>this.support.tickWorkspace(workspace));
       await run(()=>this.retention.tickWorkspace(workspace));
