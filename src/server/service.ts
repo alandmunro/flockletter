@@ -1,4 +1,6 @@
 import { prepareNewsletterImport } from './newsletter-import.js';
+import {giftStatus,recordGift,giftLink} from './gifting.js';
+import {giftPracticeEnabled} from '../shared/gifting.js';
 import {lockWorkspace} from './workspace-lock.js';
 import { studioProblem } from '../shared/studio.js';
 import { withStudio } from '../shared/studio-legacy.js';
@@ -112,6 +114,7 @@ export class CommandService {
   }
   async execute(name: CommandName, raw: unknown, actor: Actor, via?: 'ui'|'api'|'mcp'): Promise<unknown> {
     authorize(actor, name);
+    if(name.startsWith('gifting.')) requireCondition(giftPracticeEnabled(this.importEnvironment),403,'gift_capture_disabled','Gift exercises require a staging or local workspace.');
     if (name.startsWith('sms.')) {
       const texting=this.customer?.texting;
       requireCondition(texting,503,'texting_off','Texting is not enabled in this environment.');
@@ -231,6 +234,9 @@ export class CommandService {
   private async perform(name: CommandName, raw: unknown, actor: Actor, sql: Sql): Promise<unknown> {
     const w = actor.workspaceId;
     switch (name) {
+      case 'gifting.captureStatus': return giftStatus(sql,w);
+      case 'gifting.captureLink': return giftLink(sql,w,commands[name].schema.parse(raw).person);
+      case 'gifting.captureAction': return recordGift(sql,w,commands[name].schema.parse(raw).action);
       case 'workspace.preflight': {
         const initialized = Boolean((await sql.query('SELECT workspace_id FROM workspaces')).rowCount);
         const access=await workspaceAccess(sql);

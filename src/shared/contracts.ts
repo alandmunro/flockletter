@@ -19,6 +19,7 @@ import { customerRetentionCommands } from './customer-retention.js';
 import { customerDeliveryCommands } from './customer-delivery.js';
 import { customerOperationsCommands } from './customer-operations.js';
 import { customerInfrastructureCommands } from './customer-infrastructure.js';
+import {giftAction} from './gifting.js';
 import { textingCommands } from './texting.js';
 
 export type { IntakeStatus } from './subscriber.js';
@@ -84,6 +85,9 @@ export const commands = {
   ...customerInfrastructureCommands,
   ...senderSetupCommands,
   ...textingCommands,
+  'gifting.captureStatus': descriptor('View this workspace’s simulated prepaid gifts.', 'owner', false, {}),
+  'gifting.captureAction': descriptor('Exercise a simulated gift operation in staging.', 'owner', true, {operationKey:key, action:giftAction}),
+  'gifting.captureLink': descriptor('Open a synthetic recipient’s staging gift.', 'owner', false, {person:z.number().int().min(1).max(100)}),
   'workspace.get': descriptor('Inspect workspace, plan catalogue and preparation limits. Does not create records.', 'read', false, {}),
   'workspace.preflight': descriptor('Start here: inspect all workspace setup gaps and preparation limits before gathering content or photos. Never starts billing or sends.', 'read', false, {}),
   'workspace.initialize': descriptor('Create the current Clerk organization workspace and first brand once. Does not activate a subscription.', 'owner', true, { operationKey: key, name: z.string().trim().min(1).max(100), brandName: z.string().trim().min(1).max(100) }),
