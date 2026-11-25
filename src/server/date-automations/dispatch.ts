@@ -77,6 +77,15 @@ async function handoff(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Da
   const render=(s:string)=>renderGreeting(s,source.first_name,source.label,when.years);
   const route=await smsRoute(sql,b,source);
   const channel=route?'sms':'email';
+  // A phone-only signup can later gain its own subscriber date and hence a new date ID.
+  // Keep the original annual receipt effective across that transition and across channels.
+  if(source.contact_id) {
+    const prior=await sql.query(`SELECT FROM date_occurrences o JOIN contact_dates d ON d.id=o.date_id
+      WHERE o.dispatched_contact=$1 AND o.kind=$2 AND o.annual_year=$3 AND o.delivery_id IS NOT NULL
+        AND (d.subscriber_id IS NULL OR $4::uuid IS NULL OR d.subscriber_id=$4 OR (o.channel='sms' AND $5='sms'))
+      LIMIT 1`,[source.contact_id,o.kind,o.annual_year,source.subscriber_id,channel]);
+    requireCondition(!prior.rowCount,409,'shared_annual_destination','This person or phone already has an annual greeting.');
+  }
   let id:string;
   if(route){
     requireCondition(ports.texting?.options.mode===(ports.mode==='capture'?'mock':'live'),409,'transport_unavailable','The selected SMS transport is unavailable.');
@@ -85,9 +94,6 @@ async function handoff(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Da
     const links=await ports.texting.linkProblems(sql,route.company_id,body);
     await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[b]);
     requireCondition(!blockedCharacters(body).length&&!links.problems.length&&encodeText(body).segments<=maxSegments,422,'invalid_message','Rendered text failed the marketing content checks.');
-    const prior=await sql.query(`SELECT FROM date_occurrences WHERE dispatched_contact=$1 AND kind=$2 AND annual_year=$3
-      AND delivery_id IS NOT NULL AND channel='sms' LIMIT 1`,[source.contact_id,o.kind,o.annual_year]);
-    requireCondition(!prior.rowCount,409,'shared_annual_destination','This phone already has an annual greeting.');
     id=await queueText(sql,w,{companyId:route.company_id,contactId:source.contact_id,to:source.phone_e164!,purpose:'broadcast',body});
     await sql.query('UPDATE sms_messages SET date_brand_id=$2 WHERE id=$1',[id,b]);
   } else {
