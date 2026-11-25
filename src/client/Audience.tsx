@@ -1,3 +1,4 @@
+import { DateAutomationPanel } from './DateAutomationPanel.js';
 import {Segments} from './Segments.js';
 import {AudienceOnboarding} from './AudienceOnboarding.js';
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
@@ -31,7 +32,7 @@ type Summary = AudienceSummary & { people?: PeopleSummary };
 type Filters = { search: string; state: SubscriberState | 'no_email' | ''; text: TextState | ''; dates: 'birthday' | 'anniversary' | 'any' | ''; month: string };
 const noFilters: Filters = { search: '', state: '', text: '', dates: '', month: '' };
 
-export function Audience({ api, brands, onSetup }: { api: Api; brands: Brand[]; onSetup: () => void }) {
+export function Audience({ api, brands, onSetup, manageAutomations=false }: { api: Api; brands: Brand[]; manageAutomations?:boolean; onSetup: () => void }) {
   const [selectedBrand, setBrand] = useState(brands[0]?.id ?? '');
   const brandControl = useId();
   const brand = brands.find((item) => item.id === selectedBrand);
@@ -50,7 +51,7 @@ export function Audience({ api, brands, onSetup }: { api: Api; brands: Brand[]; 
         </div>
       )}
       {brand ? (
-        <BrandAudience key={brand.id} api={api} brand={brand} onSetup={onSetup} />
+        <BrandAudience key={brand.id} api={api} brand={brand} manageAutomations={manageAutomations} onSetup={onSetup} />
       ) : (
         <p>Select a brand to see its audience.</p>
       )}
@@ -58,7 +59,7 @@ export function Audience({ api, brands, onSetup }: { api: Api; brands: Brand[]; 
   );
 }
 
-function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetup: () => void }) {
+function BrandAudience({ api, brand, onSetup, manageAutomations }: { api: Api; brand: Brand; manageAutomations:boolean; onSetup: () => void }) {
   const [draft, setDraft] = useState<Filters>(noFilters);
   const [filters, setFilters] = useState<Filters>(noFilters);
   const [pages, setPages] = useState<(string | null)[]>([null]);
@@ -202,6 +203,7 @@ function BrandAudience({ api, brand, onSetup }: { api: Api; brand: Brand; onSetu
           next={(value) => setPages((v) => [...v, value])}
         />
       </section>
+      {manageAutomations&&<DateAutomationPanel key={brand.id} api={api} brandId={brand.id}/>}
       <AudienceOnboarding api={api} brandId={brand.id} onChanged={changed}/>
       <Segments key={brand.id} api={api} brandId={brand.id} />
       <ImportPreview api={api} brand={brand} onApplied={changed} />

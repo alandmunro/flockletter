@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { lockWorkspace } from '../workspace-lock.js';
-import { localParts, nextWindow } from '../texting/storage.js';
+import { audit,localParts, nextWindow } from '../texting/storage.js';
 import { annualOccurrence, recipientZones } from './calendar.js';
 import { dateSources, type DateKind, type DateSource } from './sources.js';
 import type { DateSettings } from '../../shared/date-automations.js';
@@ -48,6 +48,19 @@ export async function planBrand(db:Database,workspace:string,brand:string,mode:A
   if (mode==='off') return;
   await db.brand(workspace,brand,async sql=>{
     await lockWorkspace(sql,workspace);
+    // Only a channel worker can establish that a queued intent never reached a provider.
+    // A changed date or revision may be planned again once that negative receipt exists.
+    const withdrawn=(await sql.query<{id:string;delivery_id:string;channel:string}>(`SELECT o.id,o.delivery_id,o.channel
+      FROM date_occurrences o LEFT JOIN sms_messages m ON o.channel='sms' AND m.id=o.delivery_id AND m.date_brand_id=o.brand_id
+      LEFT JOIN customer_delivery_recipients p ON o.channel='email' AND p.delivery_id=o.delivery_id AND p.brand_id=o.brand_id
+      WHERE o.state='queued' AND ((m.state='skipped' AND m.submitted_at IS NULL AND m.reason IN ('date_changed','definition_changed')) OR
+        (p.state='cancelled' AND p.attempts=0 AND p.reason IN ('date_changed','definition_changed')))
+      ORDER BY o.id LIMIT 100`)).rows;
+    for(const row of withdrawn){
+      await audit(sql,workspace,'worker','worker','automation.withdrawn',row.id,{channel:row.channel,deliveryId:row.delivery_id},{reason:'changed_before_submission'});
+      await sql.query(`UPDATE date_occurrences SET state='skipped',reason='date_changed',channel=NULL,delivery_id=NULL,
+        source_digest=NULL,dispatched_contact=NULL,retry_at=NULL WHERE id=$1`,[row.id]);
+    }
     await sql.query("UPDATE date_occurrences SET state='expired',reason='catch_up_window_closed' WHERE state='planned' AND expires_at<=$1",[now]);
     // Edits outside the scanned months and clears must also disappear from upcoming previews.
     await sql.query(`UPDATE date_occurrences o SET state='skipped',reason='date_changed' WHERE state='planned'

@@ -4,7 +4,7 @@ import { commandDefinition } from './command-definition.js';
 const kind = z.enum(['birthday','anniversary']);
 const brandId = z.uuid(), operationKey = z.uuid();
 const template = z.string().trim().min(1).max(1000).refine(value =>
-  !/[{}]/.test(value.replace(/\{\{(firstName|years|label)\}\}/g,'')), 'Use firstName, years or label inside double braces.');
+  !/[{}]/.test(value.replace(/\{\{#years\}\}([^{}]*?(?:\{\{years\}\}[^{}]*?)?)\{\{\/years\}\}/g,'$1').replace(/\{\{(firstName|years|label)\}\}/g,'')), 'Use firstName, years or label inside double braces.');
 export const dateSettings = z.object({
   time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
   zone: z.string().max(80).refine(value => {
@@ -21,7 +21,9 @@ export type DateOccurrence = { id:string; kind:DateKind; local_date:string; due_
 const revision = {brandId,kind,operationKey,expectedRevision:z.number().int().nonnegative()};
 const manage = 'automation:manage';
 export const dateCommands = {
+  'dateAutomation.preview':commandDefinition('Project the next 30 days for a draft without recording or submitting greetings.',manage,false,{brandId,kind,settings:dateSettings,cursor:z.uuid().nullable().default(null)}),
   'dateAutomation.list':commandDefinition('Read date automation settings for a brand.',manage,false,{brandId}),
+  'dateAutomation.attribute':commandDefinition('Confirm the originating brand of a reviewed legacy phone date.',manage,true,{brandId,id:z.uuid(),expectedUpdate:z.string().max(80),operationKey}),
   'dateAutomation.save':commandDefinition('Save a reviewed birthday or anniversary draft. Saving pauses an active revision.',manage,true,{...revision,settings:dateSettings}),
   'dateAutomation.activate':commandDefinition('Authorize recurring marketing under the exact saved revision.',manage,true,{...revision,confirmRecurring:z.literal(true)}),
   'dateAutomation.pause':commandDefinition('Pause recurring sends for one date type.',manage,true,revision),
@@ -31,7 +33,8 @@ export const dateCommands = {
 export type DateCommand = keyof typeof dateCommands;
 
 export function renderGreeting(template:string,firstName:string|null,label:string,years:number|null) {
-  return template.replace(/\{\{(firstName|label|years)\}\}/g,(_,field:string)=>
+  const conditional=template.replace(/\{\{#years\}\}(.*?)\{\{\/years\}\}/gs,(_,text:string)=>years===null?'':text);
+  return conditional.replace(/\{\{(firstName|label|years)\}\}/g,(_,field:string)=>
     field==='firstName' ? firstName??'friend' : field==='label' ? label : years===null?'':String(years))
     .replace(/[ \t]{2,}/g,' ').trim();
 }

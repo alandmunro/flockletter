@@ -65,3 +65,22 @@ it('walks every brand exactly once across page boundaries',async()=>{
   expect(visited).toHaveLength(22);
   expect(new Set(visited).size).toBe(22);
 });
+
+it('checks the live connection and each selected channel grant before recurring activation',async()=>{
+  const id=randomUUID(),secret=randomUUID(), target=randomUUID();
+  const scopes=['read','automation:manage','sms:send'];
+  await db.tenant(actor.workspaceId,async sql=>{
+    await sql.query("INSERT INTO brands(workspace_id,id,name) VALUES($1,$2,'Granted brand')",[actor.workspaceId,target]);
+    await sql.query(`INSERT INTO connections(workspace_id,id,name,issuer_id,token_hash,scopes,brand_ids,expires_at)
+      VALUES($1,$2,'automation fixture',$3,$4,$5,$6,now()+interval '1 day')`,[actor.workspaceId,id,actor.userId,secret,scopes,[target]]);
+  });
+  const delegated:Actor={...actor,kind:'connection',actorId:'connection:'+id,brandIds:[target],scopes:['read','automation:manage','sms:send']};
+  const keys={brandId:target,kind:'anniversary',operationKey:randomUUID()};
+  await dates.execute('dateAutomation.save',{...keys,expectedRevision:0,settings:{...settings,email:{subject:'Hello',body:'Happy anniversary!'}}},delegated);
+  const activate={...keys,expectedRevision:1,confirmRecurring:true,operationKey:randomUUID()};
+  await expect(dates.execute('dateAutomation.activate',activate,delegated)).rejects.toMatchObject({code:'send_scope_required'});
+  await db.tenant(actor.workspaceId,sql=>sql.query("UPDATE connections SET scopes=array_append(scopes,'campaign:send') WHERE id=$1",[id]));
+  await dates.execute('dateAutomation.activate',activate,delegated);
+  await db.tenant(actor.workspaceId,sql=>sql.query('UPDATE connections SET revoked_at=now() WHERE id=$1',[id]));
+  await expect(dates.execute('dateAutomation.list',{brandId:target},delegated)).rejects.toMatchObject({code:'automation_access'});
+});

@@ -272,3 +272,11 @@
   display: flex;
   flex-direction: column;
 }
+
+.date-controls > summary { cursor: pointer; font-weight: 600; }
+.date-controls fieldset { margin-block: 1rem; min-width: 0; }
+.date-controls label { display: block; margin-block: .65rem; }
+.date-controls textarea, .date-controls input:not([type="checkbox"]) { display: block; max-width: 100%; }
+.date-controls textarea { width: 100%; min-height: 4rem; }
+.date-controls button { margin: .25rem .5rem .25rem 0; }
+.date-controls li { margin-block: .4rem; overflow-wrap: anywhere; }
