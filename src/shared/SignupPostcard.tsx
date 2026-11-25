@@ -102,16 +102,19 @@ export function SignupFields({
   version,
   preview = false,
   texting,
+  action,
 }: {
   consent: string;
   version: string;
   preview?: boolean;
   texting?: SignupTexting;
+  action?: string;
 }) {
   const emailOptional = texting?.phoneOnly === true;
   return (
     <form
       method="post"
+      action={action}
       onSubmit={preview ? (e) => e.preventDefault() : undefined}
     >
       {texting?.name && (

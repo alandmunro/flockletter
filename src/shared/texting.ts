@@ -1,3 +1,5 @@
+import { textingReportCommands } from './texting-reports.js';
+import { textingPlanCommands } from './texting-commercial.js';
 import { z } from 'zod';
 import { commandDefinition as descriptor } from './command-definition.js';
 import { usAreaCodeZones } from './us-area-codes.js';
@@ -29,7 +31,14 @@ export const textingSettings = {
   start_words: { kind: 'words', mustInclude: ['START'], required: 'always', description: 'Replies that re-enroll an opted-out contact.' },
   confirm_words: { kind: 'words', mustInclude: ['YES'], required: 'always', description: 'Replies that confirm a pending number.' },
   registration_poll_minutes: { kind: 'int', min: 5, max: 1440, required: 'optional', description: 'Minutes between registration status polls when no callback arrives. Unset: callbacks and operator checks only.' },
+  registration_review_minutes: { kind: 'int', min: 1, max: 43200, required: 'optional', description: 'Minutes without registration progress before a pending enrollment appears for operator attention.' },
   reconcile_settle_minutes: { kind: 'int', min: 1, max: 1440, required: 'optional', description: 'Minutes an uncertain provider call must stay unfound before it may be retried. Unset: it stays uncertain for operator review.' },
+  probation_risk_window_days: { kind: 'int', min: 1, max: 365, required: 'optional', description: 'Days of recent practice traffic included in sending risk checks.' },
+  probation_risk_minimum: { kind: 'int', min: 1, max: 1000000, required: 'optional', description: 'Minimum attempted broadcast messages before rate-based enforcement.' },
+  probation_pause_optout_bps: { kind: 'int', min: 1, max: 10000, required: 'optional', description: 'Pause practice sending at this opt-out rate in basis points.' },
+  probation_pause_filter_bps: { kind: 'int', min: 1, max: 10000, required: 'optional', description: 'Pause practice sending at this carrier-filtered delivery rate in basis points.' },
+  probation_suspend_optout_bps: { kind: 'int', min: 1, max: 10000, required: 'optional', description: 'Suspend practice sending at this opt-out rate in basis points.' },
+  probation_suspend_filter_bps: { kind: 'int', min: 1, max: 10000, required: 'optional', description: 'Suspend practice sending at this carrier-filtered delivery rate in basis points.' },
   probation_canary_count: { kind: 'int', min: 1, max: 100, required: 'optional', description: 'Size of the first broadcast test group during probation.' },
   probation_canary_minutes: { kind: 'int', min: 1, max: 1440, required: 'optional', description: 'Minutes to observe the first broadcast group before releasing the rest.' },
   probation_min_days: { kind: 'int', min: 1, max: 365, required: 'optional', description: 'Minimum days after registration before probation can end.' },
@@ -138,6 +147,8 @@ const body = z.string().min(1).max(1600);
 export const shortName = z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/, 'Use 3–30 lowercase letters, digits or dashes.');
 export const textingCommands = {
   ...textingOnboardingCommands,
+  ...textingPlanCommands,
+  ...textingReportCommands,
   'sms.status': descriptor('Read texting setup for this workspace: registration state and number per company, allowance use and the settings still needed before sending. Never returns provider credentials.', 'read', false, {}),
   'sms.configure': descriptor('Set the workspace short name, notification email, time zone, the optional sign-up fields (name, phone, birthday, anniversary) and whether people may sign up for texts without an email.', 'owner', true, {
     operationKey: key, expectedRevision: z.number().int().positive(), shortName: shortName.optional(), notificationEmail: z.email().max(254).nullable().optional(),

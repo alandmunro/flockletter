@@ -17,20 +17,23 @@ export type CampaignInput = { useCase: CampaignUseCase; privacyPolicyUrl?: strin
 export type CallbackUrls = { inbound: string; status: string; registration: string };
 export type ProvisionKind = Exclude<RegistrationStep, 'subaccount'> | 'subaccount';
 export type ProvisionFacts = { sid: string; status?: string; e164?: string; parentSid?: string };
+export type RegistrationTier = 'low_volume' | 'standard' | 'sole_proprietor';
 
 /** Platform key only (operator registration). Every create carries the operation key as FriendlyName. */
 export interface TwilioPlatformPort {
   readonly mode: 'mock' | 'live';
-  createSubaccount(op: string): Promise<Result<AccountCredentials>>;
+  createSubaccount(op: string, workspace?: string): Promise<Result<AccountCredentials>>;
   createCustomerProfile(account: AccountCredentials, op: string, profile: BusinessProfile, callback: string): Promise<Result<ProvisionFacts>>;
-  submitBrand(account: AccountCredentials, op: string, profileSid: string, a2pSid: string): Promise<Result<ProvisionFacts>>;
+  submitBrand(account: AccountCredentials, op: string, profileSid: string, a2pSid: string, tier?: RegistrationTier): Promise<Result<ProvisionFacts>>;
   createMessagingService(account: AccountCredentials, op: string, callbacks: CallbackUrls): Promise<Result<ProvisionFacts>>;
   submitCampaign(account: AccountCredentials, op: string, serviceSid: string, brandSid: string, input: CampaignInput): Promise<Result<ProvisionFacts>>;
+  /** Captured corrections update the original campaign. The live adapter does not offer this capability. */
+  correctCampaign?(account: AccountCredentials, op: string, serviceSid: string, brandSid: string, campaignSid: string, input: CampaignInput): Promise<Result<ProvisionFacts>>;
   buyNumber(account: AccountCredentials, op: string, serviceSid: string, areaCode: string | null): Promise<Result<ProvisionFacts>>;
   /** Live numbers are attached by immutable SID after the purchase is recorded. */
   attachNumber?(account: AccountCredentials, serviceSid: string, numberSid: string): Promise<Result<true>>;
   /** Reconciles an uncertain create. `accepted` means the resource exists. */
-  find(kind: ProvisionKind, account: AccountCredentials | null, op: string, parentSid?: string): Promise<Result<ProvisionFacts>>;
+  find(kind: ProvisionKind, account: AccountCredentials | null, op: string, parentSid?: string, workspace?: string): Promise<Result<ProvisionFacts & { account?: AccountCredentials }>>;
   status(kind: 'brand' | 'campaign', account: AccountCredentials, sid: string, parentSid?: string): Promise<Result<{ status: string; reason?: string }>>;
 }
 export type SendResult = { outcome: Outcome; sid?: string; retryAfterSeconds?: number; permanent?: 'invalid' | 'landline' | 'unsubscribed'; reason?: string };

@@ -24,8 +24,42 @@ export const sendingSettings = ['send_window_start_hour', 'send_window_end_hour'
 export async function audit(sql: Sql, workspace: string, actor: string, via: Interface, action: string, target: string | null, oldValue: unknown, newValue: unknown) {
   await sql.query('INSERT INTO sms_audit(workspace_id,id,actor_id,interface,action,target,old_value,new_value) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
     [workspace, randomUUID(), actor, via, action, target, oldValue === undefined ? null : JSON.stringify(oldValue), newValue === undefined ? null : JSON.stringify(newValue)]);
+  const message = enrollmentNotice(action, newValue);
+  if (message && target) {
+    await sql.query(`INSERT INTO sms_audit(workspace_id,id,actor_id,interface,action,target,new_value)
+      SELECT $1,$2,$3,$4,'onboarding.notice_captured',b.id::text,$5 FROM sms_carrier_brands b
+      JOIN sms_registrations r ON r.carrier_brand_id=b.id WHERE b.workspace_id=$1 AND b.profile ? 'onboarding'
+      AND (b.id::text=$6 OR r.id::text=$6 OR b.profile#>>'{onboarding,probation,sendId}'=$6 OR EXISTS
+        (SELECT 1 FROM sms_registration_steps s WHERE s.registration_id=r.id AND s.operation_key=$6))`,
+    [workspace, randomUUID(), actor, via, JSON.stringify({ message, mail: 'captured', inApp: true, event: action }), target]);
+  }
 }
 export const requestHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+/** Captured owner mail and the in-app notice share the exact durable source event in practice enrollment. */
+function enrollmentNotice(action: string, value: unknown): string | null {
+  const facts = value as { state?: string; status?: string } | null;
+  switch (action) {
+    case 'registration.submit': return 'Your carrier registration was submitted.';
+    case 'registration.approved': return 'Registration approved. Your assigned number is ready to send.';
+    case 'registration.brand_status': case 'registration.campaign_status':
+      if (facts?.status === 'FAILED') return 'The carrier requested corrections. Open business texting to see the next step.';
+      if (facts?.status === 'SUSPENDED') return 'The carrier suspended this registration. Sending is on hold.';
+      if (action === 'registration.brand_status' && ['APPROVED', 'VERIFIED'].includes(facts?.status ?? '')) return 'Your brand was approved. Campaign review follows.';
+      return null;
+    case 'registration.call': return facts?.state === 'rejected' ? 'The carrier rejected a registration step. Review the corrections in Texting.' : null;
+    case 'registration.number_status': return facts?.state === 'reserved' ? 'Your number needs carrier attention.' : null;
+    case 'onboarding.review': return 'Ownership or payer evidence needs review.';
+    case 'onboarding.request_correction': return 'An operator requested a correction to your enrollment.';
+    case 'onboarding.accept_evidence': return 'Your practice evidence was accepted. Continue enrollment.';
+    case 'probation.canary_paused': case 'probation.risk_paused': return 'Sending paused. Review the first broadcast and recent delivery results.';
+    case 'probation.risk_suspended': return 'Sending suspended after a delivery or opt-out threshold was reached. Operator review is required.';
+    case 'onboarding.probation_restarted': return 'Probation restarted. A freshly reviewed broadcast must pass the first-cohort check.';
+    case 'probation.completed': case 'onboarding.complete_probation': return 'Texting probation ended.';
+    default: return null;
+  }
+}
+
 /** Replays the stored result for a repeated operation key; a different request with the same key is a conflict. */
 export async function once<T>(sql: Sql, workspace: string, actor: string, key: string, request: unknown, action: () => Promise<T>): Promise<T> {
   const hash = requestHash(request);

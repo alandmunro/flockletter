@@ -1,25 +1,31 @@
+import { TextingPracticePlan } from './TextingPlan.js';
+import { TextingReport } from './TextingReport.js';
+import type { PracticePlanStatus } from '../shared/texting-commercial.js';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { operationKey, type Api } from './api.js';
 import { blockedCharacters, encodeText, plainText } from '../shared/texting.js';
 import { TextingOnboarding } from './TextingOnboarding.js';
 
 // FL-SMS-007/008/011/015: the workspace texting page. Every action calls the same commands as the API and MCP.
-type Status = { mode: string; onboardingAvailable?: boolean; profile: null | { shortName: string | null; notificationEmail: string | null; timeZone: string; phoneField: boolean; birthdayField: boolean; anniversaryField: boolean; anniversaryLabel: string; nameField: boolean; phoneOnlySignup: boolean; revision: number };
-  companies: { id: string; name: string; registration: string; number: string | null; canSend: boolean }[]; usage: { month: string; used: number; reserved: number; allowance: number | null }; settingsNeeded: string[] };
+type Status = { mode: string; practicePlan?: PracticePlanStatus | null; onboardingAvailable?: boolean; profile: null | { shortName: string | null; notificationEmail: string | null; timeZone: string; phoneField: boolean; birthdayField: boolean; anniversaryField: boolean; anniversaryLabel: string; nameField: boolean; phoneOnlySignup: boolean; revision: number };
+  companies: { id: string; name: string; registration: string; number: string | null; canSend: boolean; sendingHold?: string | null }[]; usage: { month: string; used: number; reserved: number; allowance: number | null }; settingsNeeded: string[] };
 type Review = { id: string; revision: number; preview: string; encoding: string; perSegment: number; recipients: number; segments: number; gsm7Recipients: number; ucs2Recipients: number;
   allowance: { total: number | null; remaining: number | null; afterSend: number | null }; daysNeeded: number | null; links: { link: string; allowed: boolean }[]; gaps: string[]; digest?: string };
 type Contact = { id: string; phone: string; name: string | null; textable: boolean; notTextableReason: string | null; consents: { companyId: string; state: string }[] };
 const gapText: Record<string, string> = {
+  texting_plan_cancelled: 'The practice texting plan has been cancelled.', texting_plan_pending: 'The practice plan is waiting for registration approval.',
+  texting_spend_cap: 'The workspace has reached its monthly practice texting spending cap.',
   link_not_allowed: 'A link points outside your verified domain and Flockletter-hosted pages.', short_name_required: 'Set a short name before sending links.',
   text_too_long: 'The text is longer than 10 segments for some recipients.', no_opted_in_recipients: 'No contacts have confirmed texts from this company yet.',
   registration_not_approved: 'Carrier registration for this company is not approved yet.', texting_setting_required: 'The platform operator has not finished texting settings.',
   allowance_insufficient: 'This send needs more segments than remain this month.',
   probation_settings_required: 'An operator must configure probation limits before this broadcast can send.',
-  probation_paused: 'The first broadcast test group needs operator review.',
+  probation_suspended: 'This sender needs operator review before sending can resume.',
+  probation_paused: 'Sending is paused. Review the sender before restarting probation.',
   probation_template_required: 'During probation, use one of your approved campaign message examples.',
 };
 
-export function Texting({ api, manage = true }: { api: Api; manage?: boolean }) {
+export function Texting({ api, manage = true, onOpenAudience }: { api: Api; manage?: boolean; onOpenAudience?: () => void }) {
   const [status, setStatus] = useState<Status | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState('');
   const latestRequest = useRef(0);
@@ -58,11 +64,13 @@ export function Texting({ api, manage = true }: { api: Api; manage?: boolean }) 
     <p className="page-intro">Text customers who confirmed by replying YES. {status.mode === 'mock' ? 'Staging uses a simulated carrier: no real text is sent.' : ''}</p>
     {(error || loadError) && <div role="alert" className="notice error">{error || loadError}</div>}
     <section className="card"><h2>Companies and numbers</h2>
-      {status.companies.map(c => <p key={c.id}><strong>{c.name}</strong> · registration {c.registration.replaceAll('_', ' ')} {c.number ? '· ' + c.number : ''} {c.canSend ? '· ready to send' : ''}</p>)}
+      {status.companies.map(c => <p key={c.id}><strong>{c.name}</strong> · registration {c.registration.replaceAll('_', ' ')} {c.number ? '· ' + c.number : ''} {c.sendingHold ? '· ' + (gapText[c.sendingHold] ?? 'Sending is on hold.') : c.canSend ? '· ready to send' : ''}</p>)}
       <p className="help">Segments this month: {status.usage.used} used, {status.usage.reserved} in progress{status.usage.allowance !== null ? `, of ${status.usage.allowance}` : ''}.</p>
       {status.settingsNeeded.length > 0 && <p className="notice">Waiting for platform settings: {status.settingsNeeded.join(', ')}.</p>}
     </section>
-    {manage && status.onboardingAvailable && <TextingOnboarding api={api} companies={status.companies} refreshCompanies={load} />}
+    {manage && status.onboardingAvailable && <TextingOnboarding onOpenAudience={onOpenAudience} api={api} companies={status.companies} refreshCompanies={load} />}
+    {manage && status.practicePlan && <TextingPracticePlan key={status.practicePlan.revision} api={api} busy={busy} act={act} plan={status.practicePlan} />}
+    {status.onboardingAvailable && status.companies.length > 0 && <TextingReport key={status.companies.map(company => company.id).join(',')} api={api} companies={status.companies} manage={manage} />}
     {manage && <Profile api={api} status={status} busy={busy} act={act} />}
     {status.companies.length > 0
       ? <Composer api={api} companies={status.companies} busy={busy} act={act} />
