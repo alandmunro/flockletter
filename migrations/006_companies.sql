@@ -56,6 +56,8 @@ INSERT INTO companies(workspace_id,id,name,is_default)
 INSERT INTO company_brands(workspace_id,brand_id,company_id)
   SELECT b.workspace_id,b.id,c.id FROM brands b
   JOIN companies c ON c.workspace_id=b.workspace_id AND c.is_default
+  -- Existing assignments also have a BEFORE INSERT retention guard on replay.
+  WHERE NOT EXISTS (SELECT FROM company_brands cb WHERE cb.workspace_id=b.workspace_id AND cb.brand_id=b.id)
   ON CONFLICT (workspace_id,brand_id) DO NOTHING;
 DROP POLICY companies_migration ON company_brands;
 DROP POLICY companies_migration ON companies;
