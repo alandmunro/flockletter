@@ -119,3 +119,39 @@ it('materializes only greetings due within thirty days across a month boundary',
     (await sql.query('SELECT local_date::text FROM date_occurrences ORDER BY local_date')).rows);
   expect(rows).toEqual([{ local_date: '2032-03-31' }]);
 });
+
+it('records an unplanned birthday after a long outage once and respects audited catch-up changes',async()=>{
+  const {planBrand}=await import('../src/server/date-automations/planner.js');
+  const {setDate}=await import('../src/server/subscribers/people.js');
+  const w=actor.workspaceId, b=randomUUID(), kind='birthday';
+  await db.tenant(w,sql=>sql.query('INSERT INTO brands(workspace_id,id,name) VALUES($1,$2,$3)',[w,b,'Recovery']));
+  await dates.execute('dateAutomation.save',{brandId:b,kind,settings,expectedRevision:0,operationKey:randomUUID()},actor);
+  await dates.execute('dateAutomation.activate',{brandId:b,kind,expectedRevision:1,confirmRecurring:true,operationKey:randomUUID()},actor);
+  await db.brand(w,b,async sql=>{
+    await sql.query("UPDATE date_automations SET activated_at='2033-01-01',next_scan='2033-01-01'");
+    for(const day of [5,10,12,13]){
+      const id=randomUUID();
+      await sql.query("INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES($1,$2,$3,$4,'confirmed')",[w,b,id,day+'@example.test']);
+      await setDate(sql,w,b,{subscriber:id,contact:null},kind,{month:3,day},'Birthday');
+      if(day===10) await sql.query("UPDATE contact_dates SET updated_at='2033-03-14' WHERE subscriber_id=$1",[id]);
+    }
+  });
+  const pass=(iso:string)=>planBrand(db,w,b,'capture',new Date(iso));
+  const history=()=>db.brand(w,b,async sql=>(await sql.query('SELECT local_date::text,state,reason FROM date_occurrences ORDER BY local_date')).rows);
+  await pass('2033-01-02T12:00Z'); // The March dates are still outside the planning horizon.
+  const setDays=(days:number,revision:number)=>db.pool.query("SELECT flockletter_customer_jobs.texting_set_setting('annual_catch_up_days',$1,$2::jsonb,$3,'operator:fixture','operator_api','Recovery test')",[w,JSON.stringify(days),revision]);
+  await setDays(1,0);
+  await Promise.all([pass('2033-03-14T12:00Z'),pass('2033-03-14T12:00Z')]);
+  expect(await history()).toEqual([
+    {local_date:'2033-03-05',state:'expired',reason:'catch_up_window_closed'},
+    {local_date:'2033-03-12',state:'expired',reason:'catch_up_window_closed'},
+    {local_date:'2033-03-13',state:'planned',reason:null},
+  ]);
+  await setDays(0,1);
+  await pass('2033-03-14T12:02Z');
+  await setDays(3,2);
+  await pass('2033-03-14T12:04Z');
+  expect((await history()).map(row=>row.state)).toEqual(['expired','expired','expired']);
+  expect((await db.pool.query('SELECT * FROM flockletter_customer_jobs.texting_setting_history($1,10)',[w])).rows)
+    .toContainEqual(expect.objectContaining({key:'annual_catch_up_days',old_value:1,new_value:0}));
+});

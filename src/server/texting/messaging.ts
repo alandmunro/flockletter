@@ -2,8 +2,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { lockWorkspace } from '../workspace-lock.js';
-import { areaCodeZones, encodeText, helpText, type ConsentState } from '../../shared/texting.js';
-import { audit, nextWindow, readSettings, requireSettings, sendingSettings, validZone, type Interface, type SettingValues } from './storage.js';
+import { encodeText, helpText, type ConsentState } from '../../shared/texting.js';
+import { audit, nextWindow, readSettings, requireSettings, sendingSettings, smsRecipientZones, type Interface, type SettingValues } from './storage.js';
 import { bodyDigest, messageRank, type AccountCredentials, type CredentialSeal, type SendResult, type TwilioMessagingPort } from './twilio.js';
 import { probationHold } from './probation.js';
 
@@ -146,7 +146,7 @@ export class TextingMessaging {
     const freshReply = row.purpose === 'confirmation' && (await sql.query<{ fresh: boolean }>(
       `SELECT created_at > clock_timestamp() - make_interval(mins => $2) fresh FROM sms_messages WHERE id=$1`, [row.id, confirmationReplyMinutes])).rows[0]?.fresh === true;
     if (purposeNeedsWindow.has(row.purpose) && !freshReply) {
-      const zones = await this.zones(sql, contact, row.to_e164);
+      const zones = await smsRecipientZones(sql, contact?.time_zone, row.to_e164);
       const window = nextWindow(now, zones, required.send_window_start_hour, required.send_window_end_hour);
       if (window > now) return defer(window, 'quiet_hours');
     }
@@ -172,13 +172,6 @@ export class TextingMessaging {
     await sql.query('UPDATE sms_usage SET segments_reserved=segments_reserved+$2 WHERE period_month=$1', [period, row.segments]);
     await sql.query(`UPDATE sms_messages SET state='admitted',reason=NULL,send_day=$2,reserved_segments=$3,updated_at=clock_timestamp() WHERE id=$1`, [row.id, day(now), row.segments]);
     return false;
-  }
-  private async zones(sql: Sql, contact: ContactRow | null | undefined, phone: string): Promise<readonly string[]> {
-    if (contact?.time_zone && validZone(contact.time_zone)) return [contact.time_zone];
-    const byArea = areaCodeZones(phone);
-    if (byArea.length) return byArea;
-    const zone = (await sql.query<{ time_zone: string }>('SELECT time_zone FROM sms_workspace_profile')).rows[0]?.time_zone;
-    return [zone && validZone(zone) ? zone : 'America/New_York'];
   }
   private async release(sql: Sql, row: MessageRow, used: boolean) {
     if (!row.reserved_segments || !row.send_day) return;

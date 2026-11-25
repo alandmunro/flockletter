@@ -769,6 +769,7 @@
                   "key": {
                     "type": "string",
                     "enum": [
+                      "annual_catch_up_days",
                       "send_window_start_hour",
                       "send_window_end_hour",
                       "contact_monthly_limit",
