@@ -307,7 +307,7 @@ try {
       "Subscribe imported contacts immediately without a confirmation email",
     )
     .check();
-  const imported = await command(page, "audienceOnboarding.import", () =>
+  const job = await command(page, "audienceOnboarding.queueImport", () =>
     importDetails
       .getByRole("button", {
         name: "Import and subscribe without email",
@@ -315,6 +315,19 @@ try {
       })
       .click(),
   );
+  assert.equal(job.state, "queued");
+  const [completion] = await Promise.all([
+    page.waitForResponse(async response => {
+      if (new URL(response.url()).pathname !== "/api/v1/commands/audienceOnboarding.importJob" ||
+          response.request().postDataJSON()?.id !== job.id) return false;
+      const { result } = await response.json();
+      return result?.state === "complete" || result?.state === "failed";
+    }),
+    customer.audience.tickImport(actor.workspaceId, brand),
+  ]);
+  const { result: finished } = await completion.json();
+  assert.equal(finished.state, "complete", finished.errorCode);
+  const imported = finished.result;
   assert.equal(imported.rows.length, 2498);
   assert.ok(imported.rows.every((row: { outcome: string }) => row.outcome === "subscribed_added"));
   await importDetails.getByRole("button", { name: "Next rows", exact: true }).click();
