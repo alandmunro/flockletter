@@ -641,6 +641,8 @@ export class Texting {
         requireCondition(isTextingSetting(p.key), 422, 'unknown_setting', 'This setting does not exist.');
         let value: unknown;
         try { value = textingSettingValue(p.key as TextingSettingKey, p.value); } catch (error) { throw new AppError(422, 'setting_out_of_bounds', 'This value is outside the safe bounds for ' + p.key + '.', { issues: (error as z.ZodError).issues?.map(i => i.message) ?? [] }); }
+        requireCondition(p.key !== 'annual_catch_up_days' || p.workspaceId !== null || value !== null,
+          422, 'setting_required', 'Keep a platform catch-up window or set it to zero for occasion-day greetings only.');
         if (p.key === 'send_window_end_hour' || p.key === 'send_window_start_hour') {
           const current = await this.db.pool.query<{ key: string; value: number }>('SELECT key,value FROM flockletter_customer_jobs.texting_settings_list($1)', [p.workspaceId ?? '']);
           const start = p.key === 'send_window_start_hour' ? value : current.rows.find(r => r.key === 'send_window_start_hour')?.value;

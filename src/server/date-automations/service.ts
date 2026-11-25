@@ -1,6 +1,6 @@
-import { replannableOccurrence, schedule } from './planner.js';
+import { annualPolicy, replannableOccurrence, schedule } from './planner.js';
 import { productionConsentEligible } from '../customer-audience/service.js';
-import { dateSources,smsRoute } from './sources.js';
+import { dateSources } from './sources.js';
 import { renderGreeting } from '../../shared/date-automations.js';
 import type { Actor } from '../service.js';
 import type { Database, Sql } from '../db.js';
@@ -23,7 +23,7 @@ export async function authorized(sql: Sql, workspace:string, brand:string, issue
   [actor.slice(11),issuer,brand,scopes])).rowCount);
 }
 export class DateAutomations {
-  constructor(readonly db:Database,readonly mode:AutomationMode,readonly isOwner:(user:string,workspace:string)=>Promise<boolean>) {}
+  constructor(readonly db:Database,readonly mode:AutomationMode,readonly isOwner:(user:string,workspace:string)=>Promise<boolean>, readonly now:()=>Date=()=>new Date()) {}
   async execute(name:DateCommand, raw:unknown, actor:Actor) {
     const input=dateCommands[name].schema.parse(raw), workspace=actor.workspaceId, brand=input.brandId;
     return this.db.brand(workspace,brand,async sql=>{
@@ -32,7 +32,7 @@ export class DateAutomations {
       requireCondition(await authorized(sql,workspace,brand,actor.userId,actor.actorId,this.isOwner),403,'automation_access','Current automation access is required.');
       if(name==='dateAutomation.preview'){
         const p=dateCommands[name].schema.parse(raw);
-        const now=new Date(),end=new Date(now.getTime()+30*86400000);
+        const now=this.now(),end=new Date(now.getTime()+30*86400000);
         const months=new Set([now.getUTCMonth()+1,end.getUTCMonth()+1,new Date(now.getTime()-86400000).getUTCMonth()+1,new Date(end.getTime()+86400000).getUTCMonth()+1]);
         months.add(new Date(now.getTime()+15*86400000).getUTCMonth()+1);
         const sources=await dateSources(sql,brand,p.kind,[...months],p.cursor,100);
@@ -41,17 +41,18 @@ export class DateAutomations {
           AND (${replannableOccurrence}) IS NOT TRUE`,
           [brand,p.kind,sources.map(source=>source.id),now.getUTCFullYear()-1,end.getUTCFullYear()+1]);
         const closedYears=new Set(closed.rows.map(row=>row.date_id+'/'+row.annual_year));
+        const policy=await annualPolicy(sql,workspace);
         const rows=[];
         for(const source of sources)for(let year=now.getUTCFullYear()-1;year<=end.getUTCFullYear()+1;year++){
           if(closedYears.has(source.id+'/'+year))continue;
-          const when=schedule(source,year,p.settings);
+          const when=await schedule(sql,brand,source,year,p.settings,policy);
           if(!when||when.dueAt<now||when.dueAt>end)continue;
-          const sms=await smsRoute(sql,brand,source);
+          const sms=when.route;
           const email=p.settings.email&&source.subscriber_id&&source.email_state==='confirmed'
             &&(this.mode!=='live'||await productionConsentEligible(sql,source.subscriber_id));
           const template=sms?p.settings.sms:email?p.settings.email!.body:null;
           rows.push({id:source.id,recipient:source.first_name??source.email??(source.phone_e164?'Phone ending '+source.phone_e164.slice(-4):'Unnamed contact'),
-            dueAt:when.dueAt,zone:when.zone,channel:sms?'SMS':email?'Email':'No eligible channel',
+            dueAt:when.dueAt,zone:when.zone,hold:when.hold,channel:sms?'SMS':email?'Email':'No eligible channel',
             message:template?renderGreeting(template,source.first_name,source.label,when.years):null});
         }
         return {rows:rows.sort((a,b)=>a.dueAt.getTime()-b.dueAt.getTime()),next:sources.length===100?sources.at(-1)!.id:null};
@@ -114,7 +115,7 @@ export class DateAutomations {
             requireCondition(this.mode!=='off',409,'automation_off','Recurring delivery is disabled in this environment.');
             requireCondition(await authorized(sql,workspace,brand,actor.userId,actor.actorId,this.isOwner,current.settings),403,'send_scope_required','Grant the selected marketing channels.');
             if (!current.enabled) await sql.query(`UPDATE date_automations SET enabled=true,issuer=$2,actor=$3,mode=$4,
-              activated_at=clock_timestamp(),scan_after=NULL,next_scan=now() WHERE kind=$1`,[input.kind,actor.userId,actor.actorId,this.mode]);
+              activated_at=clock_timestamp(),scan_after=NULL,last_scan_started_at=NULL,current_scan_started_at=NULL,next_scan=now() WHERE kind=$1`,[input.kind,actor.userId,actor.actorId,this.mode]);
           } else await sql.query('UPDATE date_automations SET enabled=false WHERE kind=$1',[input.kind]);
         }
         if (name!=='dateAutomation.activate') await sql.query("UPDATE date_occurrences SET state='skipped',reason='definition_paused' WHERE kind=$1 AND state='planned'",[input.kind]);

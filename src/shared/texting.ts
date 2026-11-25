@@ -12,6 +12,7 @@ type SettingSpec =
   | { kind: 'words'; mustInclude: readonly string[]; required: 'always'; description: string }
   | { kind: 'phones'; maxItems: number; required: 'live'; description: string };
 export const textingSettings = {
+  annual_catch_up_days: { kind: 'int', min: 0, max: 30, required: 'always', description: 'Extra local calendar days to deliver a missed annual greeting. Zero allows only the occasion day.' },
   send_window_start_hour: { kind: 'int', min: 8, max: 20, required: 'sending', description: 'Earliest local hour a text may be sent in the recipient’s time zone (never before 8).' },
   send_window_end_hour: { kind: 'int', min: 9, max: 21, required: 'sending', description: 'Hour by which sending stops in the recipient’s time zone (never after 21).' },
   contact_monthly_limit: { kind: 'int', min: 1, max: 31, required: 'sending', description: 'Marketing texts per contact per calendar month per workspace.' },
