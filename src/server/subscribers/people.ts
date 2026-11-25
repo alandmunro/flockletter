@@ -198,8 +198,8 @@ export async function setDate(sql: Sql, workspace: string, brand: string, target
   const conflict = bySubscriber ? '(workspace_id,brand_id,subscriber_id,type) WHERE subscriber_id IS NOT NULL' : '(workspace_id,contact_id,type) WHERE subscriber_id IS NULL';
   await sql.query(`INSERT INTO contact_dates(workspace_id,id,contact_id,brand_id,subscriber_id,type,label,month,day,year) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
     ON CONFLICT ${conflict} DO UPDATE SET month=EXCLUDED.month,day=EXCLUDED.day,year=EXCLUDED.year,label=EXCLUDED.label,
-      contact_id=coalesce(EXCLUDED.contact_id,contact_dates.contact_id),cleared_at=NULL,updated_at=clock_timestamp()`,
-  [workspace, randomUUID(), target.contact, bySubscriber ? brand : null, target.subscriber, type, label, value.month, value.day, value.year ?? null]);
+      brand_id=EXCLUDED.brand_id,contact_id=coalesce(EXCLUDED.contact_id,contact_dates.contact_id),cleared_at=NULL,updated_at=clock_timestamp()`,
+  [workspace, randomUUID(), target.contact, brand, target.subscriber, type, label, value.month, value.day, value.year ?? null]);
 }
 
 const masked = (phone: string | null) => (phone ? '***' + phone.slice(-4) : null);
