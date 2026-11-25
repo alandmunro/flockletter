@@ -1121,6 +1121,15 @@ it('hands an eligible annual email to marketing delivery exactly once, with unsu
   await Promise.all([1,2].map(()=>dispatchBrand(db,f.workspaceId,f.brandId,ports,base)));
   const rows=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT state,reason,channel,delivery_id FROM date_occurrences')).rows);
   expect(rows).toMatchObject([{state:'queued',reason:null,channel:'email'}]);
+  // A delivery queued by the previous release must survive the controls rollout.
+  const {dateSources}=await import('../src/server/date-automations/sources.js');
+  const {digest}=await import('../src/server/content.js');
+  await db.brand(f.workspaceId,f.brandId,async sql=>{
+    const [source]=await dateSources(sql,f.brandId,'birthday',[11],null,1);
+    expect(source?.subscriber_id).toBe(f.subscriberId);
+    await sql.query('UPDATE date_occurrences SET source_digest=$1 WHERE delivery_id=$2',
+      [digest(JSON.stringify([source,null])),rows[0]!.delivery_id]);
+  });
   for(let i=0;i<4;i++)await f.delivery.worker.tick(f.workspaceId,rows[0]!.delivery_id);
   const captures=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT payload FROM customer_delivery_captures')).rows);
   expect(captures).toHaveLength(1);
@@ -1128,4 +1137,27 @@ it('hands an eligible annual email to marketing delivery exactly once, with unsu
   expect(captures[0]!.payload.text).toContain('Happy birthday, friend.');
   expect(captures[0]!.payload.text.toLowerCase()).toContain('unsubscribe');
   expect((await billing.status(f.workspaceId)).usage).toMatchObject({emails:1,campaigns:1,reservedEmails:0,reservedCampaigns:0});
+
+  // Edit another recipient's date after handoff but before submission. Keep the original
+  // negative channel receipt and let the planner move the unsent greeting to the new day.
+  const second=await db.brand(f.workspaceId,f.brandId,async sql=>{
+    const id=(await sql.query<{id:string}>("SELECT id FROM subscribers WHERE email_normalized='another@shop.test'")).rows[0]!.id;
+    await setDate(sql,f.workspaceId,f.brandId,{subscriber:id,contact:null},'birthday',{month:11,day:8},'Birthday');
+    return id;
+  });
+  const later=new Date(base.getTime()+120000);
+  await planBrand(db,f.workspaceId,f.brandId,'capture',later);
+  await dispatchBrand(db,f.workspaceId,f.brandId,ports,later);
+  const initial=await db.brand(f.workspaceId,f.brandId,async sql=>{
+    const row=(await sql.query<{id:string;delivery_id:string}>(`SELECT o.id,o.delivery_id FROM date_occurrences o JOIN contact_dates d
+      ON d.id=o.date_id WHERE d.subscriber_id=$1`,[second])).rows[0]!;
+    await setDate(sql,f.workspaceId,f.brandId,{subscriber:second,contact:null},'birthday',{month:11,day:10},'Birthday');
+    return row;
+  });
+  for(let i=0;i<4;i++)await f.delivery.worker.tick(f.workspaceId,initial.delivery_id);
+  await planBrand(db,f.workspaceId,f.brandId,'capture',new Date(later.getTime()+120000));
+  const result=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query(
+    'SELECT state,delivery_id,local_date::text FROM date_occurrences WHERE id=$1',[initial.id])).rows[0]);
+  expect(result).toEqual({state:'planned',delivery_id:null,local_date:'2026-11-10'});
+  expect(await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT FROM customer_delivery_captures')).rowCount)).toBe(1);
 });

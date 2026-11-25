@@ -29,7 +29,7 @@ export function createMcpServer(call: (name: CommandName, input: unknown) => Pro
     server.registerTool(name.replace('.', '_'), {
       description: definition.description,
       inputSchema: definition.schema.shape,
-      annotations: { readOnlyHint: !definition.mutation, destructiveHint: false, idempotentHint: true, openWorldHint: ['senderSetup.approve','senderSetup.recover','senderSetup.process','rehearsal.approve','rehearsal.process','sender.deliveryReadiness','campaign.preflight','delivery.preflight','delivery.review','delivery.reviewTest','delivery.approveTest','delivery.approve','delivery.process','audienceOnboarding.requestConfirmation','subscriber.signup'].includes(name) },
+      annotations: { readOnlyHint: !definition.mutation, destructiveHint: false, idempotentHint: true, openWorldHint: ['dateAutomation.activate','senderSetup.approve','senderSetup.recover','senderSetup.process','rehearsal.approve','rehearsal.process','sender.deliveryReadiness','campaign.preflight','delivery.preflight','delivery.review','delivery.reviewTest','delivery.approveTest','delivery.approve','delivery.process','audienceOnboarding.requestConfirmation','subscriber.signup'].includes(name) },
     }, async (input: Record<string, unknown>) => result(name, definition.schema.parse(input)));
   }
   if (assetRoot) server.registerTool('asset_upload_files', {

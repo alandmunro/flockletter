@@ -1,4 +1,4 @@
-import { schedule } from './planner.js';
+import { replannableOccurrence, schedule } from './planner.js';
 import { productionConsentEligible } from '../customer-audience/service.js';
 import { dateSources,smsRoute } from './sources.js';
 import { renderGreeting } from '../../shared/date-automations.js';
@@ -36,8 +36,14 @@ export class DateAutomations {
         const months=new Set([now.getUTCMonth()+1,end.getUTCMonth()+1,new Date(now.getTime()-86400000).getUTCMonth()+1,new Date(end.getTime()+86400000).getUTCMonth()+1]);
         months.add(new Date(now.getTime()+15*86400000).getUTCMonth()+1);
         const sources=await dateSources(sql,brand,p.kind,[...months],p.cursor,100);
+        const closed=await sql.query<{date_id:string;annual_year:number}>(`SELECT date_id,annual_year FROM date_occurrences
+          WHERE brand_id=$1 AND kind=$2 AND date_id=ANY($3::uuid[]) AND annual_year BETWEEN $4 AND $5
+          AND (${replannableOccurrence}) IS NOT TRUE`,
+          [brand,p.kind,sources.map(source=>source.id),now.getUTCFullYear()-1,end.getUTCFullYear()+1]);
+        const closedYears=new Set(closed.rows.map(row=>row.date_id+'/'+row.annual_year));
         const rows=[];
         for(const source of sources)for(let year=now.getUTCFullYear()-1;year<=end.getUTCFullYear()+1;year++){
+          if(closedYears.has(source.id+'/'+year))continue;
           const when=schedule(source,year,p.settings);
           if(!when||when.dueAt<now||when.dueAt>end)continue;
           const sms=await smsRoute(sql,brand,source);
@@ -50,7 +56,15 @@ export class DateAutomations {
         }
         return {rows:rows.sort((a,b)=>a.dueAt.getTime()-b.dueAt.getTime()),next:sources.length===100?sources.at(-1)!.id:null};
       }
-      if(name==='dateAutomation.list') return {mode:this.mode, definitions:(await sql.query(
+      if(name==='dateAutomation.list') return {mode:this.mode,unattributed:(await sql.query(`SELECT d.id,d.type,d.label,d.month,d.day,
+        right(c.phone_e164,4) ending,d.updated_at::text version FROM contact_dates d JOIN sms_contacts c ON c.id=d.contact_id
+        WHERE c.brand_id=$1 AND d.brand_id IS NULL AND d.cleared_at IS NULL AND d.subscriber_id IS NULL AND c.subscriber_id IS NULL
+          AND NOT EXISTS(SELECT FROM sms_contact_subscribers l WHERE l.contact_id=c.id) ORDER BY d.id LIMIT 20`,[brand])).rows, health:(await sql.query(`SELECT
+        min(o.due_at) FILTER (WHERE o.state='planned' AND o.due_at<now()) oldest_due,
+        count(*) FILTER(WHERE m.state='uncertain' OR p.state='uncertain')::int uncertain,
+        count(*) FILTER(WHERE o.state IN ('skipped','expired'))::int skipped
+        FROM date_occurrences o LEFT JOIN sms_messages m ON o.channel='sms' AND m.id=o.delivery_id AND m.date_brand_id=o.brand_id
+        LEFT JOIN customer_delivery_recipients p ON o.channel='email' AND p.delivery_id=o.delivery_id AND p.brand_id=o.brand_id`)).rows[0], definitions:(await sql.query(
         'SELECT kind,revision,enabled,settings FROM date_automations JOIN date_automation_revisions USING(workspace_id,brand_id,kind,revision) ORDER BY kind')).rows};
       if (name==='dateAutomation.occurrences') {
         const input=dateCommands[name].schema.parse(raw);
@@ -66,6 +80,16 @@ export class DateAutomations {
       }
       const mutation=dateCommands[name].schema.parse(raw);
       return once(sql,workspace,actor.actorId,mutation.operationKey,[name,mutation],async()=>{
+        if (name==='dateAutomation.attribute') {
+          const p=dateCommands[name].schema.parse(raw);
+          const changed=await sql.query(`UPDATE contact_dates d SET brand_id=$1,updated_at=clock_timestamp() FROM sms_contacts c
+            WHERE d.id=$2 AND d.updated_at::text=$3 AND d.brand_id IS NULL AND d.subscriber_id IS NULL AND d.cleared_at IS NULL
+              AND c.id=d.contact_id AND c.brand_id=$1 AND c.subscriber_id IS NULL
+              AND NOT EXISTS(SELECT FROM sms_contact_subscribers l WHERE l.contact_id=c.id)`,[brand,p.id,p.expectedUpdate]);
+          requireCondition(changed.rowCount,409,'date_changed','Reload and review this date again.');
+          await audit(sql,actor,name,p.id);
+          return {id:p.id};
+        }
         if (name==='dateAutomation.cancel') {
           const input=dateCommands[name].schema.parse(raw);
           const changed=await sql.query("UPDATE date_occurrences SET state='cancelled',reason='owner_cancelled' WHERE id=$1 AND (state IN ('planned','cancelled') OR (state='queued' AND (EXISTS (SELECT FROM sms_messages m WHERE channel='sms' AND m.date_brand_id=date_occurrences.brand_id AND m.id=delivery_id AND m.state='pending' AND m.submitted_at IS NULL) OR EXISTS (SELECT FROM customer_delivery_recipients p WHERE channel='email' AND p.delivery_id=date_occurrences.delivery_id AND p.attempts=0 AND p.state IN ('pending','prepared','preparing')))))",[input.id]);
