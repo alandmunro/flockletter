@@ -845,3 +845,45 @@ describe('FL-AT-046 audience people: email, texts, names and special dates toget
     expect(exported).toContainEqual(expect.objectContaining({ email: 'one@example.com', phone: '+12125550605' }));
   });
 });
+
+it('dispatches one annual greeting through mock Twilio, and checks cancellation before the carrier call',async()=>{
+  const {DateAutomations}=await import('../src/server/date-automations/service.js');
+  const {annualClaim,dispatchBrand}=await import('../src/server/date-automations/dispatch.js');
+  const {planBrand}=await import('../src/server/date-automations/planner.js');
+  const {CustomerDelivery}=await import('../src/server/customer-delivery/service.js');
+  const {CustomerBilling}=await import('../src/server/customer-billing/service.js');
+  const {setDate}=await import('../src/server/subscribers/people.js');
+  const w=A.workspaceId;
+  const brand=(await rows<{brand_id:string}>(w,'SELECT brand_id FROM company_brands WHERE company_id=$1 LIMIT 1',[company[w]]))[0]!.brand_id;
+  clock=at(45,19);
+  const stamp=now(),one=await optIn(w,'+12125550780'),two=await optIn(w,'+12125550781');
+  await tick(w); // Settle the opt-in replies before scripting the next carrier send.
+  const dates=new DateAutomations(db,'capture',identity.isOwner);
+  const input={brandId:brand,kind:'anniversary'};
+  await dates.execute('dateAutomation.save',{...input,expectedRevision:0,operationKey:key(),settings:{time:'09:00',zone:'America/New_York',startHour:9,endHour:20,sms:'Happy {{label}}!',email:null}},A);
+  await dates.execute('dateAutomation.activate',{...input,expectedRevision:1,confirmRecurring:true,operationKey:key()},A);
+  await db.brand(w,brand,async sql=>{
+    for(const contact of [one,two])await setDate(sql,w,brand,{contact,subscriber:null},'anniversary',{month:stamp.getUTCMonth()+1,day:stamp.getUTCDate()},'anniversary');
+  });
+  const delivery=new CustomerDelivery(db,{mode:'capture',environment:'test',origin,isOwner:identity.isOwner,billing:new CustomerBilling(db,{environment:'test',exerciseEnabled:true})});
+  const ports={mode:'capture' as const,texting,delivery,isOwner:identity.isOwner};
+  texting.messaging.options.annualClaim=(sql,w,b,id,t,co)=>annualClaim(sql,w,b,'sms',id,ports,t,co);
+  await planBrand(db,w,brand,'capture',stamp);
+  await Promise.all([dispatchBrand(db,w,brand,ports,stamp),dispatchBrand(db,w,brand,ports,stamp)]);
+  const cancelled=await db.brand(w,brand,async sql=>(await sql.query('SELECT id FROM date_occurrences WHERE dispatched_contact=$1',[two])).rows[0]!.id);
+  await dates.execute('dateAutomation.cancel',{brandId:brand,id:cancelled,operationKey:key()},A);
+  const fault={workspaceId:w,operationKey:key(),action:{kind:'fault',target:'send',faults:['timeout_after_commit']}};
+  await op('platform.textingMock',fault);
+  await op('platform.textingMock',fault);
+  const current=()=>rows<{id:string;state:string;reason:string|null}>(w,'SELECT id,state,reason FROM sms_messages WHERE date_brand_id=$1 AND contact_id=$2',[brand,one]);
+  for(let i=0;i<25&&(await current())[0]?.state==='pending';i++) await texting.messaging.tick(w,1);
+  const uncertain=await current();
+  expect(uncertain).toMatchObject([{state:'uncertain',reason:'timeout'}]);
+  await dispatchBrand(db,w,brand,ports,stamp);
+  await tick(w);
+  expect(await texting.mock!.messaging.sends(uncertain[0]!.id)).toBe(1);
+  expect(await db.brand(w,brand,async sql=>(await sql.query('SELECT channel FROM date_occurrences WHERE dispatched_contact=$1',[one])).rows)).toEqual([{channel:'sms'}]);
+  const messages=await rows(w,'SELECT contact_id,state,rendered_body FROM sms_messages WHERE date_brand_id=$1 AND contact_id=ANY($2::uuid[])',[brand,[one,two]]);
+  expect(messages).toHaveLength(2);
+  expect(messages).toEqual(expect.arrayContaining([expect.objectContaining({contact_id:one,state:'delivered',rendered_body:expect.stringMatching(/anniversary.*STOP/i)}),expect.objectContaining({contact_id:two,state:'skipped'})]));
+});

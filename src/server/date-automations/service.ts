@@ -54,9 +54,12 @@ export class DateAutomations {
         'SELECT kind,revision,enabled,settings FROM date_automations JOIN date_automation_revisions USING(workspace_id,brand_id,kind,revision) ORDER BY kind')).rows};
       if (name==='dateAutomation.occurrences') {
         const input=dateCommands[name].schema.parse(raw);
-        return {rows:(await sql.query(`SELECT o.id,o.kind,o.local_date::text,o.due_at,o.zone,o.state,o.reason,o.channel,o.date_id,
+        return {rows:(await sql.query(`SELECT o.id,o.kind,o.local_date::text,o.due_at,o.zone,o.state,coalesce(m.reason,p.reason,o.reason) reason,o.channel,o.date_id,
           coalesce(s.email_normalized,CASE WHEN c.id IS NOT NULL THEN 'Phone ending '||right(c.phone_e164,4) END) recipient,
-          NULL::text delivery_state FROM date_occurrences o LEFT JOIN contact_dates d ON d.id=o.date_id AND d.brand_id=o.brand_id
+          coalesce(m.state,p.feedback,p.state) delivery_state FROM date_occurrences o
+          LEFT JOIN sms_messages m ON o.channel='sms' AND m.id=o.delivery_id AND m.date_brand_id=o.brand_id
+          LEFT JOIN customer_delivery_recipients p ON o.channel='email' AND p.delivery_id=o.delivery_id AND p.brand_id=o.brand_id
+          LEFT JOIN contact_dates d ON d.id=o.date_id AND d.brand_id=o.brand_id
           LEFT JOIN subscribers s ON s.id=d.subscriber_id AND s.brand_id=o.brand_id LEFT JOIN sms_contacts c ON c.id=d.contact_id
           WHERE CASE WHEN $1='upcoming' THEN o.state='planned' AND o.due_at<clock_timestamp()+interval '30 days'
             ELSE o.state<>'planned' END ORDER BY CASE WHEN $1='upcoming' THEN o.due_at END,o.due_at DESC,o.id LIMIT 51 OFFSET $2`,[input.view,input.offset])).rows};
@@ -65,7 +68,7 @@ export class DateAutomations {
       return once(sql,workspace,actor.actorId,mutation.operationKey,[name,mutation],async()=>{
         if (name==='dateAutomation.cancel') {
           const input=dateCommands[name].schema.parse(raw);
-          const changed=await sql.query("UPDATE date_occurrences SET state='cancelled',reason='owner_cancelled' WHERE id=$1 AND state IN ('planned','cancelled')",[input.id]);
+          const changed=await sql.query("UPDATE date_occurrences SET state='cancelled',reason='owner_cancelled' WHERE id=$1 AND (state IN ('planned','cancelled') OR (state='queued' AND (EXISTS (SELECT FROM sms_messages m WHERE channel='sms' AND m.date_brand_id=date_occurrences.brand_id AND m.id=delivery_id AND m.state='pending' AND m.submitted_at IS NULL) OR EXISTS (SELECT FROM customer_delivery_recipients p WHERE channel='email' AND p.delivery_id=date_occurrences.delivery_id AND p.attempts=0 AND p.state IN ('pending','prepared','preparing')))))",[input.id]);
           requireCondition(changed.rowCount,409,'cannot_cancel','The occurrence has already been processed or is unavailable.');
           await audit(sql,actor,name,input.id);
           return {id:input.id,state:'cancelled'};

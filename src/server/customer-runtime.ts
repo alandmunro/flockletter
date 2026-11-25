@@ -1,3 +1,4 @@
+import { annualClaim,dispatchBrand } from './date-automations/dispatch.js';
 import { eachDateBrand, planBrand } from './date-automations/planner.js';
 import { DateAutomations } from './date-automations/service.js';
 import type { DateCommand } from '../shared/date-automations.js';
@@ -164,7 +165,12 @@ export class CustomerWorkflows {
         }
       },
     },textingSecrets);
-    if(this.texting)this.audience.options.texting=this.texting;
+    const datePorts=()=>({mode:this.dates.mode,isOwner:this.identity.isOwner,delivery:this.delivery,texting:this.texting});
+    this.delivery.options.annualClaim=(sql,w,b,id,now)=>annualClaim(sql,w,b,'email',id,datePorts(),now);
+    if(this.texting){
+      this.audience.options.texting=this.texting;
+      this.texting.messaging.options.annualClaim=(sql,w,b,id,now,company)=>annualClaim(sql,w,b,'sms',id,datePorts(),now,company);
+    }
     const inboundBinding=env.FLOCKLETTER_CUSTOMER_SES_FEEDBACK_BINDING;
     const inboundRoute=inboundBinding?parseSesRoute(JSON.parse(inboundBinding)):undefined;
     if(inboundRoute&&settings.delivery==='ses'&&!this.ses?.entries.some(entry=>entry.route.fingerprint===inboundRoute.fingerprint))
@@ -358,7 +364,11 @@ export class CustomerWorkflows {
         await run(()=>this.audience.tickImport(workspace,brand.id));
         await run(()=>this.audience.tick(workspace,brand.id));
       }
-      if(this.dates.mode!=='off') await eachDateBrand(this.db,workspace,brand=>run(()=>planBrand(this.db,workspace,brand,this.dates.mode,new Date())));
+      if(this.dates.mode!=='off') await eachDateBrand(this.db,workspace,brand=>run(async()=>{
+        const now=new Date();
+        await planBrand(this.db,workspace,brand,this.dates.mode,now);
+        await dispatchBrand(this.db,workspace,brand,{mode:this.dates.mode,isOwner:this.identity.isOwner,delivery:this.delivery,texting:this.texting},now);
+      }));
       await run(()=>this.team.tickWorkspace(workspace));
       await run(()=>this.support.tickWorkspace(workspace));
       await run(()=>this.retention.tickWorkspace(workspace));

@@ -221,7 +221,7 @@ export class Texting {
     return send;
   }
   /** FL-SMS-010: only the workspace's verified domain or its Flockletter-hosted pages. */
-  private async linkProblems(sql: Sql, companyId: string, body: string) {
+  async linkProblems(sql: Sql, companyId: string, body: string) {
     const links = findLinks(body);
     if (!links.length) return { links, problems: [] as string[] };
     const domains: string[] = [];
@@ -514,10 +514,11 @@ export class Texting {
     return earliest;
   }
   /** Mock only: delivers queued, signed callbacks through the same handlers the HTTP routes use. */
-  async deliverMockCallbacks() {
+  async deliverMockCallbacks(accountSid?: string) {
     if (!this.mock) return 0;
     let delivered = 0;
     for (const callback of await this.mock.state.pending()) {
+      if (accountSid && callback.accountSid !== accountSid) continue;
       const signature = await this.mock.state.sign(callback);
       const url = new URL(callback.url), kind = url.pathname.split('/').pop() as 'inbound' | 'status' | 'registration';
       await this.webhook(kind, callback.url, callback.params, signature).catch(() => undefined);
@@ -721,19 +722,32 @@ export class Texting {
       }
       case 'platform.textingMock': {
         requireCondition(this.mock, 409, 'mock_only', 'Mock actions run only with the mock Twilio client.');
-        const p = input as unknown as { workspaceId: string; action: { kind: string; [k: string]: unknown } };
+        const p = textingPlatformCommands['platform.textingMock'].schema.parse(raw);
         const a = p.action;
-        if (a.kind === 'fault') { await this.mock!.state.script(a.target as never, a.faults as never); return { queued: (a.faults as unknown[]).length }; }
-        if (a.kind === 'deliver') return { delivered: await this.deliverMockCallbacks() };
-        if (a.kind === 'inbound') { const ok = await this.mock!.messaging.inbound(String(a.from), String(a.to), String(a.body)); requireCondition(ok, 404, 'not_found', 'That number is not a mock number.'); return { queued: true, delivered: await this.deliverMockCallbacks() }; }
+        if (a.kind === 'fault') return write(p.workspaceId, async sql => {
+          let target: Exclude<typeof a.target,'send'> | `send/${string}`;
+          if (a.target === 'send') {
+            const account = await this.registration.account(sql, p.workspaceId);
+            requireCondition(account, 409, 'no_account', 'This workspace has no provider account yet.');
+            target = `send/${account.accountSid}`;
+          } else target = a.target;
+          await this.mock!.state.script(sql, target, a.faults);
+          return { queued: a.faults.length };
+        });
         const account = await this.db.read(p.workspaceId, sql => this.registration.account(sql, p.workspaceId));
+        if (a.kind === 'deliver') return { delivered: account ? await this.deliverMockCallbacks(account.accountSid) : 0 };
         requireCondition(account, 409, 'no_account', 'This workspace has no provider account yet.');
+        if (a.kind === 'inbound') {
+          const ok = await this.mock.messaging.inbound(account.accountSid, a.from, a.to, a.body);
+          requireCondition(ok, 404, 'not_found', 'Choose an active mock number in this workspace.');
+          return { queued: true, delivered: await this.deliverMockCallbacks(account.accountSid) };
+        }
         const reg = await this.db.read(p.workspaceId, async sql => (await sql.query<RegistrationRow>('SELECT * FROM sms_registrations WHERE id=$1', [String(a.registrationId)])).rows[0]);
         requireCondition(reg, 404, 'not_found', 'This registration is unavailable.');
         const type = a.kind === 'brand' ? 'brand' : 'campaign', sid = type === 'brand' ? reg.brand_sid : reg.campaign_sid;
         requireCondition(sid, 409, 'not_filed', `The ${type} has not been filed yet.`);
         await this.mock!.platform.decide(type, account, sid, a.status as never, this.registration.callbacks(p.workspaceId).registration);
-        return { decided: true, delivered: await this.deliverMockCallbacks() };
+        return { decided: true, delivered: await this.deliverMockCallbacks(account.accountSid) };
       }
     }
   }

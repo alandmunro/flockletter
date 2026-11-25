@@ -7,7 +7,7 @@ import { audit, nextWindow, readSettings, requireSettings, sendingSettings, vali
 import { bodyDigest, messageRank, type AccountCredentials, type CredentialSeal, type SendResult, type TwilioMessagingPort } from './twilio.js';
 import { probationHold } from './probation.js';
 
-export type MessageRow = { id: string; send_id: string | null; company_id: string; contact_id: string | null; purpose: 'broadcast' | 'test' | 'confirmation' | 'help' | 'verification';
+export type MessageRow = { date_brand_id?:string|null; id: string; send_id: string | null; company_id: string; contact_id: string | null; purpose: 'broadcast' | 'test' | 'confirmation' | 'help' | 'verification';
   to_e164: string; rendered_body: string; body_digest: string; encoding: string; segments: number; state: string; reason: string | null; provider_sid: string | null;
   send_day: string | null; next_check_at: Date; attempts: number; submitted_at: Date | null; reserved_segments: number };
 type ContactRow = { id: string; phone_e164: string; name: string | null; time_zone: string | null; textable: boolean; consecutive_temp_failures: number };
@@ -15,7 +15,7 @@ export type Forward = (message: {
   id: string; to: string; subject: string; text: string;
 }) => Promise<'forwarded' | 'captured' | 'failed' | 'uncertain'>;
 export type DispatchAuthority = (sql: Sql, workspace: string, companyId: string, actorId: string) => Promise<boolean>;
-export type MessagingOptions = { db: Database; port: TwilioMessagingPort; seal: CredentialSeal; origin: string; forward?: Forward; canDispatch?: DispatchAuthority; now?: () => Date };
+export type MessagingOptions = { annualClaim?:(sql:Sql,w:string,brand:string,id:string,now:Date,company:string)=>Promise<string|null>; db: Database; port: TwilioMessagingPort; seal: CredentialSeal; origin: string; forward?: Forward; canDispatch?: DispatchAuthority; now?: () => Date };
 
 const permanentStatusCodes = new Set(['30005', '30006', '21211', '21614', '21612']);
 const purposeNeedsWindow = new Set(['broadcast', 'confirmation']);
@@ -113,6 +113,12 @@ export class TextingMessaging {
       await audit(sql, workspace, 'worker', 'worker', 'message.skipped', row.id, null, { reason });
       await this.finishSend(sql, row.send_id); return true;
     };
+    if (row.date_brand_id) {
+      await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[row.date_brand_id]);
+      const reason=this.options.annualClaim ? await this.options.annualClaim(sql,workspace,row.date_brand_id,row.id,now,row.company_id) : 'automation_off';
+      if(reason==='outside_window'||reason==='authority_verification_unavailable'||reason==='subscription_ineligible') return defer(new Date(now.getTime()+60000),reason);
+      if(reason) return skip(reason);
+    }
     if (row.send_id && this.options.canDispatch) {
       const actor = (await sql.query<{ confirmed_by: string | null }>('SELECT confirmed_by FROM sms_sends WHERE id=$1', [row.send_id])).rows[0]?.confirmed_by;
       if (!actor) return skip('send_authority_revoked');
