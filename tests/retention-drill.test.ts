@@ -108,6 +108,10 @@ async function seed(db: pg.Client, workspace: string) {
         VALUES(w,'fixture',camp,b,'fixture-period',1,digest);
       INSERT INTO customer_audience_settings(workspace_id,brand_id,purpose,policy_version,consent_text,source_domain,form_token,exercise_key)
         VALUES(w,b,'brand-marketing','v1','Fixture permission','example.test','fixture-'||w,decode(digest,'hex'));
+      INSERT INTO date_automations(workspace_id,brand_id,kind,revision) VALUES(w,b,'birthday',1);
+      INSERT INTO date_automation_revisions(workspace_id,brand_id,kind,revision,settings) VALUES(w,b,'birthday',1,'{}');
+      INSERT INTO date_occurrences(workspace_id,brand_id,id,kind,revision,date_id,annual_year,local_date,due_at,expires_at,zone,state)
+        VALUES(w,b,gen_random_uuid(),'birthday',1,gen_random_uuid(),2028,'2028-01-01',now(),now()+interval '2 days','UTC','cancelled');
       INSERT INTO customer_audience_import_jobs(workspace_id,brand_id,id,actor_id,user_id,actor_kind,mode,input)
         VALUES(w,b,gen_random_uuid(),'fixture','fixture','session','exercise','{"csvBase64":"c3ludGhldGlj"}');
       INSERT INTO customer_audience_imports(workspace_id,brand_id,id,operation_key,actor_id,source,file_digest,result)

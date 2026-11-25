@@ -143,7 +143,7 @@ export class CommandService {
     });
     if(this.customer&&name==='workspace.preflight')return this.customer.preflight(actor);
     if(this.customer?.owns(name))return this.customer.execute(name,raw,actor);
-    if(['customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'].some(prefix=>name.startsWith(prefix)))
+    if(['dateAutomation.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'].some(prefix=>name.startsWith(prefix)))
       throw new AppError(503,'customer_workflow_unavailable','This workflow needs the customer service configuration.');
     if (name === 'billing.comparePlan') {
       const { plan } = commands[name].schema.parse(raw);

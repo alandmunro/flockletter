@@ -1,3 +1,4 @@
+import { dateCommands } from './date-automations.js';
 import {senderSetupCommands} from './sender-setup.js';
 import { z } from 'zod';
 import { studioSchema, studioAssetIds } from './studio.js';
@@ -23,7 +24,7 @@ import {giftAction} from './gifting.js';
 import { textingCommands } from './texting.js';
 
 export type { IntakeStatus } from './subscriber.js';
-export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write','audience:confirm','delivery:configure','sender:configure','sms:send'] as const;
+export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write','audience:confirm','delivery:configure','sender:configure','sms:send','automation:manage'] as const;
 export type Capability = typeof capabilities[number];
 export const limits = { fileBytes: 5 * 1024 * 1024, batchBytes: 20 * 1024 * 1024, batchFiles: 10, imagePixels: 25_000_000, campaignImages: 6, workspaceBytes: 100 * 1024 * 1024, assets: 500, drafts: 100, connections: 10, preparationOperations: 2000 } as const;
 export const plans = [
@@ -77,6 +78,7 @@ const newsletterImportFields = {
 export const commands = {
   ...customerBillingCommands,
   ...customerAudienceCommands,
+  ...dateCommands,
   ...customerTeamCommands,
   ...customerSupportCommands,
   ...customerRetentionCommands,
