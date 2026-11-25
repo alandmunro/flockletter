@@ -7,6 +7,7 @@ import { CredentialSeal } from './twilio.js';
 import { TwilioHttpMessaging, TwilioHttpPlatform } from './twilio-http.js';
 import { replyForwarder, replyForwardingKey } from './reply-forwarding.js';
 import type { DispatchAuthority, Forward } from './messaging.js';
+import { StripeTestSetupPayment } from './setup-payment.js';
 
 /** Secrets loaded from Bitwarden at start-up (FL-SMS-014). Mock mode needs none. */
 export const textingSecretKeys = ['FLOCKLETTER_TWILIO_ACCOUNT_SID', 'FLOCKLETTER_TWILIO_API_KEY_SID', 'FLOCKLETTER_TWILIO_API_KEY_SECRET', 'FLOCKLETTER_TWILIO_AUTH_TOKEN',
@@ -42,7 +43,12 @@ export function createTexting(db: Database, config: Config, env: NodeJS.ProcessE
   const link = new URL(linkOrigin);
   if (link.username || link.password || link.search || link.hash || (config.environment !== 'local' && config.environment !== 'test' && link.protocol !== 'https:'))
     throw Error('FLOCKLETTER_SHORT_LINK_ORIGIN must be an exact HTTPS origin and optional path.');
-  if (mode === 'mock') return Texting.mock(db, { origin: config.origin, linkOrigin, ...options });
+  if (mode === 'mock') {
+    const onboarding = z.enum(['off', 'capture', 'stripe_test']).parse(env.FLOCKLETTER_TEXTING_ONBOARDING ?? (config.environment === 'staging' ? 'capture' : 'off'));
+    const stripe = onboarding === 'stripe_test' ? new StripeTestSetupPayment(env.FLOCKLETTER_TEXTING_SETUP_STRIPE_KEY ?? '',
+      env.FLOCKLETTER_TEXTING_SETUP_STRIPE_WEBHOOK ?? '', env.FLOCKLETTER_TEXTING_SETUP_STRIPE_ACCOUNT ?? '', config.origin) : undefined;
+    return Texting.mock(db, { origin: config.origin, linkOrigin, ...options, onboardingCapture: onboarding !== 'off', onboardingStripe: stripe });
+  }
   if (!secrets) throw Error('Live texting secrets were not loaded. Start the workflows with CustomerWorkflows.start().');
   const replyKey = secrets.get(replyForwardingKey)?.trim();
   const forwardsReplies = env.FLOCKLETTER_TEXTING_REPLY_FORWARDING === 'approved';

@@ -150,6 +150,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     const name = String(req.params.name);
     if (!isCommand(name)) throw new AppError(404, 'unknown_command', 'This command is unavailable. Check the command name and your workspace access.');
     authorize(actor, name);
+    if (name.startsWith('sms.onboarding')) res.set('Cache-Control', 'no-store');
     if (name === 'asset.uploadBatch') {
       if (activeUploads >= 2) throw new AppError(429, 'upload_busy', 'Two image batches are already being processed. Retry this batch shortly with the same keys.');
       activeUploads++;
@@ -173,6 +174,20 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     res.set('Content-Security-Policy', "default-src 'none'; sandbox");
     res.set('Content-Disposition', 'inline');
     res.type(asset.mime).send(asset.bytes);
+  });
+  app.post('/api/v1/texting/stripe-setup-events', express.raw({ type: 'application/json', limit: '128kb' }), async (req, res) => {
+    const onboarding = service?.customer?.texting?.onboarding;
+    if (!onboarding) throw new AppError(503, 'checkout_unavailable', 'Texting setup checkout is unavailable.');
+    if (!Buffer.isBuffer(req.body)) throw new AppError(415, 'json_required', 'Send the raw signed Stripe JSON event.');
+    await onboarding.stripeEvent(req.body, req.get('stripe-signature') ?? '');
+    res.sendStatus(204);
+  });
+  app.post('/api/v1/texting/twilio/carrier-events', express.raw({ type: 'application/json', limit: '128kb' }), async (req, res) => {
+    const texting = service?.customer?.texting;
+    if (!texting) throw new AppError(503, 'texting_off', 'Texting is not enabled.');
+    if (!Buffer.isBuffer(req.body)) throw new AppError(415, 'json_required', 'Send the raw signed Twilio JSON event.');
+    await texting.carrierEvents(config.origin + req.originalUrl, req.body, req.get('x-twilio-signature') ?? '');
+    res.sendStatus(204);
   });
   // Twilio webhooks (FL-SMS-009/015): form-encoded, signature-checked against the owning account's auth token.
   for (const kind of ['inbound', 'status', 'registration'] as const)

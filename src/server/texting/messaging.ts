@@ -5,6 +5,7 @@ import { lockWorkspace } from '../workspace-lock.js';
 import { areaCodeZones, encodeText, helpText, type ConsentState } from '../../shared/texting.js';
 import { audit, nextWindow, readSettings, requireSettings, sendingSettings, validZone, type Interface, type SettingValues } from './storage.js';
 import { bodyDigest, messageRank, type AccountCredentials, type CredentialSeal, type SendResult, type TwilioMessagingPort } from './twilio.js';
+import { probationHold } from './probation.js';
 
 export type MessageRow = { id: string; send_id: string | null; company_id: string; contact_id: string | null; purpose: 'broadcast' | 'test' | 'confirmation' | 'help' | 'verification';
   to_e164: string; rendered_body: string; body_digest: string; encoding: string; segments: number; state: string; reason: string | null; provider_sid: string | null;
@@ -145,6 +146,8 @@ export class TextingMessaging {
     }
     // 4. Per-contact monthly frequency (marketing texts only).
     if (row.purpose === 'broadcast') {
+      const hold = await probationHold(sql, workspace, row.company_id, row.id, settings, now);
+      if (hold) return defer(hold.at, hold.reason);
       const sent = (await sql.query<{ n: number }>(`SELECT count(*)::int n FROM sms_messages WHERE contact_id=$1 AND purpose='broadcast' AND id<>$2
         AND state IN ('calling','accepted','delivered','undelivered','uncertain') AND submitted_at>=date_trunc('month',$3::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`, [row.contact_id, row.id, now])).rows[0]!.n;
       if (sent >= required.contact_monthly_limit) return skip('frequency_limit');

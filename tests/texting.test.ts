@@ -152,6 +152,8 @@ describe('FL-AT-042 registration', () => {
     const restarted = Texting.mock(db, { origin: 'http://127.0.0.1:4310', linkOrigin: 'http://127.0.0.1:4310/l', isOwner: identity.isOwner, now });
     await op('platform.textingMock', { workspaceId: w, action: { kind: 'brand', registrationId: created.registrationId, status: 'APPROVED' } });
     await restarted.tick(w);
+    const pending = await op<{ numbers: unknown[] }>('platform.textingRegistration', { workspaceId: w });
+    expect(pending.numbers).toHaveLength(0);
     await op('platform.textingMock', { workspaceId: w, action: { kind: 'campaign', registrationId: created.registrationId, status: 'VERIFIED' } });
     await tick(w);
     const after = await op<{ registrations: { state: string; steps: { step: string; state: string; operationKey: string }[] }[]; numbers: { e164: string; state: string }[] }>('platform.textingRegistration', { workspaceId: w });
