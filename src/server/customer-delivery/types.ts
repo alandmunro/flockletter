@@ -13,7 +13,7 @@ export type DeliveryRow = {
   mode:'capture'|'ses'|'resend'; provider_revision?:number; state:string; content:CampaignContent; rendered_html:string; rendered_text:string;
   asset_digests:{id:string;name:string;sha256:string}[]; provider_binding:string; due_at:Date;
   selected:number; excluded:number; reason:string|null; reservation_key:string|null; created_at:Date;
-  sender_profile:CustomerSenderProfile|null;
+  sender_profile:CustomerSenderProfile|null; preference_segment_id?:string|null;
 };
 export type PersonRow = {
   workspace_id:string;brand_id:string;delivery_id:string;id:string;subscriber_id:string;email_digest:string;
@@ -37,7 +37,7 @@ export type DeliveryOptions = {
   isOwner:(user:string,workspace:string)=>Promise<boolean>;
   provider?:(workspace:string,brand:string,mode?:SendingProvider)=>CustomerProvider|undefined;
   render?:(message:DeliveryEnvelope)=>Promise<void>;
-  optOut?:(sql:Sql,workspace:string,brand:string,subscriber:string,origin:string)=>Promise<{url:string}>;
+  optOut?:(sql:Sql,workspace:string,brand:string,subscriber:string,origin:string)=>Promise<{url:string;preferencesUrl?:string}>;
   liveConsent?:(sql:Sql,subscriber:string)=>Promise<boolean>;
   liveConsentBatch?:(sql:Sql,subscribers:string[])=>Promise<string[]>;
   now?:()=>Date;

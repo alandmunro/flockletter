@@ -5,6 +5,7 @@ import type { PlatformApi } from './platform-api.js';
 // FL-SMS-004/013: operator texting controls. Same commands as /api/operator/v1 and the operator MCP.
 type Setting = { key: string; kind: string; min?: number; max?: number; required: string; description: string; platform: { value: unknown; revision: number } | null; workspace: { value: unknown; revision: number } | null };
 type Registration = { mode: string; settingsNeeded?: string[]; registrations: { id: string; company_id: string; legal_name: string; state: string; revision: number; rejection_reason: string | null; carrier_brand_id: string;
+  onboardingRevision?: number | null; onboardingReview?: string | null; probationState?: string | null;
   steps: { step: string; state: string; attempts: number; operationKey: string; reason: string | null }[] }[]; numbers: { e164: string; state: string }[] };
 
 export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformApi; workspaceId: string; onError: (message: string) => void }) {
@@ -46,9 +47,17 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
       {reg.registrations.length === 0 && <p>No carrier brand yet. Create one with platform.textingCarrierBrand through the operator API or MCP.</p>}
       {reg.registrations.map(r => <article key={r.id} className="connection-row"><div>
         <strong>{r.legal_name}</strong> · {r.state.replaceAll('_', ' ')} · revision {r.revision}{r.rejection_reason ? ' · ' + r.rejection_reason : ''}
+        {r.onboardingReview && <p>Enrollment review required · {r.onboardingReview.replaceAll('_', ' ')}</p>}
+        {r.probationState && <p>Probation · {r.probationState}</p>}
         <ul>{r.steps.map(s => <li key={s.step}>{s.step.replaceAll('_', ' ')}: {s.state}{s.attempts ? ` (${s.attempts} call${s.attempts > 1 ? 's' : ''})` : ''}{s.reason ? ' · ' + s.reason : ''} <code>{s.operationKey}</code></li>)}</ul>
         <div className="button-row">
-          {['draft', 'rejected'].includes(r.state) && <button className="btn" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingSubmit', { operationKey: operationKey(), workspaceId, registrationId: r.id, reason }))}>Submit registration</button>}
+          {!r.onboardingRevision && ['draft', 'rejected'].includes(r.state) && <button className="btn" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingSubmit', { operationKey: operationKey(), workspaceId, registrationId: r.id, reason }))}>Submit registration</button>}
+          {r.onboardingRevision && r.onboardingReview && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingOnboardingReview', {
+            operationKey: operationKey(), workspaceId, companyId: r.company_id, expectedRevision: r.onboardingRevision, action: 'request_correction', reason,
+          }))}>Return enrollment for correction</button>}
+          {r.onboardingRevision && r.state === 'approved' && r.probationState !== 'complete' && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingOnboardingReview', {
+            operationKey: operationKey(), workspaceId, companyId: r.company_id, expectedRevision: r.onboardingRevision, action: 'complete_probation', reason,
+          }))}>End practice probation</button>}
           {reg.mode === 'live' && (['brand', 'campaign', 'number'] as const).map(step => <button key={step} className="btn secondary" disabled={busy || reason.trim().length < 12}
             onClick={() => void run(() => api.call('platform.textingApprove', { operationKey: operationKey(), workspaceId, registrationId: r.id, step, costNote: 'Approved in the control room; see Twilio pricing for ' + step + '.', reason }))}>Approve {step}</button>)}
           {reg.mode === 'mock' && <>

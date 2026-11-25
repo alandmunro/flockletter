@@ -9,7 +9,7 @@ import { mapDeliveryViews } from '../src/server/customer-delivery/report-mapping
 import { Database,type Sql } from '../src/server/db.js';
 import { CommandService, authorize, type Actor } from '../src/server/service.js';
 import { CustomerBilling, customerEligibility } from '../src/server/customer-billing/service.js';
-import { CustomerAudience, createCustomerOptOut } from '../src/server/customer-audience/service.js';
+import { CustomerAudience, createCustomerOptOut, customerPreferences } from '../src/server/customer-audience/service.js';
 import type { DeliveryView,DeliveryOutcomesPage } from '../src/shared/customer-delivery.js';
 import { createMcpServer } from '../src/mcp/bridge.js';
 import { CustomerDelivery } from '../src/server/customer-delivery/service.js';
@@ -224,6 +224,34 @@ it('rolls back a partial 2,500-person freeze and replays the exact trial queue a
     finally { await admin.close(); }
   }
 },45_000);
+
+it('excludes a frozen recipient who leaves a subscriber-managed group before submission', async () => {
+  const f = await factory();
+  await saveSenderProfile(f.delivery, f.actor, f.brandId);
+  const core = new CommandService(db, undefined, async () => true);
+  const group = await core.execute('segment.create', {
+    operationKey: randomUUID(), brandId: f.brandId, name: 'Seasonal notes', subscriberSelectable: true,
+  }, f.actor) as { id: string };
+  const links = await db.brand(f.workspaceId, f.brandId,
+    sql => createCustomerOptOut(sql, f.workspaceId, f.brandId, f.subscriberId, f.options.origin));
+  const token = new URL(links.preferencesUrl!).searchParams.get('t')!;
+  const initial = (await customerPreferences(db, token))!;
+  await customerPreferences(db, token, { version: initial.version, groups: [group.id], unsubscribe: false });
+  const review = await f.delivery.execute('delivery.review', {
+    operationKey: randomUUID(), brandId: f.brandId, campaignId: f.campaign.id,
+    expectedVersion: 1, segmentId: group.id,
+  }, f.actor) as { id: string };
+  await f.delivery.execute('delivery.approve', { operationKey: randomUUID(), brandId: f.brandId, id: review.id }, f.actor);
+  await f.delivery.worker.tick(f.workspaceId, review.id);
+  const current = (await customerPreferences(db, token))!;
+  await customerPreferences(db, token, { version: current.version, groups: [], unsubscribe: false });
+  await f.delivery.worker.tick(f.workspaceId, review.id);
+  await db.brand(f.workspaceId, f.brandId, async sql => {
+    expect((await sql.query('SELECT state,reason FROM customer_delivery_recipients WHERE delivery_id=$1', [review.id])).rows)
+      .toEqual([{ state: 'excluded', reason: 'consent_changed' }]);
+    expect((await sql.query('SELECT FROM customer_delivery_captures WHERE delivery_id=$1', [review.id])).rowCount).toBe(0);
+  });
+});
 
 it('renders to reserved address, captures message with unsubscribe and settles delivery', async () => {
   const f = await factory();

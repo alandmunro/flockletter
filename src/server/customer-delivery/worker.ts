@@ -119,6 +119,10 @@ export class CustomerDeliveryWorker {
     const contact=(await sql.query<{email_normalized:string;state:string}>(
       'SELECT email_normalized,state FROM subscribers WHERE id=$1 AND brand_id=$2 FOR UPDATE',[p.subscriber_id,row.brand_id])).rows[0];
     if(!contact||contact.state!=='confirmed'||digest(contact.email_normalized)!==p.email_digest)return null;
+    if (row.preference_segment_id && !(await sql.query(
+      'SELECT 1 FROM audience_segment_members WHERE segment_id=$1 AND subscriber_id=$2',
+      [row.preference_segment_id, p.subscriber_id],
+    )).rowCount) return null;
     if(externalDelivery(row.mode)&&!await this.options.liveConsent?.(sql,p.subscriber_id))return null;
     return contact.email_normalized;
   }
@@ -169,11 +173,12 @@ export class CustomerDeliveryWorker {
       requireCondition(original&&this.options.optOut,503,'unsubscribe_unavailable','Configure the brand unsubscribe route.');
       const prior=(await sql.query<{envelope:StoredEnvelope}>('SELECT envelope FROM customer_delivery_payloads WHERE recipient_id=$1',[p.id])).rows[0];
       if(!prior) {
-        const {url}=await this.options.optOut(sql,workspace,row.brand_id,p.subscriber_id,this.options.origin);
-        const footer='<p style="text-align:center;font:14px Arial,sans-serif"><a href="'+url+'">Unsubscribe from this newsletter</a></p>';
+        const {url,preferencesUrl}=await this.options.optOut(sql,workspace,row.brand_id,p.subscriber_id,this.options.origin);
+        const preferences = preferencesUrl ? '<a href="' + preferencesUrl + '">Manage preferences</a> · ' : '';
+        const footer='<p style="text-align:center;font:14px Arial,sans-serif">'+preferences+'<a href="'+url+'">Unsubscribe from this newsletter</a></p>';
         const final:StoredEnvelope={to:email,subject:original.subject,
           html:original.html.replace(/<\/body><\/html>$/i,footer+'</body></html>'),
-          text:original.text+'\n\nUnsubscribe from this newsletter: '+url,unsubscribe:{url}};
+          text:original.text+(preferencesUrl?'\n\nManage preferences: '+preferencesUrl:'')+'\n\nUnsubscribe from this newsletter: '+url,unsubscribe:{url}};
         requireCondition(final.html!==original.html,422,'message_invalid','The reviewed message cannot include its required footer.');
         const checksum=messageDigest(final);
         await sql.query('INSERT INTO customer_delivery_payloads(workspace_id,brand_id,delivery_id,recipient_id,envelope,message_digest) VALUES($1,$2,$3,$4,$5,$6)',

@@ -10,6 +10,9 @@ import { base64, type Api } from './api.js';
 import { PracticeImport } from './PracticeImport.js';
 
 const issueLabels: Record<ImportIssue, string> = {
+  invalid_name: 'Name is invalid or longer than 60 characters',
+  invalid_phone: 'Invalid US phone number',
+  invalid_date: 'Invalid birthday or anniversary',
   invalid_email: 'Invalid or missing email address',
   duplicate: 'Duplicate address within this file',
   column_count: 'Column count differs from the header',

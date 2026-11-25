@@ -108,6 +108,8 @@ async function seed(db: pg.Client, workspace: string) {
         VALUES(w,'fixture',camp,b,'fixture-period',1,digest);
       INSERT INTO customer_audience_settings(workspace_id,brand_id,purpose,policy_version,consent_text,source_domain,form_token,exercise_key)
         VALUES(w,b,'brand-marketing','v1','Fixture permission','example.test','fixture-'||w,decode(digest,'hex'));
+      INSERT INTO customer_audience_import_jobs(workspace_id,brand_id,id,actor_id,user_id,actor_kind,mode,input)
+        VALUES(w,b,gen_random_uuid(),'fixture','fixture','session','exercise','{"csvBase64":"c3ludGhldGlj"}');
       INSERT INTO customer_audience_imports(workspace_id,brand_id,id,operation_key,actor_id,source,file_digest,result)
         VALUES(w,b,gen_random_uuid(),gen_random_uuid(),'fixture','fixture',digest,'{"source":"same@example.test"}');
       INSERT INTO customer_audience_confirmations(workspace_id,brand_id,id,subscriber_id,token_hash,unsubscribe_hash,mode,state,policy_snapshot,expires_at)

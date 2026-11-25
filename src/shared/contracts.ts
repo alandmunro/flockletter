@@ -51,7 +51,7 @@ export const emptyContent = (): CampaignContent => ({ title: '', subject: '', pr
 export type AssetSummary = { id: string; name: string; mime: string; size: number; width: number; height: number; sha256: string; createdAt: string };
 export type Campaign = { id: string; brandId: string; version: number; content: CampaignContent; createdAt: string; updatedAt: string; status: 'draft' };
 export type Brand = { id: string; name: string };
-export type Workspace = { name: string; accessLabel?:string; hasDraft?:boolean; canEdit?:boolean; brands: Brand[]; entitlement: 'not_activated'|'complimentary'; canManageConnections: boolean; preparationLimits: typeof limits; plans: typeof plans };
+export type Workspace = { name: string; accessLabel?:string; hasDraft?:boolean; canEdit?:boolean; canSendTexts?:boolean; brands: Brand[]; entitlement: 'not_activated'|'complimentary'; canManageConnections: boolean; preparationLimits: typeof limits; plans: typeof plans };
 export type Gap = { code: string; title: string; detail: string; area: 'content' | 'sender' | 'audience' | 'billing' | 'delivery' };
 export type Preflight = { campaignId: string; version: number; canSend: false; contentReady: boolean; gaps: Gap[]; audience?: { confirmed: number; excluded: number } };
 export type Connection = { id: string; name: string; scopes: Capability[]; brandIds: string[]; createdAt: string; expiresAt: string; revokedAt: string | null };
@@ -142,7 +142,7 @@ export const commands = {
   'connection.list': descriptor('List scoped API/MCP connections without secrets. Owner session required.', 'owner', false, {}),
   'intake.status': descriptor('Inspect subscriber intake readiness and aggregate counts for one brand.', 'owner', false, { brandId: id }),
   'segment.list': descriptor('List named groups and counts for the current owner and brand.', 'owner', false, { brandId: audienceId }),
-  'segment.create': descriptor('Create a named group in the selected brand.', 'owner', true, { brandId: audienceId, operationKey: key, name: segmentName }),
+  'segment.create': descriptor('Create a named group in the selected brand.', 'owner', true, { brandId: audienceId, operationKey: key, name: segmentName, subscriberSelectable: z.boolean().optional() }),
   'segment.rename': descriptor('Rename one group in the selected brand.', 'owner', true, { brandId: audienceId, operationKey: key, segmentId: audienceId, name: segmentName }),
   'segment.delete': descriptor('Delete one group and preserve its contacts and consent records.', 'owner', true, { brandId: audienceId, operationKey: key, segmentId: audienceId }),
   'segment.members': descriptor('Add or remove existing brand contacts from a group. Returns counts only.', 'owner', true, { brandId: audienceId, operationKey: key, segmentId: audienceId, action: segmentAction, emails: segmentEmails }),
