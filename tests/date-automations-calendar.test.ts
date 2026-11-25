@@ -16,3 +16,12 @@ it('uses a known zone ahead of phone inference and requires a valid fallback', (
   expect(recipientZones(null,null,'America/Chicago').windows).toEqual(['America/Chicago']);
   expect(()=>recipientZones(null,null,'invalid')).toThrow();
 });
+it('uses the workspace clock and both SMS windows for an ambiguous area code', () => {
+  const phone = '+13085550100';
+  expect(recipientZones(null, phone, 'America/New_York')).toEqual({
+    clock: 'America/New_York', windows: ['America/Chicago', 'America/Denver'],
+  });
+  expect(recipientZones('America/Boise', phone, 'America/New_York')).toEqual({
+    clock: 'America/Boise', windows: ['America/Boise'],
+  });
+});

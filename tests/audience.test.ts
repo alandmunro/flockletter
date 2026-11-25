@@ -120,6 +120,23 @@ afterEach(async () => {
 });
 
 describe('brand audience workspace', () => {
+  it('keeps a phone-only anniversary with its source brand when two brands share a company', async () => {
+    const phone = await db.brand(alice.workspaceId, brand, async sql => {
+      const contact = await phoneContact(sql, alice.workspaceId, brand, '+13085550100');
+      await sql.query(`INSERT INTO sms_consents(workspace_id,company_id,contact_id,state)
+        SELECT workspace_id,company_id,$2,'none' FROM company_brands WHERE brand_id=$1`, [brand, contact]);
+      await setDate(sql, alice.workspaceId, brand, { contact, subscriber: null }, 'anniversary',
+        { month: 11, day: 25, year: 2020 }, 'Home purchase');
+      return contact;
+    });
+    const read = (brandId: string) => run<ContactDetail>('audience.contact', { brandId, id: phone });
+    expect((await read(sibling)).contact.anniversary).toBeNull();
+    const edit = (anniversary: { month: number; day: number } | null) =>
+      run('audience.updateContact', { brandId: sibling, id: phone, operationKey: id(), anniversary });
+    await expect(edit({ month: 12, day: 1 })).rejects.toMatchObject({ code: 'date_unavailable' });
+    await edit(null);
+    expect((await read(brand)).contact.anniversary).toEqual({ month: 11, day: 25, year: 2020, label: 'Home purchase' });
+  });
   it('scopes annual dates to their source brand and identifies shared or changed phone links', async () => {
     const reader = await seed('reader@example.test', 'confirmed');
     const other = await seed('other@example.test', 'confirmed', sibling);
