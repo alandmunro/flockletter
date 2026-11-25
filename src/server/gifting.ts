@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { sandboxGiftWorkspace } from '../shared/gifting.js';
 import type { GiftEvent, GiftStatus } from '../shared/gifting.js';
 import { AppError, requireCondition } from './errors.js';
 import type { Database, Sql } from './db.js';
@@ -37,6 +38,21 @@ export async function giftStatus(sql: Sql, workspace: string): Promise<GiftStatu
 // Caller holds the workspace transaction lock. Each business action has one stable identity,
 // shared by all owners, recipient taps and restarts. The journal holds at most 209 events.
 export async function recordGift(sql: Sql, workspace: string, event: GiftEvent) {
+  const providerKinds = [
+    'stripePaid',
+    'sandboxReserve',
+    'tremendousOrder',
+    'sandboxExpire',
+    'prepareRefund',
+    'stripeRefund',
+  ];
+  if (event.kind !== 'intent')
+    requireCondition(
+      providerKinds.includes(event.kind) === (workspace === sandboxGiftWorkspace),
+      403,
+      'gift_provider_mismatch',
+      'This gift uses a different provider.',
+    );
   const key = 'person' in event ? event.kind + '-' + event.person : event.kind;
   const hash = JSON.stringify(event, Object.keys(event).sort());
   const prior = (
@@ -56,7 +72,12 @@ export async function recordGift(sql: Sql, workspace: string, event: GiftEvent) 
   }
   return withCapture(sql, workspace, async (engine, entries) => {
     const has = (kind: GiftEvent['kind']) => entries.some((e) => e.event.kind === kind);
-    requireCondition(!has('refund'), 409, 'gift_closed', 'The gift exercise is closed.');
+    requireCondition(
+      !has('refund') && !has('stripeRefund'),
+      409,
+      'gift_closed',
+      'The gift exercise is closed.',
+    );
     if (event.kind === 'timeout')
       requireCondition(!has('recover'), 409, 'gift_recovered', 'Provider recovery has already run.');
     if (event.kind === 'submit')
@@ -76,7 +97,8 @@ export async function recordGift(sql: Sql, workspace: string, event: GiftEvent) 
       );
     }
     const entry: Entry = { seq: entries.length + 1, event };
-    if (event.kind === 'reserve') entry.seed = randomBytes(32).toString('hex');
+    if (event.kind === 'reserve' || event.kind === 'sandboxReserve')
+      entry.seed = randomBytes(32).toString('hex');
     await sql.query(
       'INSERT INTO operations(workspace_id,actor_id,operation_key,request_hash,result) VALUES($1,$2,$3,$4,$5)',
       [workspace, journal, key, hash, JSON.stringify(entry)],
@@ -87,7 +109,7 @@ export async function recordGift(sql: Sql, workspace: string, event: GiftEvent) 
 async function recipientToken(sql: Sql, workspace: string, person: number, purpose = 'claim') {
   const row = (
     await sql.query<{ seed: string }>(
-      "SELECT result->>'seed' AS seed FROM operations WHERE actor_id=$1 AND operation_key='reserve'",
+      "SELECT result->>'seed' AS seed FROM operations WHERE actor_id=$1 AND operation_key IN ('reserve','sandboxReserve')",
       [journal],
     )
   ).rows[0];
@@ -106,6 +128,7 @@ export async function recipientGift(
   person: number,
   token: string,
   claim: boolean,
+  submitSandbox?: (person: number) => Promise<void>,
 ) {
   async function verify(sql: Sql) {
     const expected = await recipientToken(sql, workspace, person);
@@ -135,6 +158,17 @@ export async function recipientGift(
     const current = await project(sql);
     if (current.state === 'offered') await recordGift(sql, workspace, { kind: 'intent', person });
   });
+  if (workspace === sandboxGiftWorkspace) {
+    requireCondition(
+      submitSandbox,
+      503,
+      'gift_provider_unavailable',
+      'The sandbox provider is unavailable.',
+    );
+    const current = await db.read(workspace, project);
+    if (current.state === 'pending') await submitSandbox(person);
+    return db.read(workspace, project);
+  }
   return db.tenant(workspace, async (sql) => {
     await verify(sql);
     await lockWorkspace(sql, workspace);

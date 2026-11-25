@@ -24,8 +24,17 @@ export const giftAction = z.discriminatedUnion('kind', [
     .strict(),
 ]);
 export type GiftAction = z.infer<typeof giftAction>;
-export type GiftEvent = GiftAction | { kind: 'intent' | 'submit'; person: number };
+export const sandboxGiftWorkspace = 'fixture:gifting:provider:v1';
+export type GiftEvent =
+  | GiftAction
+  | { kind: 'intent' | 'submit'; person: number }
+  | { kind: 'stripePaid'; payment: string; total: number }
+  | { kind: 'sandboxReserve'; products: string[] }
+  | { kind: 'tremendousOrder'; person: number; offer: string; order: string; reward: string }
+  | { kind: 'sandboxExpire' | 'prepareRefund' }
+  | { kind: 'stripeRefund'; payment: string; refund: string; total: number };
 export type GiftOffer = {
+  id: string;
   person: number;
   state: 'offered' | 'pending' | 'claimed' | 'expired';
   issue: string | null;
@@ -36,6 +45,7 @@ export type GiftStatus = {
   dispute: string;
   access: string;
   funded: boolean;
+  refundDue: number;
   available: number;
   reserved: number;
   spent: number;

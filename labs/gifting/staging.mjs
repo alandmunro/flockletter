@@ -1,19 +1,73 @@
 // Version 1 of the hosted capture. Persisted event identities and their replay order are stable.
 import { createHash } from 'node:crypto';
 import { GiftLab } from './lab.mjs';
-import { catalog } from './fixtures.mjs';
+import { catalog, contacts } from './fixtures.mjs';
 import { purchase, exampleCampaign } from './scenario.mjs';
 
 export function openCapture(workspace, history) {
   let identity = 0;
+  const purchaseId = history.find((e) => e.kind === 'stripePaid')?.payment;
   const lab = new GiftLab(':memory:', () =>
     createHash('sha256')
-      .update(JSON.stringify(['gift-capture-v1', workspace, ++identity]))
+      .update(
+        JSON.stringify([
+          ...(purchaseId ? ['gift-sandbox-v1', purchaseId] : ['gift-capture-v1']),
+          workspace,
+          ++identity,
+        ]),
+      )
       .digest('hex'),
   );
   const name = 'Studio';
   function apply(event) {
     switch (event.kind) {
+      case 'stripePaid':
+        return lab.atomic(() =>
+          lab.paymentFact({
+            kind: 'paid',
+            workspace: name,
+            currency: 'USD',
+            lot: event.payment,
+            face: 50000,
+            total: event.total,
+          }),
+        );
+      case 'sandboxReserve':
+        return lab.launch(
+          name,
+          { label: 'Appreciation', rows: contacts(100), face: 500, days: 30, products: event.products },
+          event.products,
+        );
+      case 'tremendousOrder': {
+        const offer = lab.offer(name, event.offer);
+        if (offer.person !== event.person || offer.state !== 'pending')
+          throw Error('Order has no matching pending offer.');
+        return lab.atomic(() => {
+          lab.run(
+            'INSERT INTO vendor_order VALUES(?,?,?,?,?)',
+            offer.id,
+            event.reward,
+            offer.face,
+            offer.products,
+            'approved',
+          );
+          lab.settle(name, offer.id);
+        });
+      }
+      case 'sandboxExpire':
+        return lab.tick(30, false);
+      case 'prepareRefund':
+        return lab.closure(name);
+      case 'stripeRefund':
+        return lab.atomic(() =>
+          lab.paymentFact({
+            kind: 'refunded',
+            workspace: name,
+            currency: 'USD',
+            lot: event.payment,
+            total: event.total,
+          }),
+        );
       case 'fund':
         return purchase(lab, name, 'capture', 50000);
       case 'reserve':
@@ -71,7 +125,7 @@ export function openCapture(workspace, history) {
     }
   }
   function status() {
-    const offers = lab.all('SELECT person,state,issue FROM offer ORDER BY person');
+    const offers = lab.all('SELECT id,person,state,issue FROM offer ORDER BY person');
     const [lot] = lab.lots(name);
     const { available, reserved } = lab.balances(name);
     return {
@@ -80,6 +134,7 @@ export function openCapture(workspace, history) {
       dispute: lot?.dispute ?? 'none',
       access: lab.access(name),
       funded: Boolean(lot),
+      refundDue: lot?.refund_face ? lot.refund_face + lot.refund_fee : 0,
       available,
       reserved,
       spent: offers.filter((o) => o.state === 'claimed').length * 500,

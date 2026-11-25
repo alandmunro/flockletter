@@ -98,3 +98,187 @@ it('runs the staging acceptance proof twice against PostgreSQL and recovers the 
   expect(first).toMatchObject({ claimed: 5, orders: 5, expired: 95, spent: 2500, refunded: 52250 });
   expect(await verifyStagingGifts(db)).toEqual(first);
 });
+
+it('blocks simulated settlement for a provider-backed fixture and resumes a provider timeout exactly once', async () => {
+  const { sandboxRun } = await import('../src/server/gifting-sandbox.js');
+  const { giftStatus, recordGift } = await import('../src/server/gifting.js');
+  const { sandboxGiftWorkspace: ws } = await import('../src/shared/gifting.js');
+  await expect(db.tenant(ws, (sql) => recordGift(sql, ws, { kind: 'fund' }))).rejects.toMatchObject({
+    code: 'gift_provider_mismatch',
+  });
+  const orders = new Map<string, { order: string; reward: string }>();
+  let timeout = true,
+    confirmations = 0;
+  const providers = {
+    account: 'acct_fixture',
+    checkAccount: async () => {},
+    products: async () => ['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5'],
+    payment: async () => 'pi_fixture',
+    confirm: async () => {
+      confirmations++;
+      return 55000;
+    },
+    async order(id: string, person: number) {
+      if (!orders.has(id)) orders.set(id, { order: 'ORDER' + person, reward: 'REWARD' + person });
+      if (timeout) {
+        timeout = false;
+        throw Error('synthetic timeout after provider commit');
+      }
+      return orders.get(id)!;
+    },
+    rewardLink: async () => 'https://testflight.tremendous.com/rewards/fixture',
+    async refund(_run: string, payment: string, total: number) {
+      expect(payment).toBe('pi_fixture');
+      expect(total).toBe(52250);
+      return { id: 're_fixture', total };
+    },
+  };
+  await expect(sandboxRun(db, providers).verify(() => {})).rejects.toThrow('synthetic timeout');
+  const held = await db.read(ws, (sql) => giftStatus(sql, ws));
+  expect(held).toMatchObject({ spent: 0, reserved: 50000 });
+  expect(held.offers[0]?.state).toBe('pending');
+  const report = await sandboxRun(db, providers).verify(() => {});
+  expect(report).toMatchObject({
+    payment: 55000,
+    claimed: 5,
+    orders: 5,
+    expired: 95,
+    spent: 2500,
+    released: 47500,
+    refund: 52250,
+    available: 0,
+    reserved: 0,
+  });
+  expect(orders.size).toBe(5);
+  expect(await sandboxRun(db, providers).verify(() => {})).toEqual(report);
+  expect(confirmations).toBe(2);
+});
+
+it('binds the Tremendous host, recipient, order and reward and retains pending results', async () => {
+  const { stagingGiftProviders } = await import('../src/server/gifting-providers.js');
+  const env = {
+    APP_ENV: 'staging',
+    FLOCKLETTER_STRIPE_TEST_KEY: 'sk_test_fixture',
+    FLOCKLETTER_STRIPE_TEST_ACCOUNT: 'acct_fixture',
+    TREMENDOUS_SANDBOX_API_KEY: 'TEST_fixture',
+  };
+  expect(() => stagingGiftProviders({ ...env, APP_ENV: 'production' })).toThrow();
+  expect(() =>
+    stagingGiftProviders({ ...env, FLOCKLETTER_STRIPE_TEST_KEY: 'sk_live_fixture' }),
+  ).toThrow();
+  expect(() => stagingGiftProviders({ ...env, TREMENDOUS_SANDBOX_API_KEY: 'PROD_fixture' })).toThrow();
+  let lookup = 0,
+    posts = 0,
+    verified = false;
+  const gateway = stagingGiftProviders(env, async (url, opts) => {
+    expect(new URL(String(url)).origin).toBe('https://testflight.tremendous.com');
+    if (opts?.method === 'POST') {
+      posts++;
+      expect(JSON.parse(String(opts.body))).toMatchObject({
+        external_id: 'testoffer',
+        payment: { funding_source_id: 'BALANCE' },
+        reward: { delivery: { method: 'LINK' }, value: { denomination: 5, currency_code: 'USD' } },
+      });
+      return Response.json({});
+    }
+    if (!lookup++) return new Response(null, { status: 404 });
+    return Response.json({
+      order: {
+        id: 'ORDER1',
+        external_id: 'testoffer',
+        status: verified ? 'EXECUTED' : 'OPEN',
+        rewards: [
+          {
+            id: 'REWARD1',
+            order_id: 'ORDER1',
+            value: { denomination: 5, currency_code: 'USD' },
+            recipient: { email: 'recipient-1@example.invalid' },
+            delivery: { method: 'LINK', status: 'SUCCEEDED' },
+          },
+        ],
+      },
+    });
+  });
+  await expect(gateway.order('testoffer', 1, ['TEST1'])).rejects.toThrow('pending');
+  verified = true;
+  expect(await gateway.order('testoffer', 1, ['TEST1'])).toEqual({ order: 'ORDER1', reward: 'REWARD1' });
+  await expect(gateway.order('testoffer', 2, ['TEST1'])).rejects.toThrow('pending');
+  expect(posts).toBe(1);
+});
+
+it('checks the Stripe test payment and original charge before accepting the partial refund', async () => {
+  const { stagingGiftProviders } = await import('../src/server/gifting-providers.js');
+  const env = {
+    APP_ENV: 'staging',
+    FLOCKLETTER_STRIPE_TEST_KEY: 'sk_test_fixture',
+    FLOCKLETTER_STRIPE_TEST_ACCOUNT: 'acct_fixture',
+    TREMENDOUS_SANDBOX_API_KEY: 'TEST_fixture',
+  };
+  let paid = false,
+    refunded = false,
+    wrongCharge = false;
+  const run = '5aa73f90-2d31-496f-91ef-5932b1020d17';
+  const refund = {
+    id: 're_fixture',
+    amount: 52250,
+    currency: 'usd',
+    payment_intent: 'pi_fixture',
+    charge: 'ch_fixture',
+    status: 'succeeded',
+    metadata: { flock_gift_run: run },
+  };
+  const gateway = stagingGiftProviders(env, async (url, opts) => {
+    const path = new URL(String(url)).pathname,
+      body = new URLSearchParams(String(opts?.body ?? ''));
+    const intent = {
+      id: 'pi_fixture',
+      livemode: false,
+      currency: 'usd',
+      amount: 55000,
+      amount_received: paid ? 55000 : 0,
+      metadata: { flock_gift_run: run },
+      status: paid ? 'succeeded' : 'requires_payment_method',
+      latest_charge: paid ? 'ch_fixture' : null,
+    };
+    if (path === '/v1/account') return Response.json({ id: 'acct_fixture' });
+    if (path === '/v1/payment_intents') {
+      expect(body.get('amount')).toBe('55000');
+      expect(body.get('metadata[flock_gift_run]')).toBe(run);
+      return Response.json(intent);
+    }
+    if (path === '/v1/payment_intents/pi_fixture') return Response.json(intent);
+    if (path.endsWith('/confirm')) {
+      expect(body.get('payment_method')).toBe('pm_card_visa');
+      paid = true;
+      return Response.json(intent);
+    }
+    if (path === '/v1/refunds' && opts?.method === 'POST') {
+      expect(body.get('payment_intent')).toBe('pi_fixture');
+      expect(body.get('amount')).toBe('52250');
+      refunded = true;
+      return Response.json(refund);
+    }
+    if (path === '/v1/refunds')
+      return Response.json({ data: refunded ? [refund] : [], has_more: false });
+    if (path === '/v1/refunds/re_fixture') return Response.json(refund);
+    if (path === '/v1/charges/ch_fixture')
+      return Response.json({
+        id: 'ch_fixture',
+        livemode: wrongCharge,
+        payment_intent: 'pi_fixture',
+        amount_refunded: 52250,
+      });
+    throw Error('Unexpected test request ' + path);
+  });
+  await gateway.checkAccount();
+  expect(await gateway.payment(run, undefined, true)).toBe('pi_fixture');
+  expect(await gateway.confirm(run, 'pi_fixture')).toBe(55000);
+  expect(await gateway.refund(run, 'pi_fixture', 52250, true)).toEqual({
+    id: 're_fixture',
+    total: 52250,
+  });
+  wrongCharge = true;
+  await expect(gateway.refund(run, 'pi_fixture', 52250, false)).rejects.toThrow(
+    'stripe_refund_unverified',
+  );
+});
