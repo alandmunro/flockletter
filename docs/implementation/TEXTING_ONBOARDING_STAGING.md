@@ -1,6 +1,6 @@
 # Self-service texting in staging
 
-D-065 and D-066 authorize staging enrollment for synthetic US businesses with an EIN, DBAs and sole proprietors. WA-05 and the WA-10 setup-payment contract cover the staged flow. Broader release evidence is tracked in [WA-05](../supplemental-requirements/specs/05-sms-onboarding.md) and [D-063/D-065](../DECISIONS.md).
+D-065 and D-067 authorize staging enrollment for synthetic US businesses with an EIN, DBAs and sole proprietors. WA-05 and the WA-10 setup-payment contract cover the staged flow. Broader release evidence is tracked in [WA-05](../supplemental-requirements/specs/05-sms-onboarding.md) and [D-063/D-065/D-067](../DECISIONS.md).
 
 ## Practice enrollment
 

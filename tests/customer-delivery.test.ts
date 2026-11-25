@@ -1161,3 +1161,211 @@ it('hands an eligible annual email to marketing delivery exactly once, with unsu
   expect(result).toEqual({state:'planned',delivery_id:null,local_date:'2026-11-10'});
   expect(await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT FROM customer_delivery_captures')).rowCount)).toBe(1);
 });
+
+// The delivery fixture starts with reserved offers. Use the ledger's normal
+// workspace lock and restricted runtime role for each fixture state change.
+async function seedGiftOffer(workspace: string, brand: string, offer: import('../src/server/workspace-gifts/store.js').GiftOffer) {
+  const { put } = await import('../src/server/workspace-gifts/store.js');
+  const { lockWorkspace } = await import('../src/server/workspace-lock.js');
+  await db.brand(workspace,brand,async sql=>{
+    await lockWorkspace(sql,workspace);
+    await put(sql,workspace,'offer',offer.id,offer);
+  });
+}
+
+it('binds captured annual SMS and fallback email to one reserved offer and rechecks before submission', async () => {
+  const { DateAutomations } = await import('../src/server/date-automations/service.js');
+  const { planBrand } = await import('../src/server/date-automations/planner.js');
+  const { annualClaim, dispatchBrand } = await import('../src/server/date-automations/dispatch.js');
+  const { setDate } = await import('../src/server/subscribers/people.js');
+  const { reservedGiftLink } = await import('../src/server/workspace-gifts/ledger.js');
+  const { Texting } = await import('../src/server/texting/service.js');
+  const f = await factory(), w = f.workspaceId, b = f.brandId, phoneId = randomUUID();
+  const policy={mode:'capture' as const,account:'acct_test'};
+  const dates = new DateAutomations(db, 'capture', f.options.isOwner, undefined, policy);
+  const campaignId = randomUUID();
+  const offer = {
+    id: randomUUID(), brand: b, campaign: campaignId, person: f.subscriberId, face: 500,
+    expires: new Date(Date.now() + 86400000).toISOString(), state: 'offered' as const,
+    alloc: [{id:randomUUID(),amount:500}], secret: randomUUID().replaceAll('-', '').repeat(2),
+  };
+  for (const kind of ['birthday', 'anniversary']) {
+    await dates.execute('dateAutomation.save', { brandId: b, kind, expectedRevision: 0, operationKey: randomUUID(),
+      settings: { giftCampaignId: campaignId, time: '09:00', zone: 'America/New_York', startHour: 9, endHour: 20,
+        sms: 'Plain SMS', email: { subject: 'Plain subject', body: 'Plain email' } } }, f.actor);
+    await dates.execute('dateAutomation.activate', { brandId: b, kind, expectedRevision: 1, giftMode:'capture', confirmRecurring: true, operationKey: randomUUID() }, f.actor);
+  }
+  await seedGiftOffer(w,b,offer);
+  const company = await db.brand(w,b,async sql => {
+    const company = (await sql.query('SELECT company_id FROM company_brands WHERE brand_id=$1', [b])).rows[0]!.company_id;
+    await sql.query("INSERT INTO sms_contacts(workspace_id,id,phone_e164,brand_id,subscriber_id) VALUES($1,$2,'+12125550777',$3,$4)",[w,phoneId,b,f.subscriberId]);
+    await sql.query("INSERT INTO sms_consents(workspace_id,company_id,contact_id,state) VALUES($1,$2,$3,'opted_in')",[w,company,phoneId]);
+    await sql.query('UPDATE date_automations SET activated_at=$1,next_scan=$1', [new Date('2026-11-07')]);
+    await setDate(sql,w,b,{subscriber:f.subscriberId,contact:phoneId},'birthday',{month:11,day:8},'Birthday');
+    return company;
+  });
+  const texting=Texting.mock(db,{origin:f.options.origin,linkOrigin:f.options.origin+'/l',isOwner:f.options.isOwner,now:()=>base});
+  const ports={mode:'capture' as const,giftDelivery:policy,isOwner:f.options.isOwner,delivery:f.delivery,texting};
+  f.options.annualClaim=(sql,w,b,id,now)=>annualClaim(sql,w,b,'email',id,ports,now);
+  await planBrand(db,w,b,'capture',base);
+  await dispatchBrand(db,w,b,ports,base);
+  const link=await db.brand(w,b,async sql=>{
+    const m=(await sql.query('SELECT id,rendered_body FROM sms_messages WHERE date_brand_id=$1',[b])).rows[0]!;
+    const path=await reservedGiftLink(sql,w,b,campaignId,f.subscriberId);
+    const url=f.options.origin+path;
+    expect(m.rendered_body.includes(url)).toBe(true);
+    expect(m.rendered_body.includes('STOP')).toBe(true);
+    expect(await annualClaim(sql,w,b,'sms',m.id,ports,base,company)).toBeNull();
+    await sql.query("UPDATE sms_consents SET state='opted_out' WHERE contact_id=$1",[phoneId]);
+    expect(await annualClaim(sql,w,b,'sms',m.id,ports,base,company)).toBeTruthy();
+    await setDate(sql,w,b,{subscriber:f.subscriberId,contact:phoneId},'anniversary',{month:11,day:8},'Anniversary');
+    return url;
+  });
+  const later=new Date(base.getTime()+120000);
+  await planBrand(db,w,b,'capture',later);
+  await dispatchBrand(db,w,b,ports,later);
+  const email=await db.brand(w,b,async sql=>{
+    const row=(await sql.query("SELECT delivery_id FROM date_occurrences WHERE channel='email'")).rows[0]!;
+    const snap=(await sql.query('SELECT rendered_text FROM customer_deliveries WHERE id=$1',[row.delivery_id])).rows[0]!;
+    expect(snap.rendered_text.includes(link)).toBe(true);
+    expect(snap.rendered_text.includes('Plain email')).toBe(false);
+    await sql.query("UPDATE subscribers SET first_name='Taylor' WHERE id=$1",[f.subscriberId]);
+    expect(await annualClaim(sql,w,b,'email',row.delivery_id,ports,base)).toBe('date_changed');
+    await sql.query('UPDATE subscribers SET first_name=NULL WHERE id=$1',[f.subscriberId]);
+    // Changing the bearer on the same offer cannot silently change the reviewed message.
+    await seedGiftOffer(w,b,{...offer,secret:'b'.repeat(64)});
+    expect(await annualClaim(sql,w,b,'email',row.delivery_id,ports,base)).toBe('gift_review_changed');
+    await seedGiftOffer(w,b,{...offer,state:'expired'});
+    return row.delivery_id;
+  });
+  for(let i=0;i<4;i++)await f.delivery.worker.tick(w,email);
+  expect(await db.brand(w,b,async sql=>(await sql.query('SELECT FROM customer_delivery_captures')).rowCount)).toBe(0);
+  expect(await db.brand(w,b,async sql=>(await sql.query('SELECT state,reason FROM customer_delivery_recipients WHERE delivery_id=$1',[email])).rows))
+    .toEqual([{state:'cancelled',reason:'gift_offer_unavailable'}]);
+});
+
+it('reviews manual gift bindings for the entire frozen audience and personalizes each copy', async () => {
+  const { giftCampaignContent, reviewCampaignGifts, reviewedCampaignGift, attachEmailGift } =
+    await import('../src/server/workspace-gifts/delivery.js');
+  const { deliveryRow } = await import('../src/server/customer-delivery/storage.js');
+  const { emptyContent } = await import('../src/shared/contracts.js');
+  const f=await factory(), w=f.workspaceId, b=f.brandId, second=randomUUID(), campaignId=randomUUID();
+  const draft=await f.core.execute('campaign.create',{brandId:b,operationKey:randomUUID(),
+    content:giftCampaignContent({...emptyContent(),fromName:'Shop',replyTo:'shop@example.test',title:'Thank you'})},f.actor) as {id:string};
+  await db.brand(w,b,sql=>sql.query("INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES($1,$2,$3,'second@example.test','confirmed')",[w,b,second]));
+  const review=await f.delivery.execute('delivery.review',{brandId:b,operationKey:randomUUID(),campaignId:draft.id,expectedVersion:1},f.actor) as {id:string};
+  const offers=[f.subscriberId,second].map(person=>({
+    id:randomUUID(),brand:b,campaign:campaignId,person,face:500,state:'offered' as const,alloc:[{id:randomUUID(),amount:500}],
+    expires:new Date(Date.now()+86400000).toISOString(),secret:randomUUID().replaceAll('-','').repeat(2),
+  }));
+  const bind=()=>db.brand(w,b,async sql=>reviewCampaignGifts(sql,f.actor,await deliveryRow(sql,review.id,b),campaignId,f.options.origin,{mode:'capture',account:'acct_test'}));
+  await seedGiftOffer(w,b,offers[0]!);
+  await expect(bind()).rejects.toMatchObject({code:'gift_offer_unavailable'});
+  await seedGiftOffer(w,b,offers[1]!);
+  await bind();
+  await db.brand(w,b,async sql=>{
+    const row=await deliveryRow(sql,review.id,b);
+    expect(row.state).toBe('reviewed');
+    const {rows}=await sql.query<import('../src/server/customer-delivery/types.js').PersonRow>(
+      'SELECT * FROM customer_delivery_recipients WHERE delivery_id=$1',[review.id]);
+    expect(rows).toHaveLength(2);
+    for(const person of rows){
+      const link=await reviewedCampaignGift(sql,row,person,f.options.origin,{mode:'capture',account:'acct_test'});
+      expect(Boolean(link)).toBe(true);
+      const own=offers.find(o=>o.person===person.subscriber_id)!;
+      expect(new URLSearchParams(new URL(link!).hash.slice(1)).get('offer')).toBe(own.id);
+      const result=attachEmailGift({html:row.rendered_html,text:row.rendered_text},link!);
+      expect(result.html.includes('href="')).toBe(true);
+      expect(result.text.includes(link!)).toBe(true);
+      const other=offers.find(o=>o!==own)!;
+      expect(result.html.includes(other.secret)||result.text.includes(other.secret)).toBe(false);
+      expect(row.rendered_html.includes(own.secret)||row.rendered_text.includes(own.secret)).toBe(false);
+    }
+    await expect(reviewedCampaignGift(sql,row,{...rows[0]!,subscriber_id:rows[1]!.subscriber_id},f.options.origin,{mode:'capture',account:'acct_test'}))
+      .rejects.toMatchObject({code:'gift_review_changed'});
+    expect((await sql.query('SELECT count(*)::int n FROM customer_delivery_captures')).rows[0]!.n).toBe(0);
+  });
+});
+
+it('requires explicit manual approval and captures only the reviewed recipient gift', async () => {
+  const f=await factory({giftDelivery:{mode:'capture',account:'acct_test'}}), campaignId=randomUUID(), w=f.workspaceId, b=f.brandId;
+  const offer={id:randomUUID(),brand:b,campaign:campaignId,person:f.subscriberId,face:500,state:'offered' as const,
+    alloc:[{id:randomUUID(),amount:500}],expires:new Date(Date.now()+86400000).toISOString(),secret:randomUUID().replaceAll('-','').repeat(2)};
+  const input={brandId:b,campaignId:f.campaign.id,expectedVersion:1,giftCampaignId:campaignId,operationKey:randomUUID()};
+  await expect(f.delivery.execute('delivery.review',input,f.actor)).rejects.toMatchObject({code:'gift_offer_unavailable'});
+  expect(await db.brand(w,b,async sql=>(await sql.query('SELECT FROM customer_deliveries')).rowCount)).toBe(0);
+  await seedGiftOffer(w,b,offer);
+  const review=await f.delivery.execute('delivery.review',input,f.actor) as DeliveryView;
+  expect(review).toMatchObject({state:'reviewed',giftCampaignId:campaignId,selected:1});
+  expect((await f.delivery.worker.tick(w,review.id)).processed).toBe(false);
+  await f.delivery.execute('delivery.approve',{brandId:b,operationKey:randomUUID(),id:review.id},f.actor);
+  for(let i=0;i<4;i++)await f.delivery.worker.tick(w,review.id);
+  await db.brand(w,b,async sql=>{
+    const payload=(await sql.query('SELECT payload FROM customer_delivery_captures WHERE delivery_id=$1',[review.id])).rows[0]?.payload;
+    expect(Boolean(payload?.html.includes('href="'+f.options.origin+'/workspace-gift.html#'))).toBe(true);
+    expect(Boolean(payload?.text.includes(offer.secret))).toBe(true);
+    expect(Boolean(payload?.text.includes('Unsubscribe'))).toBe(true);
+  });
+  const next=await f.delivery.execute('delivery.review',{...input,operationKey:randomUUID()},f.actor) as DeliveryView;
+  await f.delivery.execute('delivery.approve',{brandId:b,operationKey:randomUUID(),id:next.id},f.actor);
+  await f.delivery.worker.tick(w,next.id);
+  await seedGiftOffer(w,b,{...offer,state:'expired'});
+  await f.delivery.worker.tick(w,next.id);
+  await db.brand(w,b,async sql=>{
+    expect((await sql.query('SELECT FROM customer_delivery_captures WHERE delivery_id=$1',[next.id])).rowCount).toBe(0);
+    expect((await sql.query('SELECT state,reason FROM customer_delivery_recipients WHERE delivery_id=$1',[next.id])).rows)
+      .toEqual([{state:'excluded',reason:'gift_offer_unavailable'}]);
+  });
+});
+
+it.each(['ses','resend'] as const)('submits only a live reviewed gift on the authorized %s route',async mode=>{
+  const {seedReservedGift}=await import('./helpers/reserved-gift.js');
+  const {put}=await import('../src/server/workspace-gifts/store.js');
+  const messages:{to:string;text:string;html:string}[]=[];
+  let liveConsent=true;
+  const f=await factory({mode,environment:'production',origin:'https://mail.example.org',
+    liveConsent:async()=>liveConsent,
+    provider:()=>({fingerprint:'live-gift-'+mode,from:'news@shop.test',ready:async()=>true,
+      submit:async message=>{messages.push(message);return {outcome:'accepted',messageId:'synthetic-receipt'};},
+      lookup:async()=>({outcome:'accepted',messageId:'synthetic-receipt'})})});
+  const w=f.workspaceId,b=f.brandId,account='acct_same_in_test_and_live';
+  const live={mode:'live' as const,account,verifiedBrands:new Set([b])};
+  await saveSenderProfile(f.delivery,f.actor,b);
+  await db.brand(w,b,sql=>sql.query('INSERT INTO sender_domains(workspace_id,brand_id,domain,challenge,checked_at,verified_at) VALUES($1,$2,$3,$4,now(),now())',
+    [w,b,'shop.test',randomUUID()]));
+  const {campaign,lot,offer}=await seedReservedGift(db,w,b,f.subscriberId,account,false);
+  const review=()=>f.delivery.execute('delivery.review',{brandId:b,campaignId:f.campaign.id,expectedVersion:1,
+    giftCampaignId:campaign.id,operationKey:randomUUID()},f.actor) as Promise<DeliveryView>;
+  const approve=(id:string)=>f.delivery.execute('delivery.approve',{brandId:b,id,operationKey:randomUUID()},f.actor);
+  await expect(review()).rejects.toMatchObject({code:'gift_delivery_unavailable'});
+  f.options.giftDelivery=live;
+  await expect(review()).rejects.toMatchObject({code:'gift_provenance_mismatch'});
+  await db.brand(w,b,sql=>put(sql,w,'campaign',campaign.id,{...campaign,live:true} as typeof campaign));
+  await expect(review()).rejects.toMatchObject({code:'gift_provenance_mismatch'});
+  await db.brand(w,b,sql=>put(sql,w,'lot',lot.id,{...lot,live:true} as typeof lot));
+  f.options.giftDelivery={...live,account:'acct_unrelated'};
+  await expect(review()).rejects.toMatchObject({code:'gift_provenance_mismatch'});
+  f.options.giftDelivery=live;
+  const approved=await review();
+  expect(approved).toMatchObject({mode,state:'reviewed',selected:1,giftCampaignId:campaign.id});
+  expect((await f.delivery.worker.tick(w,approved.id)).processed).toBe(false);
+  live.verifiedBrands.delete(b);
+  await expect(approve(approved.id)).rejects.toMatchObject({code:'gift_delivery_unavailable'});
+  live.verifiedBrands.add(b);
+  await approve(approved.id);
+  for(let i=0;i<4;i++)await f.delivery.worker.tick(w,approved.id);
+  expect(messages).toHaveLength(1);
+  const message=messages[0]!;
+  expect(message.to).toBe('confirmed@shop.test');
+  expect(message.html.includes('href="'+f.options.origin+'/workspace-gift.html#')).toBe(true);
+  expect(message.text.includes(offer.secret)&&message.text.includes('Unsubscribe')).toBe(true);
+
+  const stopped=await review();
+  await approve(stopped.id);
+  await f.delivery.worker.tick(w,stopped.id);
+  liveConsent=false;
+  await f.delivery.worker.tick(w,stopped.id);
+  expect(messages).toHaveLength(1);
+  expect(await db.brand(w,b,async sql=>(await sql.query('SELECT state,reason FROM customer_delivery_recipients WHERE delivery_id=$1',[stopped.id])).rows))
+    .toEqual([{state:'excluded',reason:'consent_changed'}]);
+});

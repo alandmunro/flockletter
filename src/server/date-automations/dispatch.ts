@@ -1,4 +1,4 @@
-import { renderGreeting, type DateSettings } from '../../shared/date-automations.js';
+import { giftGreetingBody, giftGreetingSubject, renderGreeting, type DateSettings } from '../../shared/date-automations.js';
 import { blockedCharacters, composeBroadcast, encodeText, maxSegments } from '../../shared/texting.js';
 import { digest } from '../content.js';
 import type { Database,Sql } from '../db.js';
@@ -6,10 +6,12 @@ import { AppError,requireCondition } from '../errors.js';
 import { lockWorkspace } from '../workspace-lock.js';
 import type { CustomerDelivery } from '../customer-delivery/service.js';
 import type { Texting } from '../texting/service.js';
+import { eligibleGiftRecipients } from '../workspace-gifts/audience.js';
+import { reservedDeliveryGift, giftDeliveryAllowed, type GiftDeliveryPolicy } from '../workspace-gifts/delivery.js';
 import { businessName, queueText } from '../texting/messaging.js';
 import { coversTextCompany } from '../texting/company-access.js';
 import { authorized, type AutomationMode } from './service.js';
-import { dateSources, type DateKind } from './sources.js';
+import { dateGiftPerson, dateSources, type DateKind, type DateSource } from './sources.js';
 import { annualPolicy, insideWindow, monthsOfYear, schedule } from './planner.js';
 import type { Actor } from '../service.js';
 
@@ -19,7 +21,7 @@ type Occurrence = {id:string;activated_at:Date;date_id:string;kind:DateKind;annu
 const joinOccurrence=`SELECT o.*,o.local_date::text,a.enabled,a.activated_at,a.revision active_revision,a.issuer,a.actor,a.mode,r.settings,r.mailing_id
  FROM date_occurrences o JOIN date_automations a USING(workspace_id,brand_id,kind)
  JOIN date_automation_revisions r ON (r.workspace_id,r.brand_id,r.kind,r.revision)=(o.workspace_id,o.brand_id,o.kind,o.revision)`;
-type Ports={texting?:Texting|undefined;delivery:CustomerDelivery;mode:AutomationMode;isOwner:(user:string,workspace:string)=>Promise<boolean>};
+type Ports={giftDelivery?:GiftDeliveryPolicy|undefined;texting?:Texting|undefined;delivery:CustomerDelivery;mode:AutomationMode;isOwner:(user:string,workspace:string)=>Promise<boolean>};
 
 async function inspect(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Date) {
   requireCondition(o.enabled&&o.revision===o.active_revision&&o.mode===ports.mode&&ports.mode!=='off',409,'definition_changed','Automation approval changed.');
@@ -32,6 +34,8 @@ async function inspect(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Da
     const account=await ports.delivery.options.eligibilitySql(sql,w);
     requireCondition(account.eligible,409,'subscription_ineligible','The workspace cannot send marketing messages.');
   }
+  requireCondition(!o.settings.giftCampaignId || giftDeliveryAllowed(ports.giftDelivery,ports.mode,b),
+    409,'gifting_off','Gift delivery is unavailable for this brand.');
   const source=(await dateSources(sql,b,o.kind,monthsOfYear,null,1,o.date_id))[0];
   requireCondition(source,409,'date_changed','Date removed or changed.');
   const policy=await annualPolicy(sql,w);
@@ -43,6 +47,14 @@ async function inspect(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Da
     source.email,source.first_name,source.label,source.year,source.month,source.day,when.years,when.zone]));
   return {source,when,signature};
 }
+async function inspectGift(sql:Sql, workspaceId:string, brandId:string, campaignId:string,
+  source:DateSource, channel:'sms'|'email', origin:string, policy:GiftDeliveryPolicy) {
+  const eligible=await eligibleGiftRecipients(sql,workspaceId,brandId,policy.mode==='live'?'live':'exercise');
+  const personId=dateGiftPerson(new Map(eligible.map(person=>[person.id,person])),source,channel);
+  requireCondition(personId,409,'gift_recipient_ineligible','This person is unavailable for a gift on the selected channel.');
+  return reservedDeliveryGift(sql,{workspaceId,brandId,campaignId,personId},origin,policy);
+}
+
 async function checkCompany(sql:Sql,company:string,actor:string) {
   if (!actor.startsWith('connection:')) return;
   const grant=(await sql.query<{brand_ids:string[]}>('SELECT brand_ids FROM connections WHERE id::text=$1',[actor.slice(11)])).rows[0];
@@ -57,8 +69,14 @@ export async function annualClaim(sql:Sql,workspace:string,brand:string,channel:
   if (!o||o.state!=='queued') return 'occurrence_cancelled';
   try {
     const {source,when,signature}=await inspect(sql,workspace,brand,o,ports,now);
-    // Occurrences queued before the controls release stored a digest of the full source row.
-    if(signature!==o.source_digest && digest(JSON.stringify([source,when.years]))!==o.source_digest) return 'date_changed';
+    if(o.settings.giftCampaignId){
+      const gift=await inspectGift(sql,workspace,brand,o.settings.giftCampaignId,source,channel,ports.delivery.options.origin,ports.giftDelivery!);
+      // Preserve date replanning for a changed source with the same offer. An offer
+      // substitution has its own terminal reason and cannot replan to a new gift.
+      const [sourceDigest,offerDigest]=o.source_digest?.split('/')??[];
+      if(offerDigest!==gift.fingerprint) return 'gift_review_changed';
+      if(sourceDigest!==signature) return 'date_changed';
+    } else if(signature!==o.source_digest && digest(JSON.stringify([source,when.years]))!==o.source_digest) return 'date_changed';
     if(channel==='sms'){
       const current=when.route;
       if(!current||current.company_id!==company) return 'no_consent';
@@ -83,12 +101,17 @@ async function handoff(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Da
       LIMIT 1`,[source.contact_id,o.kind,o.annual_year,source.subscriber_id,channel]);
     requireCondition(!prior.rowCount,409,'shared_annual_destination','This person or phone already has an annual greeting.');
   }
+  const gift=o.settings.giftCampaignId
+    ? await inspectGift(sql,w,b,o.settings.giftCampaignId,source,channel,ports.delivery.options.origin,ports.giftDelivery!)
+    : null;
   let id:string;
   if(route){
     requireCondition(ports.texting?.options.mode===(ports.mode==='capture'?'mock':'live'),409,'transport_unavailable','The selected SMS transport is unavailable.');
     await checkCompany(sql,route.company_id,o.actor);
-    const body=composeBroadcast(render(o.settings.sms),await businessName(sql,route.company_id),{name:source.first_name});
-    const links=await ports.texting.linkProblems(sql,route.company_id,body);
+    const body=composeBroadcast(gift ? giftGreetingBody+' '+gift.url : render(o.settings.sms),await businessName(sql,route.company_id),{name:source.first_name});
+    // Only the exact first-party bearer returned by the ledger is a permitted hosted gift
+    // link. The ordinary domain check still applies to every other URL in the message.
+    const links=await ports.texting.linkProblems(sql,route.company_id,gift ? body.replace(gift.url,'') : body);
     await sql.query("SELECT set_config('app.intake_brand_id',$1,true)",[b]);
     requireCondition(!blockedCharacters(body).length&&!links.problems.length&&encodeText(body).segments<=maxSegments,422,'invalid_message','Rendered text failed the marketing content checks.');
     id=await queueText(sql,w,{companyId:route.company_id,contactId:source.contact_id,to:source.phone_e164!,purpose:'broadcast',body});
@@ -98,10 +121,13 @@ async function handoff(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Da
     const mode=ports.delivery.options.mode;
     requireCondition(mode!=='off'&&(mode==='capture')===(ports.mode==='capture'),409,'transport_unavailable','The selected email transport is unavailable.');
     const actor:Actor={workspaceId:w,userId:o.issuer,actorId:o.actor,owner:true,kind:o.actor.startsWith('connection:')?'connection':'session',brandIds:[b],scopes:['read','campaign:send']};
-    id=await ports.delivery.queueAnnualEmail(sql,actor,b,o.mailing_id,source.subscriber_id,render(o.settings.email.subject),render(o.settings.email.body),o.kind==='birthday'?'Birthday greeting':'Anniversary greeting');
+    id=await ports.delivery.queueAnnualEmail(sql,actor,b,o.mailing_id,source.subscriber_id,
+      gift ? giftGreetingSubject : render(o.settings.email.subject),
+      gift ? giftGreetingBody : render(o.settings.email.body),
+      o.kind==='birthday'?'Birthday greeting':'Anniversary greeting',gift?.url);
   }
   await sql.query(`UPDATE date_occurrences SET state='queued',reason=NULL,channel=$2,delivery_id=$3,source_digest=$4,dispatched_contact=$5 WHERE id=$1`,
-    [o.id,channel,id,signature,source.contact_id]);
+    [o.id,channel,id,gift?signature+'/'+gift.fingerprint:signature,source.contact_id]);
 }
 
 export async function dispatchBrand(db:Database,w:string,b:string,ports:Ports,now:Date) {
@@ -116,7 +142,7 @@ export async function dispatchBrand(db:Database,w:string,b:string,ports:Ports,no
       catch(error){
         await sql.query('ROLLBACK TO SAVEPOINT annual_dispatch');
         if(!(error instanceof AppError))throw error;
-        const terminal=['authority_revoked','date_changed','definition_changed','no_eligible_channel','audience_empty','invalid_message','shared_annual_destination','expired'].includes(error.code);
+        const terminal=['authority_revoked','date_changed','definition_changed','no_eligible_channel','audience_empty','invalid_message','shared_annual_destination','expired','gift_offer_unavailable','gift_recipient_ineligible','gift_provenance_mismatch'].includes(error.code);
         await sql.query('UPDATE date_occurrences SET state=$2,reason=$3,retry_at=$4 WHERE id=$1',
           [o.id,terminal?'skipped':'planned',error.code,new Date(now.getTime()+60_000)]);
       }

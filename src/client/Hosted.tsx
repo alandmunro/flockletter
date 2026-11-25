@@ -1,13 +1,14 @@
 import { useCallback } from 'react';
 import { ClerkProvider, SignIn, SignUp, UserButton, OrganizationSwitcher, CreateOrganization, useAuth, useClerk, useReverification } from '@clerk/react';
 import { Portal, Header } from './App.js';
+import { workspaceGiftReturnUrl } from './WorkspaceGifts.js';
 import { OperatorPortal } from './OperatorPortal.js';
 import { SetupStatus } from './SetupStatus.js';
 import {authenticationReturnUrl,browserSubscriptionEntry,subscriptionSignupUrl} from './subscription-navigation.js';
 import { LogoutButton } from './LogoutButton.js';
 
-type SetupProps = {environment:string; setupGaps:string[]};
-function Hosted({ environment,setupGaps }: SetupProps) {
+type SetupProps = {environment:string; setupGaps:string[]; workspaceGifts?:boolean};
+function Hosted({ environment,setupGaps,workspaceGifts }: SetupProps) {
   const { isLoaded, isSignedIn, orgId, sessionId } = useAuth();
   const clerk = useClerk();
   const token = useCallback(async (refresh = false) => {
@@ -19,7 +20,7 @@ function Hosted({ environment,setupGaps }: SetupProps) {
   }, [clerk, orgId, sessionId]);
   const reverify=useReverification((action:()=>Promise<unknown>)=>action());
   const verify=useCallback((action:()=>Promise<unknown>)=>reverify(action),[reverify]);
-  const returnUrl = authenticationReturnUrl(window.location);
+  const returnUrl = (workspaceGifts && workspaceGiftReturnUrl(window.location)) || authenticationReturnUrl(window.location);
   const signupUrl = subscriptionSignupUrl(browserSubscriptionEntry().plan);
   const logout = <LogoutButton signOut={() => clerk.signOut({ redirectUrl: '/' })} />;
   const account = <><OrganizationSwitcher hidePersonal afterSelectOrganizationUrl={returnUrl} afterCreateOrganizationUrl={returnUrl} /><UserButton />{logout}</>;
@@ -30,7 +31,7 @@ function Hosted({ environment,setupGaps }: SetupProps) {
   }
   if (!orgId) return <><Header account={account} /><main className="main"><h1 className="page-heading">Choose your workspace.</h1><p>Select an existing workspace above or create one to begin.</p><CreateOrganization routing="hash" afterCreateOrganizationUrl={returnUrl} /></main></>;
   if(window.location.pathname==='/operator')return <OperatorPortal key={sessionId+':'+orgId} getToken={token} account={account} verify={verify}/>;
-  return <Portal key={sessionId + ':' + orgId} getToken={token} account={account} local={false} environment={environment} />;
+  return <Portal key={sessionId + ':' + orgId} getToken={token} account={account} local={false} workspaceGifts={workspaceGifts} environment={environment} />;
 }
 
 export default function HostedPortal({publishableKey,...setup}:{publishableKey:string}&SetupProps) {

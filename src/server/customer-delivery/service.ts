@@ -1,3 +1,4 @@
+import { attachEmailGift, checkGiftApproval, giftCampaignContent, giftDeliveryAllowed, reviewCampaignGifts } from '../workspace-gifts/delivery.js';
 import {eligibleBroadcastContacts,selectedDelivery,deliveryProviders,selectDeliveryProvider} from './selection.js';
 import {externalDelivery} from '../../shared/customer-delivery.js';
 import {admitTest,testRecipient} from './test-send.js';
@@ -151,7 +152,7 @@ export class CustomerDelivery {
       externalSendingEnabled:externalDelivery(mode)&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
       testSendingEnabled:externalDelivery(mode)&&deliveryPurposeAllowed(this.options.scope,'test'),
       broadcastsEnabled:this.options.mode!=='off'&&deliveryPurposeAllowed(this.options.scope,'broadcast'),
-      eligible:eligibility.eligible,eligibility,brandId:brandId??null,senderVerified,providerConfigured,rendererConfigured:Boolean(this.options.render),gaps,
+      giftDeliveryEnabled:giftDeliveryAllowed(this.options.giftDelivery,mode,brandId),eligible:eligibility.eligible,eligibility,brandId:brandId??null,senderVerified,providerConfigured,rendererConfigured:Boolean(this.options.render),gaps,
       context:{environment:this.options.environment,workspaceId:actor.workspaceId,observedAt:new Date().toISOString()}};
   }
   private async read(name:string,raw:unknown,actor:Actor,sql:Sql) {
@@ -191,7 +192,7 @@ export class CustomerDelivery {
   /** One recurring revision owns one source campaign. Each occurrence freezes a single
    * recipient and consumes the same one campaign slot and email allowance as a broadcast. */
   async queueAnnualEmail(sql:Sql,actor:Actor,brand:string,mailingId:string,subscriber:string,
-    subject:string,body:string,label:string) {
+    subject:string,body:string,label:string,giftUrl?:string) {
     const profile=await senderProfile(sql,brand);
     requireCondition(profile||this.options.mode==='capture',409,'sender_ineligible','Configure a marketing sender.');
     const source={...emptyContent(),title:label,heading:label,subject:label,body:label,
@@ -199,12 +200,12 @@ export class CustomerDelivery {
     await sql.query('INSERT INTO campaigns(workspace_id,brand_id,id,content) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',
       [actor.workspaceId,brand,mailingId,source]);
     const review=await this.review(sql,actor,{brandId:brand,campaignId:mailingId,expectedVersion:1,operationKey:randomUUID()},
-      undefined,{subscriber,subject,body});
+      undefined,{subscriber,subject,body,giftUrl});
     await sql.query('UPDATE customer_deliveries SET date_automation=true WHERE id=$1',[review.id]);
     await this.approve(sql,actor,await deliveryRow(sql,review.id,brand));
     return review.id;
   }
-  private async review(sql:Sql,actor:Actor,input:ReturnType<typeof customerDeliveryCommands['delivery.review']['schema']['parse']>,testSubscriberId?:string,annual?:{subscriber:string;subject:string;body:string}) {
+  private async review(sql:Sql,actor:Actor,input:ReturnType<typeof customerDeliveryCommands['delivery.review']['schema']['parse']>,testSubscriberId?:string,annual?:{subscriber:string;subject:string;body:string;giftUrl?:string}) {
     const purpose=testSubscriberId?'test':'broadcast';
     requireCondition(this.options.mode!=='off',503,'delivery_off','Choose an available delivery configuration.');
     requireCondition(deliveryPurposeAllowed(this.options.scope,purpose),403,'broadcasts_disabled','Only separately reviewed one-recipient tests are enabled. Broadcasts and schedules are disabled.');
@@ -214,6 +215,11 @@ export class CustomerDelivery {
     requireCondition(draft.version===input.expectedVersion,409,'version_conflict','The campaign changed. Reload its saved version.');
     const campaign:Campaign={id:draft.id,brandId:draft.brand_id,version:draft.version,content:draft.content,
       createdAt:draft.created_at.toISOString(),updatedAt:draft.updated_at.toISOString(),status:'draft'};
+    if(input.giftCampaignId){
+      requireCondition(giftDeliveryAllowed(this.options.giftDelivery,this.options.mode,input.brandId) && actor.kind==='session' && actor.owner,
+        403,'gift_delivery_unavailable','Review gifts with an owner session and the authorized gift delivery route.');
+      campaign.content=giftCampaignContent(campaign.content);
+    }
     if (annual) campaign.content={...campaign.content,subject:annual.subject,heading:annual.subject,body:annual.body};
     requireCondition(!contentGaps(campaign).length,422,'incomplete_content','Complete the subject, sender and message before review.');
     const now=this.options.now?.()??new Date(), due=input.dueAt?new Date(input.dueAt):now;
@@ -238,9 +244,9 @@ export class CustomerDelivery {
     requireCondition(selected.length>0&&selected.length<=10000,422,'audience_empty','Choose between one and 10,000 confirmed eligible contacts.');
     const profile=await senderProfile(sql,input.brandId);
     if(externalDelivery(selectedProvider.mode))requireCondition(await senderEligible(sql,input.brandId,provider),503,'provider_unavailable','Complete the legal sender profile, current domain verification and provider verification for this brand.');
-    const assets=(await sql.query<{id:string;name:string;sha256:string}>('SELECT id,name,sha256 FROM assets WHERE brand_id=$1 AND id=ANY($2::uuid[])',[input.brandId,draft.content.assetIds])).rows;
-    requireCondition(assets.length===draft.content.assetIds.length,422,'image_unavailable','A selected original photo is unavailable.');
-    const ordered=draft.content.assetIds.map(id=>assets.find(a=>a.id===id)!);
+    const assets=(await sql.query<{id:string;name:string;sha256:string}>('SELECT id,name,sha256 FROM assets WHERE brand_id=$1 AND id=ANY($2::uuid[])',[input.brandId,campaign.content.assetIds])).rows;
+    requireCondition(assets.length===campaign.content.assetIds.length,422,'image_unavailable','A selected original photo is unavailable.');
+    const ordered=campaign.content.assetIds.map(id=>assets.find(a=>a.id===id)!);
     const snapshot=purpose==='test'?{...campaign,content:{...campaign.content,subject:'[TEST] '+campaign.content.subject}}:campaign;
     const signupSlug = this.options.signupPagesEnabled
       ? (await sql.query<{slug:string|null}>(`SELECT public.flockletter_signup_slug(form_token) AS slug
@@ -248,11 +254,13 @@ export class CustomerDelivery {
           [actor.workspaceId,input.brandId])).rows[0]?.slug
       : null;
     const signupUrl = signupSlug ? new URL('/signup/' + signupSlug, this.options.origin).href : null;
-    const preview=renderPreview(snapshot,ordered),rendered=legalFooter(preview.html,preview.text,profile,signupUrl),id=randomUUID();
+    const preview=renderPreview(snapshot,ordered);
+    const message=annual?.giftUrl?attachEmailGift(preview,annual.giftUrl):preview;
+    const rendered=legalFooter(message.html,message.text,profile,signupUrl),id=randomUUID();
     await sql.query(`INSERT INTO customer_deliveries(workspace_id,brand_id,id,campaign_id,version,actor_id,creator_id,mode,state,
       content,rendered_html,rendered_text,asset_digests,provider_binding,due_at,selected,excluded,sender_profile,purpose,provider_revision,preference_segment_id)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
-      [actor.workspaceId,input.brandId,id,draft.id,draft.version,actor.actorId,actor.userId,selectedProvider.mode,JSON.stringify(snapshot.content),
+      [actor.workspaceId,input.brandId,id,draft.id,draft.version,actor.actorId,actor.userId,selectedProvider.mode,JSON.stringify(input.giftCampaignId?{...snapshot.content,giftCampaignId:input.giftCampaignId}:snapshot.content),
         rendered.html,rendered.text,JSON.stringify(ordered),senderFingerprint(provider,profile),due,selected.length,(population[0]?.total??0)-selected.length,profile?JSON.stringify(profile):null,purpose,selectedProvider.revision, segment?.subscriber_selectable ? input.segmentId : null]);
     // Freeze only the already selected audience. All batches, the review and its replay record
     // share the workspace transaction: a failed batch cannot expose a partial review to approval.
@@ -267,7 +275,9 @@ export class CustomerDelivery {
         [actor.workspaceId,input.brandId,id,people.map(p=>p.operation),people.map(p=>p.subscriber),people.map(p=>p.email),people.map(p=>p.reference)]);
       requireCondition(written.rowCount===people.length,503,'audience_freeze_incomplete','The audience review could not be saved. Retry with the same operation key.');
     }
-    const result=await deliveryView(sql,await deliveryRow(sql,id,input.brandId));
+    const frozen=await deliveryRow(sql,id,input.brandId);
+    if(input.giftCampaignId)await reviewCampaignGifts(sql,actor,frozen,input.giftCampaignId,this.options.origin,this.options.giftDelivery!);
+    const result=await deliveryView(sql,frozen);
     return testSubscriberId?{...result,purpose:'test' as const,testSubscriberId} satisfies TestDeliveryReview:result;
   }
   private async approve(sql:Sql,actor:Actor,row:DeliveryRow,test?:{subscriberId:string;expectedVersion:number}) {
@@ -283,6 +293,7 @@ export class CustomerDelivery {
     if(row.state==='queued'){const result=await deliveryView(sql,row);return test?{...result,purpose:'test' as const,testSubscriberId:test.subscriberId}:result;}
     requireCondition(row.state==='reviewed',409,'review_required','Prepare a fresh review before approval.');
     requireCondition((await sql.query('SELECT id FROM campaigns WHERE id=$1 AND version=$2',[row.campaign_id,row.version])).rowCount,409,'version_conflict','The campaign changed after review.');
+    if(row.content.giftCampaignId)await checkGiftApproval(sql,row,row.content.giftCampaignId,this.options.origin,this.options.giftDelivery);
     if(test) {
       // The workspace lock makes this check and the new admission atomic across UI/API/MCP.
       const pending=await sql.query(`SELECT FROM customer_deliveries d JOIN customer_delivery_recipients p

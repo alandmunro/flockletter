@@ -1,3 +1,6 @@
+import {configuredGiftDelivery} from './workspace-gifts/delivery.js';
+import {configuredWorkspaceGifts} from './workspace-gifts/service.js';
+import type {WorkspaceGiftCommand} from '../shared/workspace-gifts.js';
 import { annualClaim,dispatchBrand } from './date-automations/dispatch.js';
 import { eachDateBrand, planBrand } from './date-automations/planner.js';
 import { DateAutomations } from './date-automations/service.js';
@@ -51,8 +54,9 @@ import { parseSesRoute, type SesRoute } from './campaign/ses-runtime.js';
 import { createTexting, loadTextingSecrets, type TextingSecrets } from './texting/runtime.js';
 import type { Texting } from './texting/service.js';
 
-const prefixes=['dateAutomation.','senderSetup.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
+const prefixes=['gifts.','dateAutomation.','senderSetup.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
 export class CustomerWorkflows {
+  readonly gifts: ReturnType<typeof configuredWorkspaceGifts>;
   readonly dates:DateAutomations;
   readonly settings;
   readonly billing:CustomerBilling;
@@ -81,9 +85,11 @@ export class CustomerWorkflows {
     return new CustomerWorkflows(db,config,identity,env,await loadTextingSecrets(config,env,fetcher));
   }
   constructor(readonly db:Database,readonly config:Config,readonly identity:IdentityProvider,readonly env:NodeJS.ProcessEnv=process.env,textingSecrets?:TextingSecrets) {
+    this.gifts=configuredWorkspaceGifts(db,config,env);
+    const giftDelivery=configuredGiftDelivery(config.environment,env.FLOCKLETTER_GIFT_DELIVERY,this.gifts);
     const settings=this.settings=customerSettings(config,env);
     const dateMode=env.FLOCKLETTER_DATE_AUTOMATIONS;
-    this.dates=new DateAutomations(db,dateMode==='capture'&&config.environment!=='production'?'capture':dateMode==='live'?'live':'off',identity.isOwner);
+    this.dates=new DateAutomations(db,dateMode==='capture'&&config.environment!=='production'?'capture':dateMode==='live'?'live':'off',identity.isOwner,undefined,giftDelivery);
     const gateway=stripeCustomerProvider(config.origin,env);
     const eventGateway=gateway??stripeCustomerEventProvider(config.origin,env);
     this.billing=new CustomerBilling(db,{environment:config.environment,exerciseEnabled:settings.billing==='exercise',
@@ -117,7 +123,7 @@ export class CustomerWorkflows {
     this.resend=customerResendRuntime(config.origin,env);
     const provider=(w:string,b:string,mode:SendingProvider=settings.delivery==='resend'?'resend':'ses')=>mode==='ses'?this.ses?.provider(w,b):this.resend?.provider(w,b);
     const safeguards=env.FLOCKLETTER_SENDING_POLICY==='permission-v1'?new SendingSafeguards(db,env.FLOCKLETTER_CUSTOMER_RESEND_RETRIEVE_KEY,fetch,Number(env.FLOCKLETTER_RESEND_APPROVED_MONTHLY_LIMIT??'50000')):undefined;
-    this.delivery=new CustomerDelivery(db,{signupPagesEnabled:settings.audience!=='off',safeguards,mode:settings.delivery,scope:settings.deliveryScope,environment:config.environment,origin:config.origin,
+    this.delivery=new CustomerDelivery(db,{giftDelivery,signupPagesEnabled:settings.audience!=='off',safeguards,mode:settings.delivery,scope:settings.deliveryScope,environment:config.environment,origin:config.origin,
       billing:this.billing,eligibilitySql:(sql,w)=>customerEligibility(sql,w,this.billing.options),isOwner:identity.isOwner,
       render:this.engine?message=>this.engine!.render(message):undefined,optOut:createCustomerOptOut,liveConsent:productionConsentEligible,liveConsentBatch:productionConsentEligibleBatch,
       provider});
@@ -165,7 +171,7 @@ export class CustomerWorkflows {
         }
       },
     },textingSecrets);
-    const datePorts=()=>({mode:this.dates.mode,isOwner:this.identity.isOwner,delivery:this.delivery,texting:this.texting});
+    const datePorts=()=>({mode:this.dates.mode,giftDelivery:this.dates.giftDelivery,isOwner:this.identity.isOwner,delivery:this.delivery,texting:this.texting});
     this.delivery.options.annualClaim=(sql,w,b,id,now)=>annualClaim(sql,w,b,'email',id,datePorts(),now);
     if(this.texting){
       this.audience.options.texting=this.texting;
@@ -328,6 +334,10 @@ export class CustomerWorkflows {
         await audit(sql,actor,name,null);return {fresh:true,result};
       });
       if(intent.fresh)await this.processWorkspace(actor.workspaceId);result=intent.result;
+    } else if(name.startsWith('gifts.')) {
+      requireCondition(this.gifts,503,'gifting_off','Workspace gifting is unavailable.');
+      if(mutation) requireCondition(actor.kind==='session'&&actor.owner&&await this.identity.isOwner(actor.userId,actor.workspaceId),403,'owner_required','A current workspace owner must approve this action.');
+      result=await this.gifts.execute(name as WorkspaceGiftCommand,raw,actor);
     } else if(name.startsWith('customerBilling.'))result=await this.billing.execute(name,raw,actor);
     else if(name.startsWith('audienceOnboarding.'))result=await this.audience.execute(name,raw,actor);
     else if(name.startsWith('teamLifecycle.'))result=await this.team.execute(name,raw,actor);
@@ -353,6 +363,7 @@ export class CustomerWorkflows {
     let failure:string|null=null;
     const run=async(action:()=>Promise<unknown>)=>{if(this.closing)return;try{await action();}catch{failure='workspace_job_requires_review';}};
     if(maintenance){
+      if(this.gifts)await run(()=>this.gifts!.tick(workspace));
       const brands=await this.db.tenant(workspace,async sql=>(await sql.query<{id:string}>('SELECT id FROM brands ORDER BY id LIMIT 5')).rows);
       for(const brand of brands)if(this.settings.infrastructure==='aws'||externalDelivery(this.settings.delivery))
         await run(()=>refreshCustomerSender(this.db,workspace,brand.id));
@@ -367,7 +378,7 @@ export class CustomerWorkflows {
       if(this.dates.mode!=='off') await eachDateBrand(this.db,workspace,brand=>run(async()=>{
         const now=new Date();
         await planBrand(this.db,workspace,brand,this.dates.mode,now);
-        await dispatchBrand(this.db,workspace,brand,{mode:this.dates.mode,isOwner:this.identity.isOwner,delivery:this.delivery,texting:this.texting},now);
+        await dispatchBrand(this.db,workspace,brand,{mode:this.dates.mode,giftDelivery:this.dates.giftDelivery,isOwner:this.identity.isOwner,delivery:this.delivery,texting:this.texting},now);
       }));
       await run(()=>this.team.tickWorkspace(workspace));
       await run(()=>this.support.tickWorkspace(workspace));

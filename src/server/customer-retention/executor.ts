@@ -1,3 +1,4 @@
+import { archiveGiftsForErasure } from '../workspace-gifts/retention.js';
 import { privateWorkspaceRoutes } from './private-routes.js';
 import { createHash } from 'node:crypto';
 import pg from 'pg';
@@ -226,6 +227,7 @@ export async function executeAuthorizedRetention(
         ' IN SHARE ROW EXCLUSIVE MODE',
     );
     await options.verifyLockedPlan?.(db,workspace,job);
+    await archiveGiftsForErasure(db,workspace,now);
     for(const route of privateWorkspaceRoutes) {
       const qualified='flockletter_customer_jobs.'+identifier(route);
       if((await db.query('SELECT to_regclass($1) present',['flockletter_customer_jobs.'+route])).rows[0]?.present){

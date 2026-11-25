@@ -212,6 +212,10 @@ The owner asked for a newsletter and text-alert pop-up on his own short-term-ren
 
 The owner authorized implementing the Twilio onboarding plan and verifying it in staging. The first staging cohort exercises the EIN-based US business path in synthetic workspaces, with captured identity and carrier responses and either captured payment or an explicitly configured Stripe test account. Live self-service registration and customer activation retain their separate phase 3 approval and provider evidence requirements. [Staging runbook](implementation/TEXTING_ONBOARDING_STAGING.md)
 
-## D-066 · Automated texting onboarding on staging (November 25, 2026)
+## D-066 · Workspace gifting implementation and staging acceptance
+
+On November 25, 2026 the owner authorized implementing WA-09, deploying the checked changes to Flockletter staging, and exercising the full customer journey there with Stripe test and Tremendous sandbox. Use synthetic recipients and the dedicated staging account. Record actual provider receipts and hosted outcomes separately from simulated failure and recovery drills. Production deployment, real charges, real bank movements and a live reward require separate authorization. Prepaid-credit terms and the private live risk settings retain their recorded decision gates. [WA-09 requirements](supplemental-requirements/specs/09-tremendous-gifting.md) · [Operations and acceptance](implementation/WORKSPACE_GIFTING.md)
+
+## D-067 · Automated texting onboarding on staging (November 25, 2026)
 
 The owner extended D-065 to build and verify the remaining self-service texting enrollment on staging with synthetic businesses. The scope includes automated page checks, simulated identity and carrier decisions, a mock texting plan, exception review, number activation and probation recovery. Any fee, real carrier submission or production rollout is paused. Actual provider acceptance, identity-document handling and customer launch require separate evidence and authorization. [Staging runbook](implementation/TEXTING_ONBOARDING_STAGING.md)

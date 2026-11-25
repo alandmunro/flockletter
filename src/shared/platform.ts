@@ -7,6 +7,8 @@ const workspaceId=z.string().regex(/^org_[A-Za-z0-9_-]{1,120}$/);
 const define=<T extends z.ZodRawShape>(description:string,mutation:boolean,shape:T)=>({description,mutation,schema:z.object(shape).strict()});
 /** A separate command surface. Customer connection scopes never grant these commands. */
 export const platformCommands={
+  'platform.giftFundingStatus':define('Inspect current platform gift funding coverage in USD cents.',false,{}),
+  'platform.approveGiftTopup':define('Approve the reviewed sandbox gift funding shortfall.',true,{operationKey,expectedShortfallCents:z.number().int().positive()}),
   'platform.overview':define('Inspect platform health metadata and configuration gaps.',false,{}),
   'platform.openCase':define('Open a short-lived audited case for one exact workspace and resource.',true,{operationKey,workspaceId,kind:z.enum(['support','retention','abuse','delivery']),resourceId:z.uuid().nullable(),reason}),
   'platform.case':define('Read one case and its audited target.',false,{caseId}),

@@ -1,5 +1,6 @@
 import { practicePlanLimits } from './commercial.js';
 // Consent (FL-SMS-005/006), delivery controls (FL-SMS-009/011/012) and inbound handling (FL-SMS-015).
+import {giftSendingHold} from '../workspace-gifts/service.js';
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { lockWorkspace } from '../workspace-lock.js';
@@ -163,6 +164,7 @@ export class TextingMessaging {
     }
     // 4. Per-contact monthly frequency (marketing texts only).
     if (row.purpose === 'broadcast') {
+      if(await giftSendingHold(sql))return defer(new Date(now.getTime()+15*60000),'gift_dispute_hold');
       const hold = await probationHold(sql, workspace, row.company_id, row.id, settings, now);
       if (hold) return defer(hold.at, hold.reason);
       const sent = (await sql.query<{ n: number }>(`SELECT count(*)::int n FROM sms_messages WHERE contact_id=$1 AND purpose='broadcast' AND id<>$2

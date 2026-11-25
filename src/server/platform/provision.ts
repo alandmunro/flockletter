@@ -15,5 +15,6 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public,flockletter_customer_jobs,flocklett
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public,flockletter_customer_jobs,flockletter_retention_control FROM "${role}";
 GRANT USAGE ON SCHEMA flockletter_retention_control TO "${role}";
 GRANT SELECT,INSERT,UPDATE ON flockletter_retention_control.platform_records TO "${role}";
+GRANT EXECUTE ON FUNCTION flockletter_retention_control.gift_funding_liability() TO "${role}";
 GRANT EXECUTE ON FUNCTION flockletter_retention_control.expire_platform_inbox() TO "${role}";`;
 }

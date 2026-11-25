@@ -1,3 +1,4 @@
+import {workspaceGiftRoutes} from './workspace-gifts/routes.js';
 import {giftingRoutes} from './gifting-routes.js';
 import { hostedMcp } from './hosted-mcp.js';
 import {publicSubscriptionOffers} from '../shared/subscription-offers.js';
@@ -66,7 +67,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
       testSendingEnabled:externalDelivery(service?.customer?.settings.delivery??'off') });
   });
   platformRoutes(app,config,platform);
-  app.get('/api/config', (_req, res) => res.json({ environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), operatorMfaPolicy:config.operatorMfaPolicy??'required', platformMode:platform?.options.mode??'off', plans,subscriptionOffers:publicSubscriptionOffers,
+  app.get('/api/config', (_req, res) => res.json({ workspaceGifts:Boolean(service?.customer?.gifts), environment: config.environment, localIdentity: config.localIdentity, clerkPublishableKey: config.clerkPublishableKey ?? null, setupGaps: configurationGaps(config), operatorMfaPolicy:config.operatorMfaPolicy??'required', platformMode:platform?.options.mode??'off', plans,subscriptionOffers:publicSubscriptionOffers,
     sendingEnabled: externalDelivery(service?.customer?.settings.delivery??'off')&&service?.customer?.settings.deliveryScope==='all',
     testSendingEnabled:externalDelivery(service?.customer?.settings.delivery??'off'),
     customerWorkflows:service?.customer?{billing:service.customer.settings.billing,delivery:service.customer.settings.delivery,deliveryScope:service.customer.settings.deliveryScope,audience:service.customer.settings.audience,team:service.customer.settings.team,support:service.customer.settings.support,retention:service.customer.settings.retention}:null }));
@@ -83,6 +84,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     next();
   });
   giftingRoutes(app,config,service?.db);
+  workspaceGiftRoutes(app,config,service?.customer);
   if (service && auth) app.use('/api/v1/mcp', hostedMcp(service, auth));
   const sesNotifications=service?.ses && new SesFeedbackRouter(sesScopes(service.ses).map(s => new SesNotifications(s.route)));
   app.post('/api/v1/campaign-feedback/ses',express.raw({type:['text/plain','application/json'],limit:'256kb'}),async(req,res)=>{

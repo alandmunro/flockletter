@@ -19,6 +19,8 @@ export async function applyMigrations(client, role) {
     await client.query(await readFile(new URL('../migrations/046_date_automations.sql', import.meta.url), 'utf8'));
     await client.query(await readFile(new URL('../migrations/047_date_dispatch.sql', import.meta.url), 'utf8'));
     await client.query(await readFile(new URL('../migrations/048_annual_greeting_recovery.sql', import.meta.url), 'utf8'));
+    await client.query(await readFile(new URL('../migrations/049_gift_accounting_retention.sql', import.meta.url), 'utf8'));
+    await client.query(await readFile(new URL('../migrations/050_gift_funding_inventory.sql', import.meta.url), 'utf8'));
     await client.query('BEGIN');
     await client.query(`GRANT USAGE ON SCHEMA public TO "${role}"`);
     const names = tables.map(table => table.name);

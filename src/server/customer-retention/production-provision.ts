@@ -44,8 +44,9 @@ export function productionRetentionGrantSql(kind:ProductionRetentionKind,phase:P
    for(const name of ['authorizations','receipts','operations','approvals','restore_quarantines'])
     grant('flockletter_retention_control.'+name,['SELECT','INSERT','UPDATE']);
    grant('flockletter_retention_control.approval_history',['SELECT','INSERT']);
+   grant('flockletter_retention_control.gift_accounting',['INSERT']);
   }
-  const functions=['flockletter_customer_jobs.trial_retention_inventory(text,text)',...(kind==='executor'?['flockletter_customer_jobs.trial_expire_claims(text,text)']:[])];
+  const functions=['flockletter_customer_jobs.trial_retention_inventory(text,text)',...(kind==='executor'?['flockletter_customer_jobs.trial_expire_claims(text,text)','flockletter_retention_control.expire_gift_accounting()']:[])];
   for(const signature of functions)lines.push(`GRANT EXECUTE ON FUNCTION ${signature} TO ${q(role)};`);
   lines.push(`DO $verify$ BEGIN
    IF EXISTS(WITH expected(name,permission) AS (VALUES ${expected.map(([name,permission])=>`(${literal(name)},${literal(permission)})`).join(',')}),
