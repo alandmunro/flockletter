@@ -154,8 +154,8 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
     expect(privateObjects.map(row=>row.name)).toEqual(expect.arrayContaining(['signup_routes','scopes','worker_instances','provisioning_budget',
       'support_reply_routes','confirmation_routes','trial_namespaces','trial_claims','trial_attempts','authorizations','receipts',
       'platform_records','operations','approvals','approval_history','restore_quarantines','sending_state','sending_admissions','sending_account','resend_domain_claims','resend_sender_routes',
-      'texting_settings','texting_setting_changes','texting_accounts','texting_number_routes','texting_short_names','texting_link_routes','texting_mock_state']));
-    expect(privateObjects).toHaveLength(28);
+      'texting_settings','texting_setting_changes','texting_accounts','texting_number_routes','texting_short_names','texting_link_routes','texting_mock_state','gift_accounting','gift_funding_lots']));
+    expect(privateObjects).toHaveLength(30);
     expect(privateObjects.every((row) => row.owner === 'flockletter_staging_migrator')).toBe(true);
     const schedulerFunctions = (
       await control.query(

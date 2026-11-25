@@ -35,7 +35,7 @@ export function productionOperatorGrantSql(phase:ProductionOperatorPhase,kind:Pr
  SELECT count(*) INTO amount FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND has_schema_privilege('${role}',n.oid,'USAGE')
  AND has_function_privilege('${role}',p.oid,'EXECUTE');
- IF amount<>1 OR NOT has_function_privilege('${role}','flockletter_retention_control.expire_platform_inbox()','EXECUTE') THEN
+ IF amount<>2 OR NOT has_function_privilege('${role}','flockletter_retention_control.gift_funding_liability()','EXECUTE') OR NOT has_function_privilege('${role}','flockletter_retention_control.expire_platform_inbox()','EXECUTE') THEN
   RAISE EXCEPTION 'operator_function_grants_refused'; END IF;
  END $verify$;`;
  return `-- Apply ${phase==='database'?'as the dedicated production database owner':'as flockletter_production_migrator'} after migrations.\n-- Exact existing NOLOGIN role only; credentials and activation stay outside this script.\nBEGIN;\n${checks}\n${grants}\n${postflight}\nCOMMIT;\n`;

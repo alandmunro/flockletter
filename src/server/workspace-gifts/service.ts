@@ -724,7 +724,6 @@ export function configuredWorkspaceGifts(
   config: Parameters<typeof WorkspaceGiftProvider.configured>[0],
   env = process.env,
 ) {
-  if(config.environment==='production')return null;
   const provider = WorkspaceGiftProvider.configured(config, env);
   if (!provider) return null;
   const integer = (s: string | undefined) =>

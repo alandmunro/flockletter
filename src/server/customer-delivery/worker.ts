@@ -5,7 +5,8 @@ import {sameTestDay,testRecipient} from './test-send.js';
 import { randomUUID } from 'node:crypto';
 import type { Database,Sql } from '../db.js';
 import { digest } from '../content.js';
-import { requireCondition } from '../errors.js';
+import { attachEmailGift, giftDeliveryAllowed, reviewedCampaignGift } from '../workspace-gifts/delivery.js';
+import { AppError, requireCondition } from '../errors.js';
 import { suppress } from '../subscribers/intake.js';
 import type { DeliveryEnvelope,DeliveryOutcome } from '../campaign/delivery-provider.js';
 import { locked,deliveryRow,originalEnvelope } from './storage.js';
@@ -88,6 +89,7 @@ export class CustomerDeliveryWorker {
       const reason=this.options.annualClaim ? await this.options.annualClaim(sql,row.workspace_id,row.brand_id,row.id,this.now()) : 'automation_off';
       if(reason) return reason;
     }
+    if(row.content.giftCampaignId && !giftDeliveryAllowed(this.options.giftDelivery,row.mode,row.brand_id)) return 'gift_delivery_unavailable';
     if(row.purpose==='test') {
       if(!await sameTestDay(sql,row))return 'test_day_expired';
       if(!(await testRecipient(sql,row,undefined,this.options)).matches)return 'test_snapshot_invalid';
@@ -176,6 +178,19 @@ export class CustomerDeliveryWorker {
       const email=await this.eligible(sql,row,p);
       if(!email){await sql.query("UPDATE customer_delivery_recipients SET state='excluded',reason='consent_changed' WHERE id=$1",[p.id]);await this.settle(sql,row);return;}
       const original=await originalEnvelope(sql,row,p,email);
+      if(original && row.content.giftCampaignId){
+        try{
+          const link=await reviewedCampaignGift(sql,row,p,this.options.origin,this.options.giftDelivery!);
+          Object.assign(original,attachEmailGift(original,link));
+        }catch(error){
+          if(!(error instanceof AppError))throw error;
+          if(error.code==='gift_offer_unavailable'||error.code==='gift_recipient_ineligible'){
+            await sql.query("UPDATE customer_delivery_recipients SET state='excluded',reason=$2 WHERE id=$1",[p.id,error.code]);
+            await this.settle(sql,row);return;
+          }
+          await this.stop(sql,row,error.code);return;
+        }
+      }
       requireCondition(original&&this.options.optOut,503,'unsubscribe_unavailable','Configure the brand unsubscribe route.');
       const prior=(await sql.query<{envelope:StoredEnvelope}>('SELECT envelope FROM customer_delivery_payloads WHERE recipient_id=$1',[p.id])).rows[0];
       if(!prior) {
@@ -206,7 +221,15 @@ export class CustomerDeliveryWorker {
           try {const result=await provider.lookup(p.id,p.message_id);outcome=result.outcome;messageId=result.messageId;}catch{/* Keep the original uncertainty. */}
         }
       } else {
-        const blocked=await this.block(sql,row);
+        let blocked=await this.block(sql,row);
+        if(!blocked && row.content.giftCampaignId){
+          try{await reviewedCampaignGift(sql,row,p,this.options.origin,this.options.giftDelivery!);}
+          catch(error){if(!(error instanceof AppError))throw error;blocked=error.code;}
+        }
+        if(row.content.giftCampaignId && (blocked==='gift_offer_unavailable'||blocked==='gift_recipient_ineligible')){
+          await sql.query("UPDATE customer_delivery_recipients SET state='excluded',reason=$2,attempts=attempts-1 WHERE id=$1",[p.id,blocked]);
+          await this.settle(sql,row);return;
+        }
         if(blocked==='authority_verification_unavailable'||blocked==='outside_window'){
           // This exact claim has not reached submit. Retrying it must recheck all gates.
           await sql.query("UPDATE customer_delivery_recipients SET state='prepared',attempts=attempts-1,reason=$2,next_check_at=$3 WHERE id=$1",[p.id,blocked,new Date(this.now().getTime()+15000)]);

@@ -1,3 +1,5 @@
+import { archiveGiftsForErasure, giftRetentionArchive } from '../src/server/workspace-gifts/retention.js';
+import { retentionDigest } from '../src/server/customer-retention/approval.js';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import tables from '../src/shared/runtime-tables.json' with { type: 'json' };
@@ -27,7 +29,7 @@ type Suppression = {
   source_domain: string;
   recorded_at: string;
 };
-type Checkpoint = { erasures: SavedReceipt[]; suppressions: Suppression[] };
+type Checkpoint = { erasures: SavedReceipt[]; suppressions: Suppression[]; giftDigest: string };
 
 async function transaction<T>(db: pg.Client, fn: () => Promise<T>): Promise<T> {
   await db.query('BEGIN');
@@ -87,6 +89,7 @@ async function erase(db: pg.Client, order: string[], receipt: Receipt | SavedRec
   if (!fixtureId.test(receipt.workspace_id)) throw Error('Only a synthetic retention fixture can be erased.');
   await db.query('SET LOCAL ROLE flockletter_retention_operator');
   await db.query("SELECT set_config('app.workspace_id',$1,true)", [receipt.workspace_id]);
+  await archiveGiftsForErasure(db,receipt.workspace_id,new Date(receipt.erased_at));
   const brands = (
     await db.query<{ id: string }>('SELECT id FROM brands WHERE workspace_id=$1 ORDER BY id', [
       receipt.workspace_id,
@@ -118,6 +121,25 @@ async function erase(db: pg.Client, order: string[], receipt: Receipt | SavedRec
     VALUES($1,$2,$3) ON CONFLICT(workspace_id) DO NOTHING`,
     [receipt.workspace_id, receipt.effective_end_at, receipt.erased_at],
   );
+}
+
+// Called as the isolated drill administrator. Seal only a digest. Hashing the complete
+// append-only journal also detects a purchase/refund that postdates the restored snapshot.
+async function giftCheckpoint(db: pg.Client, verifySettled: boolean) {
+  const journals = (await db.query<{workspace_id:string; digest:string}>(`
+    SELECT workspace_id,encode(sha256(convert_to(string_agg(
+      encode(sha256(convert_to(jsonb_build_array(actor_id,operation_key,request_hash,result)::text,'UTF8')),'hex'),
+      '' ORDER BY actor_id,operation_key),'UTF8')),'hex') digest
+    FROM operations WHERE starts_with(actor_id,'workspace-gifts:') GROUP BY workspace_id ORDER BY workspace_id`)).rows;
+  if (verifySettled) {
+    for (const {workspace_id} of journals) {
+      await db.query("SELECT set_config('app.workspace_id',$1,true)",[workspace_id]);
+      await giftRetentionArchive(db,workspace_id,new Date());
+    }
+  }
+  const archived = (await db.query(`SELECT event_day::text,kind,face_minor,fee_minor,currency,count(*) FROM
+    flockletter_retention_control.gift_accounting GROUP BY event_day,kind,face_minor,fee_minor,currency ORDER BY 1,2,3,4,5`)).rows;
+  return retentionDigest([journals,archived]);
 }
 
 // This factory creates its own local cluster. It has no connection-string, environment or target argument.
@@ -158,7 +180,8 @@ export async function startRetentionDrill() {
         CREATE TABLE retention_drill.erasures(workspace_id text PRIMARY KEY, effective_end_at timestamptz NOT NULL,
           erased_at timestamptz NOT NULL);
         REVOKE ALL ON SCHEMA retention_drill FROM PUBLIC, flockletter_runtime;`);
-        await db.query('GRANT USAGE ON SCHEMA public TO flockletter_retention_operator');
+        await db.query('GRANT USAGE ON SCHEMA public,flockletter_retention_control TO flockletter_retention_operator');
+        await db.query('GRANT INSERT ON flockletter_retention_control.gift_accounting TO flockletter_retention_operator');
         await db.query(
           'GRANT SELECT,DELETE ON ' +
             tablesByName.map((name) => 'public.' + pg.escapeIdentifier(name)).join(', ') +
@@ -244,9 +267,10 @@ export async function startRetentionDrill() {
         ).rows;
         if (suppressions.some((s) => !s.event_id || !fixtureId.test(s.workspace_id)))
           throw Error('Every synthetic suppression needs attributable evidence before recovery.');
+        const giftDigest = await giftCheckpoint(db,false);
         await connect(control, (journal) =>
           journal.query('INSERT INTO retention_drill.checkpoint(once,facts) VALUES(true,$1)', [
-            { erasures, suppressions },
+            { erasures, suppressions, giftDigest },
           ]),
         );
       });
@@ -293,6 +317,8 @@ export async function startRetentionDrill() {
             await suppress(db, row.id, row.event_id, row.state, 'retention-restore');
           }
           await db.query('RESET ROLE');
+          if (await giftCheckpoint(db,true) !== facts.giftDigest)
+            throw Error('Restored gift accounting requires reconciliation with the sealed checkpoint.');
           await db.query(`GRANT CONNECT ON DATABASE ${restore} TO flockletter_runtime`);
         }),
       );

@@ -1,5 +1,5 @@
-import {giftSendingHold} from '../workspace-gifts/service.js';
 // Consent (FL-SMS-005/006), delivery controls (FL-SMS-009/011/012) and inbound handling (FL-SMS-015).
+import {giftSendingHold} from '../workspace-gifts/service.js';
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { lockWorkspace } from '../workspace-lock.js';

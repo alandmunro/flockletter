@@ -16,6 +16,7 @@ const stagingCriticalAlerts = new Set(['security_incident','migration_failed','d
 
 type Options={texting?:import('../texting/service.js').Texting;sendingSafeguards?:import('../customer-delivery/safeguards.js').SendingSafeguards;environment:Config['environment'];mode:'capture'|'live';identity:OperatorIdentity;support:CustomerSupport;databaseName:string;workerHeartbeat?:()=>Promise<CustomerWorkerHeartbeat>;plan?:(workspace:string,jobId:string)=>Promise<RetentionPlan>;signing?:{keyId:string;privateKey:string};gaps?:string[];alerts?:{provider:SupportProvider;from:string;to:string};now?:()=>Date};
 export class PlatformService {
+ giftFunding?:import('../workspace-gifts/funding.js').GiftFunding;
  constructor(readonly db:Database,readonly store:PlatformStore,readonly options:Options){}
  private now(){return this.options.now?.()??new Date();}
  private async current(actor:OperatorSession){requireCondition(actor.exercise===(this.options.mode==='capture')&&await this.options.identity.current(actor),403,'operator_authority_expired','Verify current operator authority again.');}
@@ -84,6 +85,10 @@ export class PlatformService {
  async monitor(){
   if(this.options.mode!=='live')return;
   await this.store.cleanup();
+  if(this.giftFunding){
+   try { await this.giftFunding.monitor(); await this.giftFunding.processEvents(); }
+   catch { console.error('Gift funding monitoring requires review.'); }
+  }
   const heartbeat=await this.heartbeat();
   const health=await this.store.read<PlatformHealth>('health');
   for(const h of health){
@@ -107,6 +112,13 @@ export class PlatformService {
  async execute(name:PlatformCommand,raw:unknown,actor:OperatorSession,via:'operator_ui'|'operator_api'|'operator_mcp'='operator_api'):Promise<unknown>{
   await this.current(actor);
   const input=platformCommands[name].schema.parse(raw);
+  if(name==='platform.giftFundingStatus'||name==='platform.approveGiftTopup'){
+   requireCondition(!actor.exercise&&actor.authentication==='required',403,'operator_required','Use a current MFA-verified platform operator session.');
+   requireCondition(this.giftFunding,503,'gift_funding_off','Gift funding monitoring is unavailable.');
+   if(name==='platform.giftFundingStatus')return this.giftFunding.status();
+   const p=platformCommands[name].schema.parse(input);
+   return this.giftFunding.approve(actor,p.operationKey,p.expectedShortfallCents);
+  }
   if(name.startsWith('platform.texting')){
    const texting=this.options.texting;
    requireCondition(texting,503,'texting_off','Texting is not enabled in this environment.');

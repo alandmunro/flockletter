@@ -6,6 +6,101 @@
     "description": "Campaign authoring, rehearsals, audience workflows, and separately gated subscriber intake and sandbox billing. Generated from canonical schemas."
   },
   "paths": {
+    "/api/operator/v1/commands/platform.giftFundingStatus": {
+      "post": {
+        "operationId": "platform_giftFundingStatus",
+        "summary": "Inspect current platform gift funding coverage in USD cents.",
+        "security": [
+          {
+            "operatorSession": []
+          }
+        ],
+        "x-operator-mfa-required": true,
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Exact case-scoped operator result."
+          },
+          "403": {
+            "description": "Separate operator organization, named membership, recent two-factor verification and exact case required."
+          },
+          "409": {
+            "description": "Changed action, version, review or protected evidence."
+          },
+          "503": {
+            "description": "Required protected operator configuration is missing."
+          }
+        }
+      }
+    },
+    "/api/operator/v1/commands/platform.approveGiftTopup": {
+      "post": {
+        "operationId": "platform_approveGiftTopup",
+        "summary": "Approve the reviewed sandbox gift funding shortfall.",
+        "security": [
+          {
+            "operatorSession": []
+          }
+        ],
+        "x-operator-mfa-required": true,
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "operationKey": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "expectedShortfallCents": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "operationKey",
+                  "expectedShortfallCents"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Exact case-scoped operator result."
+          },
+          "403": {
+            "description": "Separate operator organization, named membership, recent two-factor verification and exact case required."
+          },
+          "409": {
+            "description": "Changed action, version, review or protected evidence."
+          },
+          "503": {
+            "description": "Required protected operator configuration is missing."
+          }
+        }
+      }
+    },
     "/api/operator/v1/commands/platform.overview": {
       "post": {
         "operationId": "platform_overview",
@@ -4843,6 +4938,11 @@
                         "minimum": 10,
                         "maximum": 20
                       },
+                      "giftCampaignId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
                       "sms": {
                         "type": "string",
                         "minLength": 1,
@@ -5148,6 +5248,11 @@
                         "minimum": 10,
                         "maximum": 20
                       },
+                      "giftCampaignId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
                       "sms": {
                         "type": "string",
                         "minLength": 1,
@@ -5279,6 +5384,13 @@
                   "confirmRecurring": {
                     "type": "boolean",
                     "const": true
+                  },
+                  "giftMode": {
+                    "type": "string",
+                    "enum": [
+                      "capture",
+                      "live"
+                    ]
                   }
                 },
                 "required": [
@@ -8308,6 +8420,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "giftCampaignId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                   },
                   "segmentId": {
                     "type": "string",

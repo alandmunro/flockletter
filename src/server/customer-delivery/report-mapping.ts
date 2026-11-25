@@ -73,6 +73,7 @@ export function mapDeliveryViews(
       campaignId: row.campaign_id,
       version: row.version,
       subject: row.content.subject,
+      ...(row.content.giftCampaignId?{giftCampaignId:row.content.giftCampaignId}:{}),
       senderProfile: row.sender_profile,
       state: row.state,
       mode: row.mode,
