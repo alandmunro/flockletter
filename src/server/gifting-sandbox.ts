@@ -85,24 +85,32 @@ export function sandboxRun(db: Database, providers: StagingGiftProviders) {
     return { path: await providers.rewardLink(order.reward) };
   }
   async function verify(progress: (phase: string) => void) {
+    progress('Reading sandbox receipts');
     const completed = await receipt.get<SandboxResult>('complete');
     if (completed) return completed.result;
+    progress('Checking the Stripe test account');
     await providers.checkAccount();
+    progress('Recording the purchase intent');
     const run = await receipt.save('purchase-intent', { id: randomUUID(), account: providers.account });
     if (run.result.account !== providers.account) throw new GiftProviderError('stripe_account_mismatch');
+    progress('Selecting $5 Tremendous products');
     const chosen =
       (await receipt.get<string[]>('catalog')) ??
       (await receipt.save('catalog', await providers.products()));
+    progress('Preparing the Stripe test payment');
     const prior = await receipt.get<string>('payment');
     const id = await providers.payment(run.result.id, prior?.result, fresh(run.created_at));
     assert.equal((await receipt.save('payment', id)).result, id);
+    progress('Confirming the Stripe test payment');
     const payment = await providers.confirm(run.result.id, id);
+    progress('Recording verified credit');
     await write({ kind: 'stripePaid', payment: id, total: payment });
     progress('Payment verified');
     await write({ kind: 'sandboxReserve', products: chosen.result });
     // Launch values can be recovered from the immutable terms even after subsequent consumption.
     const reservedAtLaunch = (await status()).offers.length * 500;
     assert.equal(reservedAtLaunch, 50000);
+    progress('Claiming sandbox gifts');
     for (const person of [1, 2, 3, 4, 5]) {
       const issued = await db.read(workspace, (sql) => giftLink(sql, workspace, person));
       const token = new URLSearchParams(issued.path.split('#')[1]).get('token')!;
@@ -110,6 +118,7 @@ export function sandboxRun(db: Database, providers: StagingGiftProviders) {
       const claimed = await recipientGift(db, workspace, person, token, true, submit);
       assert.equal(claimed.state, 'claimed');
     }
+    progress('Checking the sandbox reward link');
     await link(1); // Obtain a provider-hosted link without logging, storing or redeeming it.
     progress('Gift orders verified');
     await write({ kind: 'sandboxExpire' });
@@ -122,6 +131,7 @@ export function sandboxRun(db: Database, providers: StagingGiftProviders) {
     assert.equal(beforeRefund.refundDue, 52250);
     const intent = await receipt.save('refund-intent', { payment: id, amount: beforeRefund.refundDue });
     assert.deepEqual(intent.result, { payment: id, amount: 52250 });
+    progress('Verifying the Stripe refund');
     const refund = await providers.refund(
       run.result.id,
       id,

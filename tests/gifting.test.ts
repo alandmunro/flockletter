@@ -282,3 +282,40 @@ it('checks the Stripe test payment and original charge before accepting the part
     'stripe_refund_unverified',
   );
 });
+
+it('selects five verified $5 products despite unrelated catalogue entries and rejects an undersized selection', async () => {
+  const { stagingGiftProviders } = await import('../src/server/gifting-providers.js');
+  const product = (id: string) => ({
+    id,
+    name: 'Target',
+    currency_codes: ['USD'],
+    skus: [null, { min: 5, max: 5, currency_code: 'USD' }],
+  });
+  const eligible = ['VALID1', 'VALID2', 'VALID3', 'VALID4', 'VALID5'];
+  const gateway = stagingGiftProviders(
+    {
+      APP_ENV: 'staging',
+      FLOCKLETTER_STRIPE_TEST_KEY: 'sk_test_fixture',
+      FLOCKLETTER_STRIPE_TEST_ACCOUNT: 'acct_fixture',
+      TREMENDOUS_SANDBOX_API_KEY: 'TEST_fixture',
+    },
+    async () =>
+      Response.json({
+        products: [
+          null,
+          { ...product('EXCL1'), skus: [{ min: 6, max: 10 }] },
+          {
+            ...product('EXCL2'),
+            skus: [{ min: 1, max: 10, currency_code: 'CAD' }],
+          },
+          { ...product('EXCL3'), currency_codes: ['EUR'] },
+          product('invalid-id'),
+          ...eligible.map(product),
+          product('VALID1'),
+        ],
+      }),
+  );
+  expect(await gateway.products()).toEqual(eligible);
+  eligible.pop();
+  await expect(gateway.products()).rejects.toThrow('tremendous_catalog_unavailable');
+});

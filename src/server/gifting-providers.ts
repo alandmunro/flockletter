@@ -17,6 +17,25 @@ export interface StagingGiftProviders {
   ): Promise<{ id: string; total: number }>;
 }
 export class GiftProviderError extends Error {}
+
+export function giftProblem(error: unknown): string {
+  if (error instanceof GiftProviderError) return error.message;
+  if (error instanceof Stripe.errors.StripeError) {
+    if (error instanceof Stripe.errors.StripeAuthenticationError) return 'stripe_authentication';
+    if (error instanceof Stripe.errors.StripePermissionError) return 'stripe_permission';
+    if (error instanceof Stripe.errors.StripeInvalidRequestError) {
+      if (error.code === 'parameter_unknown' && error.param === 'allowed_payment_method_types')
+        return 'stripe_unknown_allowed_payment_method_types';
+      if (error.code === 'resource_missing') return 'stripe_resource_missing';
+      return 'stripe_invalid_request';
+    }
+    if (error instanceof Stripe.errors.StripeConnectionError) return 'stripe_connection';
+    if (error instanceof Stripe.errors.StripeIdempotencyError) return 'stripe_idempotency';
+    return 'stripe_request_failed';
+  }
+  if (error instanceof z.ZodError) return 'provider_response_shape';
+  return 'provider_verification_incomplete';
+}
 function check(value: unknown, code: string): asserts value {
   if (!value) throw new GiftProviderError(code);
 }
@@ -124,34 +143,41 @@ export function stagingGiftProviders(
       check((await stripe.accounts.retrieveCurrent()).id === account, 'stripe_account_mismatch');
     },
     async products() {
-      const list = z
-        .object({
-          products: z.array(
-            z.object({
-              id: objectId,
-              name: z.string(),
-              currency_codes: z.array(z.string()).optional(),
-              skus: z
-                .array(
-                  z.object({ min: z.number(), max: z.number(), currency_code: z.string().optional() }),
-                )
-                .optional(),
-            }),
-          ),
-        })
+      const { products } = z
+        .object({ products: z.array(z.unknown()) })
         .parse(await vendor('/products?country=US&currency=USD'));
+      const product = z.object({
+        id: objectId,
+        name: z.string(),
+        currency_codes: z.array(z.string()),
+        skus: z.array(z.unknown()),
+      });
+      const sku = z.object({
+        min: z.number(),
+        max: z.number(),
+        currency_code: z.string().optional(),
+      });
       const allowed =
         /^(Starbucks|Amazon|Target|Chipotle|Dunkin|Panera|DoorDash|Uber Eats|Home Depot|Lowe)/i;
-      const ids = list.products
-        .filter(
-          (p) =>
-            allowed.test(p.name) &&
-            p.currency_codes?.includes('USD') &&
-            p.skus?.some(
-              (s) => (!s.currency_code || s.currency_code === 'USD') && s.min <= 5 && s.max >= 5,
-            ),
+      const ids: string[] = [];
+      for (const entry of products) {
+        const parsed = product.safeParse(entry);
+        if (!parsed.success) continue;
+        const item = parsed.data;
+        if (!allowed.test(item.name) || !item.currency_codes.includes('USD')) continue;
+        if (
+          item.skus.some((raw) => {
+            const price = sku.safeParse(raw).data;
+            return (
+              price &&
+              (price.currency_code === undefined || price.currency_code === 'USD') &&
+              price.min <= 5 &&
+              price.max >= 5
+            );
+          })
         )
-        .map((p) => p.id);
+          ids.push(item.id);
+      }
       const selected = [...new Set(ids)].sort().slice(0, 5);
       check(selected.length === 5, 'tremendous_catalog_unavailable');
       return selected;
