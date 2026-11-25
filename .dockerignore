@@ -18,3 +18,11 @@
 !selfhost/
 !selfhost/runtime.mjs
 !selfhost/drill-data.mjs
+!labs/
+!labs/gifting/
+!labs/gifting/fixtures.mjs
+!labs/gifting/lab.mjs
+!labs/gifting/scenario.mjs
+!labs/gifting/schema.sql
+!labs/gifting/staging.mjs
+!labs/gifting/staging.d.mts
