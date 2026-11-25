@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { twilioBusinessTypes, twilioIndustries } from '../shared/texting-business.js';
 import type { OnboardingBusiness, OnboardingView } from '../shared/texting-onboarding.js';
 import { operationKey, type Api } from './api.js';
@@ -21,8 +21,8 @@ const labels = {
 } as const;
 const fields = Object.keys(labels) as (keyof typeof labels)[];
 
-type Company = { id: string; name: string };
-export function TextingOnboarding({ api, companies }: { api: Api; companies: Company[] }) {
+type Company = { id: string; name: string; registration: string };
+export function TextingOnboarding({ api, companies, refreshCompanies }: { api: Api; companies: Company[]; refreshCompanies: () => Promise<void> }) {
   const [selection, setSelection] = useState('');
   const company = companies.find(item => item.id === selection) ?? companies[0];
   if (!company) return null;
@@ -32,29 +32,33 @@ export function TextingOnboarding({ api, companies }: { api: Api; companies: Com
     <label>Company to register<select value={company.id} onChange={event => setSelection(event.target.value)}>
       {companies.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}
     </select></label>
-    <Enrollment key={company.id} api={api} companyId={company.id} />
+    <Enrollment key={company.id} api={api} company={company} refreshCompanies={refreshCompanies} />
   </section>;
 }
 
-function Enrollment({ api, companyId }: { api: Api; companyId: string }) {
+function Enrollment({ api, company, refreshCompanies }: { api: Api; company: Company; refreshCompanies: () => Promise<void> }) {
+  const companyId = company.id;
   const [view, setView] = useState<OnboardingView>();
   const [edit, setEdit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [codes, setCodes] = useState<Partial<Record<'email' | 'phone', string>>>({});
   const [capture, setCapture] = useState<Partial<Record<'email' | 'phone', string>>>({});
-  const load = useCallback(async () => setView(await api.call<OnboardingView>('sms.onboardingStatus', { companyId })), [api, companyId]);
-  useEffect(() => { void load().catch(() => setError('Could not load texting enrollment.')); }, [load]);
-  const pending = view && ['provisioning', 'brand_pending', 'campaign_pending'].includes(view.state);
+  const latestRequest = useRef(0);
+  const load = useCallback(async () => {
+    const request = ++latestRequest.current;
+    const next = await api.call<OnboardingView>('sms.onboardingStatus', { companyId });
+    if (request === latestRequest.current) setView(next);
+  }, [api, companyId]);
   useEffect(() => {
-    if (!pending) return;
-    const timer = setInterval(() => void load().catch(() => setError('Could not refresh carrier status.')), 5000);
-    return () => clearInterval(timer);
-  }, [pending, load]);
+    void load().catch(() => setError('Could not load texting enrollment.'));
+    return () => { latestRequest.current++; };
+  }, [load, company.registration]);
+  const pending = view && ['provisioning', 'brand_pending', 'campaign_pending'].includes(view.state);
   const action = async (run: () => Promise<void>) => {
     setBusy(true);
     setError('');
-    try { await run(); await load(); }
+    try { await run(); await Promise.all([load(), refreshCompanies()]); }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'The enrollment action failed.'); }
     finally { setBusy(false); }
   };
