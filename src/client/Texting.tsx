@@ -15,7 +15,7 @@ const gapText: Record<string, string> = {
   allowance_insufficient: 'This send needs more segments than remain this month.',
 };
 
-export function Texting({ api }: { api: Api }) {
+export function Texting({ api, manage = true }: { api: Api; manage?: boolean }) {
   const [status, setStatus] = useState<Status | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const load = useCallback(async () => { try { setStatus(await api.call<Status>('sms.status', {})); } catch (e) { setError(e instanceof Error ? e.message : 'Texting is unavailable.'); } }, [api]);
   useEffect(() => { void load(); }, [load]);
@@ -30,10 +30,12 @@ export function Texting({ api }: { api: Api }) {
       <p className="help">Segments this month: {status.usage.used} used, {status.usage.reserved} in progress{status.usage.allowance !== null ? `, of ${status.usage.allowance}` : ''}.</p>
       {status.settingsNeeded.length > 0 && <p className="notice">Waiting for platform settings: {status.settingsNeeded.join(', ')}.</p>}
     </section>
-    <Profile api={api} status={status} busy={busy} act={act} />
-    <Composer api={api} companies={status.companies} busy={busy} act={act} />
-    <Contacts api={api} companies={status.companies} busy={busy} act={act} />
-    <Inbound api={api} />
+    {manage && <Profile api={api} status={status} busy={busy} act={act} />}
+    {status.companies.length > 0
+      ? <Composer api={api} companies={status.companies} busy={busy} act={act} />
+      : <p className="notice">You need access to all brands in a company to text its audience.</p>}
+    {manage && <Contacts api={api} companies={status.companies} busy={busy} act={act} />}
+    {manage && <Inbound api={api} />}
   </>;
 }
 type Act = (action: () => Promise<unknown>) => Promise<void>;
@@ -112,7 +114,7 @@ function Contacts({ api, companies, busy, act }: { api: Api; companies: Status['
   </section>;
 }
 function Inbound({ api }: { api: Api }) {
-  const [items, setItems] = useState<{ id: string; from: string; contactName: string | null; body: string; classification: string; receivedAt: string }[]>([]);
+  const [items, setItems] = useState<{ id: string; from: string; contactName: string | null; body: string; classification: string; receivedAt: string; forwardState: string }[]>([]);
   useEffect(() => { void api.call<typeof items>('sms.inbound', {}).then(setItems).catch(() => undefined); }, [api]);
-  return <section className="card"><h2>Replies</h2>{items.length ? items.map(i => <p key={i.id}><strong>{i.contactName ?? i.from}</strong> · {new Date(i.receivedAt).toLocaleString()} · {i.classification.replaceAll('_', ' ')}<br />{i.body}</p>) : <p>No replies yet.</p>}</section>;
+  return <section className="card"><h2>Replies</h2>{items.length ? items.map(i => <p key={i.id}><strong>{i.contactName ?? i.from}</strong> · {new Date(i.receivedAt).toLocaleString()} · {i.classification.replaceAll('_', ' ')}{i.forwardState === 'uncertain' && ' · email acceptance unknown'}{i.forwardState === 'failed' && ' · email forwarding failed'}<br />{i.body}</p>) : <p>No replies yet.</p>}</section>;
 }

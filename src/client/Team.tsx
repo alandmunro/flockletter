@@ -10,12 +10,12 @@ type GrantCommand = 'team.grant' | 'team.revoke';
 type EditMember = (
   command: GrantCommand,
   member: DirectoryMember,
-  fields?: { permission: TeamRole; brandIds: string[] },
+  fields?: { permission: TeamRole; brandIds: string[]; smsSend?: boolean },
 ) => Promise<void>;
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : 'The team request could not be completed. Try again.';
 
-export function Team({ api, brands }: { api: Api; brands: Brand[] }) {
+export function Team({ api, brands, textingEnabled = false }: { api: Api; brands: Brand[]; textingEnabled?: boolean }) {
   const [offset, setOffset] = useState(0);
   const [revision, setRevision] = useState(0);
   const [notice, setNotice] = useState('');
@@ -61,6 +61,7 @@ export function Team({ api, brands }: { api: Api; brands: Brand[] }) {
         key={offset + ':' + revision}
         api={api}
         brands={brands}
+        textingEnabled={textingEnabled}
         offset={offset}
         navigate={navigate}
         change={change}
@@ -73,12 +74,14 @@ export function Team({ api, brands }: { api: Api; brands: Brand[] }) {
 function TeamDirectory({
   api,
   brands,
+  textingEnabled,
   offset,
   navigate,
   change,
 }: {
   api: Api;
   brands: Brand[];
+  textingEnabled: boolean;
   offset: number;
   navigate: (offset: number) => void;
   change: EditMember;
@@ -148,6 +151,7 @@ function TeamDirectory({
           key={selected.userId}
           member={selected}
           brands={brands}
+          textingEnabled={textingEnabled}
           overLimit={page.overLimit}
           change={change}
           close={close}
@@ -194,16 +198,19 @@ function TeamDirectory({
 export function MemberAccess({
   member,
   brands,
+  textingEnabled = false,
   overLimit,
   change,
   close,
 }: {
   member: DirectoryMember;
   brands: Brand[];
+  textingEnabled?: boolean;
   overLimit: boolean;
   change: EditMember;
   close: () => void;
 }) {
+  const [smsSend, setSmsSend] = useState(member.smsSend === true);
   const [permission, setPermission] = useState<TeamRole>(member.permission ?? 'viewer');
   const [chosen, setChosen] = useState<string[]>(() =>
     member.brandIds.filter((id) => brands.some((brand) => brand.id === id)),
@@ -221,6 +228,7 @@ export function MemberAccess({
   const sorted = [...chosen].sort();
   const changed =
     permission !== member.permission ||
+    (textingEnabled && permission === 'editor' && smsSend !== Boolean(member.smsSend)) ||
     JSON.stringify(sorted) !== JSON.stringify([...member.brandIds].sort());
   const canGrant = !overLimit && sorted.length > 0 && sorted.length <= 5 && changed;
   async function submit(command: GrantCommand) {
@@ -234,7 +242,7 @@ export function MemberAccess({
     setBusy(true);
     setError('');
     try {
-      await change(command, member, command === 'team.grant' ? { permission, brandIds: sorted } : undefined);
+      await change(command, member, command === 'team.grant' ? { permission, brandIds: sorted, ...(textingEnabled ? { smsSend: permission === 'editor' && smsSend } : {}) } : undefined);
     } catch (cause) {
       setError(errorText(cause));
     } finally {
@@ -279,6 +287,10 @@ export function MemberAccess({
           <p className="help">
             Viewers can read drafts and images. Editors can also edit drafts and upload images.
           </p>
+          {textingEnabled && permission === 'editor' && <label>
+            <input type="checkbox" checked={smsSend} onChange={event => setSmsSend(event.target.checked)} />
+            Allow texting for companies where this editor has access to all brands
+          </label>}
           <fieldset className="team-brand-options">
             <legend>Brands for {member.name}</legend>
             <p className="help">Choose 1 to 5 brands.</p>

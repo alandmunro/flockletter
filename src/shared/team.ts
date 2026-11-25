@@ -8,6 +8,7 @@ export type DirectoryMember = {
   membership: 'owner' | 'member';
   permission: TeamRole | null;
   brandIds: string[];
+  smsSend?: boolean;
 };
 export type TeamPage = {
   members: DirectoryMember[];

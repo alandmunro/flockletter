@@ -133,10 +133,10 @@ export async function teamPage(
     page = await clerk.members(w, offset, limit),
     seats = await seatLimit(sql, options);
   const records = (
-    await sql.query<{ user_id: string; permission: TeamRole; brand_ids: string[] }>(
-      `SELECT g.user_id,g.permission,
+    await sql.query<{ user_id: string; permission: TeamRole; sms_send: boolean; brand_ids: string[] }>(
+      `SELECT g.user_id,g.permission,g.sms_send,
     array_agg(b.brand_id ORDER BY b.brand_id) brand_ids FROM team_grants g JOIN team_grant_brands b USING(workspace_id,user_id)
-    WHERE g.user_id=ANY($1::text[]) GROUP BY g.user_id,g.permission`,
+    WHERE g.user_id=ANY($1::text[]) GROUP BY g.user_id,g.permission,g.sms_send`,
       [page.members.map((m) => m.userId)],
     )
   ).rows;
@@ -146,6 +146,7 @@ export async function teamPage(
       ...m,
       permission: grants.get(m.userId)?.permission ?? null,
       brandIds: grants.get(m.userId)?.brand_ids ?? [],
+      ...(grants.get(m.userId)?.sms_send ? { smsSend: true } : {}),
     })),
     total: page.total,
     offset,

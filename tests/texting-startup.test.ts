@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { loadConfig } from '../src/server/config.js';
 import { Database } from '../src/server/db.js';
 import { CustomerWorkflows } from '../src/server/customer-runtime.js';
+import { replyForwarder, replyForwardingKey } from '../src/server/texting/reply-forwarding.js';
 import { textingSecretKeys } from '../src/server/texting/runtime.js';
 import type { IdentityProvider } from '../src/server/auth.js';
 import { fakeBitwarden } from './helpers/bitwarden-fake.js';
@@ -44,6 +45,37 @@ it('starts production in live mode with the nine keys from its own Bitwarden pro
   expect(customer.texting).toBeDefined();
   expect(env.BWS_ACCESS_TOKEN).toBeUndefined();
   expect(bw.calls.some(path => path.endsWith('/connect/token'))).toBe(true);
+});
+
+it('loads the approved forwarding credential from Bitwarden and keeps it separate', async () => {
+  const key = 'synthetic-resend-key';
+  const bw = fakeBitwarden({ 'flockletter-staging': {}, 'flockletter-production': { ...productionValues(), [replyForwardingKey]: key } });
+  const { env, config, db, entry } = production({
+    FLOCKLETTER_TEXTING: 'live', FLOCKLETTER_TEXTING_ACTIVATION_APPROVED: 'true',
+    BWS_PROJECT: 'flockletter-production', BWS_ACCESS_TOKEN: bw.token,
+    FLOCKLETTER_TEXTING_REPLY_FORWARDING: 'approved', FLOCKLETTER_TEXTING_REPLY_FROM: 'replies@example.test',
+  });
+  entry.customer = await CustomerWorkflows.start(db, config, identity, env, bw.fetcher);
+  expect(entry.customer.texting?.messaging.options.forward).toBeTypeOf('function');
+  await expect(CustomerWorkflows.start(db, config, identity, {
+    ...env, BWS_ACCESS_TOKEN: bw.token, FLOCKLETTER_CUSTOMER_RESEND_KEY: key,
+  }, bw.fetcher)).rejects.toThrow('separate Resend credential');
+});
+
+it('uses a stable Resend key and distinguishes acceptance from an ambiguous reply', async () => {
+  const calls: RequestInit[] = [];
+  const fake: typeof fetch = async (url, request) => {
+    expect(url).toBe('https://api.resend.com/emails');
+    calls.push(request!);
+    return calls.length === 1 ? Response.json({ id: randomUUID() }) : new Response(null, { status: 503 });
+  };
+  const forward = replyForwarder('synthetic-resend-key', 'replies@example.test', fake);
+  const message = { id: randomUUID(), to: 'inbox@example.test', subject: 'Text reply', text: 'Synthetic reply.' };
+  expect(await forward(message)).toBe('forwarded');
+  expect(await forward(message)).toBe('uncertain');
+  expect(calls.map(call => new Headers(call.headers).get('idempotency-key')))
+    .toEqual(Array(2).fill('flockletter-sms-reply/' + message.id));
+  expect(JSON.parse(String(calls[0]!.body))).toMatchObject({ to: [message.to], text: message.text });
 });
 
 it('fails start-up clearly when a live key is missing from the project', async () => {

@@ -7,6 +7,7 @@ import { Database, type Sql } from '../src/server/db.js';
 import { CommandService, type Actor } from '../src/server/service.js';
 import {
   CustomerAudience,
+  customerPreferences,
   createCustomerOptOut,
   redeemCustomerOptOut,
   productionConsentEligible,
@@ -146,6 +147,102 @@ it('imports real-domain addresses as pending, reports all rows, preserves suppre
   ).rejects.toMatchObject({ code: 'operation_conflict' });
   expect(await a.settings()).toMatchObject({ trackingEnabled: false, messages: [] });
 });
+it('imports mapped profiles, reports invalid dates, and leaves phone consent untouched', async () => {
+  const a = await setup();
+  const input = {
+    brandId: a.brand, operationKey: randomUUID(), emailColumn: 0,
+    profileColumns: { firstName: 1, lastName: 2, phone: 3, birthday: 4, anniversary: 5 },
+    csvBase64: Buffer.from([
+      'email,first,last,phone,birthday,anniversary',
+      'reader@realshop.com,Pat,Lee,(212) 555-0199,02-29,2020-02-29',
+      'invalid-date@realshop.com,Pat,Lee,,04-31,',
+    ].join('\n')).toString('base64'),
+    permissionAffirmed: true, source: 'Newsletter migration with permission',
+  };
+  const result = await a.customer.execute('audienceOnboarding.import', input, a.owner);
+  expect(result).toMatchObject({ rows: [{ outcome: 'pending_added' }, { outcome: 'invalid_date' }] });
+  expect(await a.customer.execute('audienceOnboarding.import', input, a.owner)).toEqual(result);
+  await db.brand(a.workspace, a.brand, async sql => {
+    const person = await sql.query(`SELECT s.first_name,s.last_name,s.state,c.phone_e164
+      FROM subscribers s JOIN sms_contact_subscribers l ON l.subscriber_id=s.id
+      JOIN sms_contacts c ON c.id=l.contact_id`);
+    expect(person.rows).toEqual([{ first_name: 'Pat', last_name: 'Lee', state: 'pending', phone_e164: '+12125550199' }]);
+    expect((await sql.query('SELECT type,month,day,year FROM contact_dates ORDER BY type')).rows).toEqual([
+      { type: 'anniversary', month: 2, day: 29, year: 2020 }, { type: 'birthday', month: 2, day: 29, year: null },
+    ]);
+    expect((await sql.query('SELECT FROM sms_consents')).rowCount).toBe(0);
+  });
+});
+
+it('resumes a queued CSV import once, then clears the stored input', async () => {
+  const a = await setup();
+  const input = {
+    brandId: a.brand, operationKey: randomUUID(), emailColumn: 0,
+    csvBase64: Buffer.from('email\nreader@realshop.com').toString('base64'),
+    permissionAffirmed: true, source: 'Newsletter migration with permission',
+  };
+  const job = await a.customer.execute('audienceOnboarding.queueImport', input, a.owner) as { id: string; state: string };
+  expect(job.state).toBe('queued');
+  expect(await a.customer.execute('audienceOnboarding.queueImport', input, a.owner)).toEqual(job);
+  await expect(a.customer.execute('audienceOnboarding.queueImport', { ...input, operationKey: randomUUID() }, a.owner))
+    .rejects.toMatchObject({ code: 'import_in_progress' });
+  expect((await db.brand(a.workspace, a.brand, sql => sql.query('SELECT FROM subscribers'))).rowCount).toBe(0);
+  await Promise.all([a.customer.tickImport(a.workspace, a.brand), a.customer.tickImport(a.workspace, a.brand)]);
+  expect(await a.customer.execute('audienceOnboarding.importJob', { brandId: a.brand, id: job.id }, a.owner))
+    .toMatchObject({ state: 'complete', result: { rows: [{ outcome: 'pending_added' }] } });
+  expect((await db.brand(a.workspace, a.brand, sql => sql.query('SELECT state,input FROM customer_audience_import_jobs'))).rows)
+    .toEqual([{ state: 'complete', input: null }]);
+  expect((await a.settings()).imports).toHaveLength(1);
+  const revokedJob = await a.customer.execute('audienceOnboarding.queueImport', {
+    ...input, operationKey: randomUUID(), csvBase64: Buffer.from('email\nrevoked@realshop.com').toString('base64'),
+  }, a.owner) as { id: string };
+  a.customer.options.checkOwner = async () => false;
+  await a.customer.tickImport(a.workspace, a.brand);
+  a.customer.options.checkOwner = async () => true;
+  expect(await a.customer.execute('audienceOnboarding.importJob', { brandId: a.brand, id: revokedJob.id }, a.owner))
+    .toMatchObject({ state: 'failed', errorCode: 'owner_required' });
+  expect((await db.brand(a.workspace, a.brand, sql => sql.query('SELECT state,input FROM customer_audience_import_jobs WHERE id=$1', [revokedJob.id]))).rows)
+    .toEqual([{ state: 'failed', input: null }]);
+});
+
+it('uses separate brand-scoped preference links and preserves suppression', async () => {
+  const a = await setup();
+  const core = new CommandService(db, undefined, async () => true);
+  const group = await core.execute('segment.create', {
+    operationKey: randomUUID(), brandId: a.brand, name: 'Shop updates', subscriberSelectable: true,
+  }, a.owner) as { id: string };
+  const id = randomUUID();
+  const links = await db.brand(a.workspace, a.brand, async sql => {
+    await sql.query(`INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state)
+      VALUES($1,$2,$3,'reader@realshop.com','confirmed')`, [a.workspace, a.brand, id]);
+    return createCustomerOptOut(sql, a.workspace, a.brand, id, 'https://mail.example.test');
+  });
+  const token = new URL(links.preferencesUrl!).searchParams.get('t')!;
+  const optOut = new URL(links.url).searchParams.get('t')!;
+  expect(await customerPreferences(db, optOut)).toBeUndefined();
+  await redeemCustomerOptOut(db, token);
+  await expect(core.execute('segment.members', {
+    operationKey: randomUUID(), brandId: a.brand, segmentId: group.id, action: 'add', emails: ['reader@realshop.com'],
+  }, a.owner)).rejects.toMatchObject({ code: 'subscriber_managed_group' });
+  const view = await customerPreferences(db, token);
+  expect(view).toMatchObject({ brand: 'Alpine', groups: [{ id: group.id, name: 'Shop updates', selected: false }] });
+  if (!view) throw Error('Missing preferences');
+  expect(await customerPreferences(db, token, { groups: [group.id], version: view.version, unsubscribe: false })).toEqual({ saved: true });
+  await expect(customerPreferences(db, token, { groups: [], version: view.version, unsubscribe: false }))
+    .rejects.toMatchObject({ code: 'preferences_changed' });
+  const current = await customerPreferences(db, token);
+  if (!current) throw Error('Missing preferences');
+  expect(current.groups[0]?.selected).toBe(true);
+  expect(await customerPreferences(db, token, { groups: [], version: current.version, unsubscribe: false })).toEqual({ saved: true });
+  await db.brand(a.workspace, a.brand, sql =>
+    sql.query("UPDATE customer_audience_optouts SET created_at=now()-interval '31 days'"));
+  expect(await customerPreferences(db, token)).toBeUndefined();
+  await redeemCustomerOptOut(db, optOut);
+  expect(await customerPreferences(db, token)).toBeUndefined();
+  expect((await db.brand(a.workspace, a.brand, sql => sql.query('SELECT state FROM subscribers'))).rows)
+    .toEqual([{ state: 'unsubscribed' }]);
+});
+
 it('shares unique contact capacity across brands and safely handles simultaneous final slots', async () => {
   const a = await setup(1);
   const core = new CommandService(db);

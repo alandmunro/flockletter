@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
 export const importLimits = { bytes: 1024 * 1024, rows: 2500, columns: 64, issueExamples: 10 } as const;
+export const importProfileFields = ['firstName', 'lastName', 'phone', 'birthday', 'anniversary'] as const;
+const column = z.number().int().min(0).max(importLimits.columns - 1);
+const profileColumns = z.object({
+  firstName: column.optional(), lastName: column.optional(), phone: column.optional(),
+  birthday: column.optional(), anniversary: column.optional(),
+}).strict();
+export type ImportProfileColumns = z.infer<typeof profileColumns>;
 export const importPreviewInput = z
   .object({
     brandId: z.uuid().toLowerCase(),
@@ -8,23 +15,20 @@ export const importPreviewInput = z
       .string()
       .min(4)
       .max(4 * Math.ceil(importLimits.bytes / 3)),
-    emailColumn: z
-      .number()
-      .int()
-      .min(0)
-      .max(importLimits.columns - 1),
+    emailColumn: column,
+    profileColumns: profileColumns.optional(),
   })
   .strict();
 export type ImportPreviewInput = z.infer<typeof importPreviewInput>;
 export const practiceImportRows = 250;
 export const practiceImportDeclaration = 'fictional-contact-permission-v1' as const;
 export const practiceImportDeclarationText = 'I have permission to contact these fictional addresses on behalf of this brand.';
-export const applyImportInput = importPreviewInput.extend({
+export const applyImportInput = importPreviewInput.omit({ profileColumns: true }).extend({
   operationKey: z.uuid(),
   declaration: z.literal(practiceImportDeclaration),
 });
 export type ApplyImportInput = z.infer<typeof applyImportInput>;
-export type ImportIssue = 'invalid_email' | 'column_count' | 'duplicate';
+export type ImportIssue = 'invalid_email' | 'column_count' | 'duplicate' | 'invalid_name' | 'invalid_phone' | 'invalid_date';
 export type ApplyOutcome = ImportIssue | 'pending_added' | 'kept_pending' | 'kept_confirmed' |
   'kept_suppressed' | 'reserved_domain_required' | 'contact_limit';
 export type ApplyImportResult = {

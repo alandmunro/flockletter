@@ -244,7 +244,7 @@ export class CommandService {
         const access=await workspaceAccess(sql);
         const serviceAccess=this.customer?await customerEligibility(sql,actor.workspaceId,this.customer.billing.options):undefined;
         const hasDraft=Boolean((await sql.query('SELECT id FROM campaigns WHERE ($1::uuid[] IS NULL OR brand_id=ANY($1)) LIMIT 1',[actor.brandIds])).rowCount);
-        return { name: workspace.name, brands,hasDraft,accessLabel:serviceAccess?((serviceAccess.source==='exercise'?'Captured exercise · ':serviceAccess.source==='complimentary'?'Complimentary · ':'')+serviceAccess.state.replaceAll('_',' ')):undefined, canEdit:actor.kind==='session'&&actor.owner||actor.scopes.includes('draft:write'), entitlement: access.plan?'complimentary':'not_activated', canManageConnections: actor.kind === 'session' && actor.owner, preparationLimits: limits, plans };
+        return { name: workspace.name, brands,hasDraft,accessLabel:serviceAccess?((serviceAccess.source==='exercise'?'Captured exercise · ':serviceAccess.source==='complimentary'?'Complimentary · ':'')+serviceAccess.state.replaceAll('_',' ')):undefined, canEdit:actor.kind==='session'&&actor.owner||actor.scopes.includes('draft:write'), canSendTexts: actor.kind==='session' && Boolean(this.customer?.texting) && (actor.owner || actor.scopes.includes('sms:send')), entitlement: access.plan?'complimentary':'not_activated', canManageConnections: actor.kind === 'session' && actor.owner, preparationLimits: limits, plans };
       }
       case 'workspace.initialize': {
         const input = commands[name].schema.parse(raw);
@@ -472,8 +472,8 @@ export class CommandService {
         return segmentSummary(sql,segmentId);
       }
       case 'segment.create': {
-        const {brandId,name:groupName}=commands[name].schema.parse(raw);
-        return createSegment(sql,w,brandId,groupName);
+        const {brandId,name:groupName,subscriberSelectable}=commands[name].schema.parse(raw);
+        return createSegment(sql,w,brandId,groupName,subscriberSelectable);
       }
       case 'segment.rename': {
         const {segmentId,name:groupName}=commands[name].schema.parse(raw);

@@ -313,9 +313,9 @@ Carrier vetting checks the opt-in, but the hosted sign-up page only shows the SM
 
 ### Known limits (not hidden)
 
-- **Erasure of private texting routes.** Public `sms_*` tables are erased with the workspace (they are runtime tables). The private `texting_*` route, account and short-name rows are not yet in the retention executor's private list; that needs the executor and its role grants updated together.
-- **Inbound forwarding** records `captured`; no email transport is wired for INB-4 yet.
-- **Editors with the send grant** use the API or MCP; the browser Texting page is in the owner navigation only.
+- **Erasure of private texting routes.** The retention planner and executor include workspace rows from private texting accounts, number routes, short names, link routes, settings and setting history. Global settings and the mock provider store are outside the workspace inventory. Removing a provider-side account or its copies requires separately reviewed external evidence.
+- **Inbound forwarding (FL-SMS-015).** Migration 042 adds a durable forwarding claim. The worker offers ordinary known-contact replies to the workspace notification address. In a live texting environment, enable it with exact `FLOCKLETTER_TEXTING_REPLY_FORWARDING=approved` and `FLOCKLETTER_TEXTING_REPLY_FROM` set to the dedicated sender. Supply `FLOCKLETTER_TEXTING_REPLY_RESEND_KEY` from the environment's Bitwarden project. Mock operation captures locally. A provider timeout, malformed success or abandoned claim stays `uncertain` for operator review. Existing captured or failed replies are left in their recorded state.
+- **Editors with the send grant (FL-SMS-008).** Owners can grant Texting through Team. Editors can compose, test and schedule for companies where they have access to all brands, since SMS consent applies to the company. The runtime rechecks the confirming actor's authority before unsubmitted campaign or test messages go to the provider. Workspace texting settings, contact management and the reply inbox remain owner-only.
 - **Tenant narrowing** of quiet hours and frequency (owner can only narrow) is not built; only operator settings exist.
 - **Carrier daily limit** counts per UTC day.
 - **Real adapter.** TrustHub, A2P brand, campaign and number calls follow Twilio's ISV documentation but are first exercised in FL-AT-045. Each live step needs `platform.textingApprove`.

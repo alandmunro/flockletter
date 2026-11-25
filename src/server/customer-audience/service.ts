@@ -311,6 +311,14 @@ export class CustomerAudience {
       await assertBrand(sql, actor, input.brandId);
       if (!definition.mutation) {
         if (name === 'audienceOnboarding.status') return this.status(sql, input.brandId);
+        if (name === 'audienceOnboarding.importJob') {
+          const job = (await sql.query(
+            'SELECT id,state,result,error_code AS "errorCode" FROM customer_audience_import_jobs WHERE id=$1 AND ($2::boolean OR actor_id=$3)',
+            [input.id, actor.kind === 'session', actor.actorId],
+          )).rows[0];
+          requireCondition(job, 404, 'import_unavailable', 'This import is unavailable for this brand.');
+          return job;
+        }
         if (name === 'audienceOnboarding.importResult') {
           const saved = (
             await sql.query<{ result: unknown }>(
@@ -329,7 +337,7 @@ export class CustomerAudience {
         'audience_disabled',
         'Customer audience setup is disabled.',
       );
-      if (name === 'audienceOnboarding.import' && input.confirmWithoutEmail)
+      if ((name === 'audienceOnboarding.import' || name === 'audienceOnboarding.queueImport') && input.confirmWithoutEmail)
         await this.authority(sql, actor, input.brandId, 'audience:confirm');
       const digest = hash(JSON.stringify([name, input]));
       const prior = (
@@ -364,6 +372,21 @@ export class CustomerAudience {
           signup_design_revision=signup_design_revision+1 WHERE id=$1 AND signup_design_revision=$3`, [input.brandId, design, expectedRevision]);
         requireCondition(saved.rowCount === 1, 409, 'design_changed', 'The brand design changed. Reload it before saving.');
         result = { revision: expectedRevision + 1 };
+      }
+      else if (name === 'audienceOnboarding.queueImport') {
+        const job = customerAudienceCommands[name].schema.parse(raw);
+        const mode = this.options.mode;
+        requireCondition(mode !== 'off', 503, 'audience_disabled', 'Customer audience setup is disabled.');
+        importRows(job);
+        if (job.confirmWithoutEmail) await this.consentPolicy(sql, job.consentPolicyVersion);
+        const id = randomUUID();
+        const queued = await sql.query(`INSERT INTO customer_audience_import_jobs
+          (workspace_id,brand_id,id,actor_id,user_id,actor_kind,mode,input)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+          ON CONFLICT(workspace_id,brand_id) WHERE state='queued' DO NOTHING`,
+        [actor.workspaceId, job.brandId, id, actor.actorId, actor.userId, actor.kind, mode, JSON.stringify(job)]);
+        requireCondition(queued.rowCount, 409, 'import_in_progress', 'Wait for the queued import for this brand to finish.');
+        result = { id, state: 'queued' };
       }
       else if (name === 'audienceOnboarding.import') result = await this.importContacts(sql, actor, raw);
       else if (name === 'audienceOnboarding.confirmContacts') result = await this.confirmContacts(sql, actor, raw);
@@ -454,6 +477,10 @@ export class CustomerAudience {
         "SELECT id,source,created_at,jsonb_array_length(result->'rows') rows FROM customer_audience_imports ORDER BY created_at DESC LIMIT 20",
       )
     ).rows;
+    const importJobs = (await sql.query<NonNullable<AudienceSettingsView['importJobs']>[number]>(
+      `SELECT id,state,created_at AS "createdAt" FROM customer_audience_import_jobs WHERE state<>'complete'
+       ORDER BY (state='queued') DESC,created_at DESC LIMIT 10`,
+    )).rows;
     return {
       brandId,
       ...(await brandIdentity(sql, brandId)),
@@ -467,6 +494,7 @@ export class CustomerAudience {
       signupUrl: row ? this.options.origin + '/signup/' + row.signup_slug : null,
       publicUrl: row ? this.options.origin + '/newsletter/' + row.form_token : null,
       trackingEnabled: false,
+      importJobs,
       imports: imports.map(({ created_at, ...item }) => ({ ...item, createdAt: created_at.toISOString() })),
       messages: messages.map(({ created_at,transport_kind,transport_at, ...m }) => ({ ...m, createdAt: created_at.toISOString(),transport:transport_kind&&transport_at?{kind:transport_kind,occurredAt:transport_at.toISOString()}:null })),
     };
@@ -545,6 +573,33 @@ export class CustomerAudience {
       }
       // First-party intake can win the unique constraint; lock and recheck its actual state.
       for (const person of await readPeople(additions)) people.set(person.email_normalized, person);
+    }
+    if (input.profileColumns) {
+      const profiles = rows.flatMap(row => {
+        if (!('address' in row) || !row.profile) return [];
+        const id = people.get(row.address)?.id;
+        return id && insertedIds.has(id) ? [{ id, ...row.profile }] : [];
+      });
+      if (profiles.length) {
+        const json = JSON.stringify(profiles);
+        await sql.query(`UPDATE subscribers s SET first_name=p."firstName",last_name=p."lastName"
+          FROM jsonb_to_recordset($1::jsonb) p(id uuid,"firstName" text,"lastName" text) WHERE s.id=p.id`, [json]);
+        // A phone link is identity data. It creates no consent record and sends nothing.
+        await sql.query(`INSERT INTO sms_contacts(workspace_id,id,phone_e164,brand_id)
+          SELECT $2,gen_random_uuid(),p.phone,$3 FROM (
+            SELECT DISTINCT phone FROM jsonb_to_recordset($1::jsonb) p(phone text) WHERE phone IS NOT NULL
+          ) p ORDER BY p.phone ON CONFLICT(workspace_id,phone_e164) DO NOTHING`, [json, actor.workspaceId, input.brandId]);
+        await sql.query(`INSERT INTO sms_contact_subscribers(workspace_id,contact_id,brand_id,subscriber_id)
+          SELECT $2,c.id,$3,p.id FROM jsonb_to_recordset($1::jsonb) p(id uuid,phone text)
+          JOIN sms_contacts c ON c.workspace_id=$2 AND c.phone_e164=p.phone`, [json, actor.workspaceId, input.brandId]);
+        await sql.query(`INSERT INTO contact_dates(workspace_id,id,brand_id,subscriber_id,type,label,month,day,year)
+          SELECT $2,gen_random_uuid(),$3,p.id,d.type,
+            CASE WHEN d.type='birthday' THEN 'Birthday' ELSE coalesce((SELECT anniversary_label FROM sms_workspace_profile),'Anniversary') END,
+            (d.value->>'month')::int,(d.value->>'day')::int,(d.value->>'year')::int
+          FROM jsonb_to_recordset($1::jsonb) p(id uuid,birthday jsonb,anniversary jsonb)
+          CROSS JOIN LATERAL (VALUES ('birthday',p.birthday),('anniversary',p.anniversary)) d(type,value)
+          WHERE d.value IS NOT NULL`, [json, actor.workspaceId, input.brandId]);
+      }
     }
     let subscribed: Map<string,string> | undefined;
     if (consent) {
@@ -925,6 +980,46 @@ export class CustomerAudience {
       await applyCustomerUnsubscribe(sql, workspace, brand, message.subscriber_id, message.policy_snapshot);
     });
   }
+  async tickImport(workspace: string, brand: string) {
+    return this.db.brand(workspace, brand, async sql => {
+      await lockWorkspace(sql, workspace);
+      const job = (await sql.query<{
+        id: string; user_id: string; actor_id: string; actor_kind: Actor['kind'];
+        mode: AudienceSettingsView['mode']; input: unknown; attempts: number; expired: boolean;
+      }>(`SELECT id,user_id,actor_id,actor_kind,mode,input,attempts,
+           created_at < clock_timestamp() - interval '24 hours' AS expired
+           FROM customer_audience_import_jobs WHERE state='queued' AND next_check_at<=clock_timestamp()
+           LIMIT 1 FOR UPDATE`)).rows[0];
+      if (!job) return;
+      const actor: Actor = {
+        workspaceId: workspace, userId: job.user_id, actorId: job.actor_id, kind: job.actor_kind,
+        owner: true, brandIds: [brand], scopes: ['audience:write', 'audience:confirm'],
+      };
+      // The existing authority path reads the live owner and connection, including any revoked scope.
+      await sql.query('SAVEPOINT import_write');
+      try {
+        requireCondition(!job.expired && job.mode === this.options.mode, 409, 'import_stale', 'Queue a new import in the current audience mode.');
+        const input = customerAudienceCommands['audienceOnboarding.queueImport'].schema.parse(job.input);
+        requireCondition(input.brandId === brand, 409, 'import_scope_changed', 'Queue a new import for this brand.');
+        await this.authority(sql, actor, brand, 'audience:write');
+        if (input.confirmWithoutEmail) await this.authority(sql, actor, brand, 'audience:confirm');
+        const result = await this.importContacts(sql, actor, input);
+        await sql.query("UPDATE customer_audience_import_jobs SET state='complete',input=NULL,result=$2 WHERE id=$1",
+          [job.id, JSON.stringify(result)]);
+      } catch (error) {
+        await sql.query('ROLLBACK TO SAVEPOINT import_write');
+        if (error instanceof AppError && error.status < 500 || job.attempts >= 2) {
+          const code = error instanceof AppError && error.status < 500 ? error.code : 'import_processing_failed';
+          await sql.query("UPDATE customer_audience_import_jobs SET state='failed',input=NULL,error_code=$2,attempts=attempts+1 WHERE id=$1",
+            [job.id, code]);
+        } else {
+          await sql.query(`UPDATE customer_audience_import_jobs SET attempts=attempts+1,
+            next_check_at=clock_timestamp()+interval '30 seconds' WHERE id=$1`, [job.id]);
+        }
+      }
+      await sql.query('RELEASE SAVEPOINT import_write');
+    });
+  }
   async tick(workspace: string, brand: string) {
     if (this.options.mode !== 'live' || !this.options.provider) return { processed: false };
     const claim = await this.db.brand(workspace, brand, async (sql) => {
@@ -1039,14 +1134,21 @@ export async function createCustomerOptOut(
   const secret = randomBytes(32).toString('base64url'),
     id = randomUUID();
   const token = Buffer.from(JSON.stringify([workspace, brand, id, secret])).toString('base64url');
+  const canManageGroups = (await sql.query('SELECT 1 FROM audience_segments WHERE subscriber_selectable LIMIT 1')).rowCount;
+  const preferenceToken = canManageGroups
+    ? Buffer.from(JSON.stringify([workspace, brand, id, randomBytes(32).toString('base64url')])).toString('base64url')
+    : undefined;
   await sql.query(
-    'INSERT INTO customer_audience_optouts(workspace_id,brand_id,id,subscriber_id,token_hash) VALUES($1,$2,$3,$4,$5)',
-    [workspace, brand, id, subscriberId, hash(token)],
+    'INSERT INTO customer_audience_optouts(workspace_id,brand_id,id,subscriber_id,token_hash,preference_hash) VALUES($1,$2,$3,$4,$5,$6)',
+    [workspace, brand, id, subscriberId, hash(token), preferenceToken ? hash(preferenceToken) : null],
   );
-  return { url: origin + '/newsletter/opt-out?t=' + token };
+  return {
+    url: origin + '/newsletter/opt-out?t=' + token,
+    ...(preferenceToken ? { preferencesUrl: origin + '/newsletter/preferences?t=' + preferenceToken } : {}),
+  };
 }
 
-export async function redeemCustomerOptOut(db: Database, token: string) {
+function readOptOutScope(token: string) {
   if (token.length > 1000 || !/^[A-Za-z0-9_-]+$/.test(token)) return;
   let fields: unknown;
   try {
@@ -1055,15 +1157,77 @@ export async function redeemCustomerOptOut(db: Database, token: string) {
     return;
   }
   if (
-    !Array.isArray(fields) ||
-    fields.length !== 4 ||
-    !fields.every((s) => typeof s === 'string') ||
-    !scopePattern.test(fields[0]!) ||
-    !uuidPattern.test(fields[1]!) ||
-    !uuidPattern.test(fields[2]!)
-  )
-    return;
-  const [workspace, brand, id] = fields as string[];
+    !Array.isArray(fields) || fields.length !== 4 || !fields.every((s) => typeof s === 'string') ||
+    !scopePattern.test(fields[0]!) || !uuidPattern.test(fields[1]!) || !uuidPattern.test(fields[2]!)
+  ) return;
+  return { workspace: String(fields[0]), brand: String(fields[1]), id: String(fields[2]) };
+}
+
+type PreferenceView = { brand: string; groups: { id: string; name: string; selected: boolean }[]; version: string };
+type PreferenceChange = { groups: string[]; version: string; unsubscribe: boolean };
+type PreferenceReceipt = { saved: true } | { unsubscribed: true };
+export function customerPreferences(db: Database, token: string): Promise<PreferenceView | undefined>;
+export function customerPreferences(db: Database, token: string, change: PreferenceChange): Promise<PreferenceReceipt | undefined>;
+export async function customerPreferences(db: Database, token: string, change?: PreferenceChange) {
+  const scope = readOptOutScope(token);
+  if (!scope) return;
+  const { workspace, brand, id } = scope;
+  try {
+    return await db.brand(workspace, brand, async sql => {
+      if (change) await lockWorkspace(sql, workspace);
+      const capability = (await sql.query<{ subscriber_id: string; preference_hash: string }>(
+        `SELECT subscriber_id,preference_hash FROM customer_audience_optouts
+         WHERE id=$1 AND used_at IS NULL AND preference_hash IS NOT NULL
+           AND created_at>clock_timestamp()-interval '30 days'`, [id],
+      )).rows[0];
+      if (!capability || !timingSafeEqual(Buffer.from(hash(token)), Buffer.from(capability.preference_hash))) return;
+      const person = (await sql.query<{ id: string; state: string }>(
+        'SELECT id,state FROM subscribers WHERE id=$1' + (change ? ' FOR UPDATE' : ''), [capability.subscriber_id],
+      )).rows[0];
+      if (person?.state !== 'confirmed') return;
+      const groups = (await sql.query<{ id: string; name: string; selected: boolean }>(
+        `SELECT g.id,g.name,m.subscriber_id IS NOT NULL AS selected FROM audience_segments g
+         LEFT JOIN audience_segment_members m ON m.segment_id=g.id AND m.subscriber_id=$1
+         WHERE g.subscriber_selectable ORDER BY lower(g.name),g.id`, [person.id],
+      )).rows;
+      const version = hash(JSON.stringify(groups));
+      const identity = await brandIdentity(sql, brand);
+      if (!change) return { brand: identity.brandName, groups, version };
+      if (change.unsubscribe) {
+        await applyCustomerUnsubscribe(sql, workspace, brand, person.id, {
+          purpose: 'brand_marketing', policyVersion: 'customer-opt-out-v1',
+          consentText: 'Stop email for this brand.', sourceDomain: '',
+        });
+        return { unsubscribed: true } as const;
+      }
+      const selected = new Set(change.groups);
+      requireCondition(change.version === version && change.groups.every(group => groups.some(g => g.id === group)),
+        409, 'preferences_changed', 'The available preferences changed. Reload the original preferences link.');
+      const added = groups.filter(g => !g.selected && selected.has(g.id)).map(g => g.id);
+      const removed = groups.filter(g => g.selected && !selected.has(g.id)).map(g => g.id);
+      if (added.length) await sql.query(
+        `INSERT INTO audience_segment_members(workspace_id,brand_id,segment_id,subscriber_id)
+         SELECT $1,$2,g,$3 FROM unnest($4::uuid[]) g ON CONFLICT DO NOTHING`, [workspace, brand, person.id, added],
+      );
+      if (removed.length) await sql.query(
+        'DELETE FROM audience_segment_members WHERE subscriber_id=$1 AND segment_id=ANY($2::uuid[])', [person.id, removed],
+      );
+      if (added.length || removed.length) await sql.query(
+        'INSERT INTO audit(workspace_id,id,actor_id,action,resource_id) VALUES($1,$2,$3,$4,$5)',
+        [workspace, randomUUID(), 'subscriber:' + person.id, 'audience.preferencesChanged', brand],
+      );
+      return { saved: true } as const;
+    });
+  } catch (error) {
+    if (error instanceof AppError && ['workspace_retention_blocked', 'link_unavailable'].includes(error.code)) return;
+    throw error;
+  }
+}
+
+export async function redeemCustomerOptOut(db: Database, token: string) {
+  const scope = readOptOutScope(token);
+  if (!scope) return;
+  const { workspace, brand, id } = scope;
   await db.brand(workspace!, brand!, async (sql) => {
     await lockWorkspace(sql,workspace!);
     const row = (
