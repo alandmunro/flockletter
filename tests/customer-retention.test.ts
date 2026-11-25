@@ -1,3 +1,5 @@
+import { fixtureLot } from './helpers/gift-retention.js';
+import { put } from '../src/server/workspace-gifts/store.js';
 import { privateWorkspaceTables } from '../src/server/customer-retention/private-routes.js';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, expect, it } from 'vitest';
@@ -253,6 +255,13 @@ it('executes only with separate restricted authority and replays the durable era
       ),
     ).rejects.toThrow('External-store');
     expect(await new CommandService(db).execute('workspace.get', {}, actor)).toHaveProperty('name');
+    // A checkout appeared after the operator authorized this exact job.
+    const purchase = fixtureLot(randomUUID(),now,{state:'checkout',payment:undefined,paidAt:undefined,charge:undefined});
+    await db.tenant(actor.workspaceId, sql => put(sql,actor.workspaceId,'lot',purchase.id,purchase));
+    await expect(executeAuthorizedRetention(admin,options,actor.workspaceId,job.id)).rejects.toMatchObject({code:'gift_reconciliation_required'});
+    expect((await admin.query('SELECT FROM flockletter_retention_control.receipts WHERE workspace_id=$1',[actor.workspaceId])).rowCount).toBe(0);
+    expect(await new CommandService(db).execute('workspace.get',{},actor)).toHaveProperty('name');
+    await db.tenant(actor.workspaceId, sql => put(sql,actor.workspaceId,'lot',purchase.id,{...purchase,state:'expired'}));
     const result = await executeAuthorizedRetention(admin, options, actor.workspaceId, job.id);
     expect(result).toMatchObject({ erased: true, replayed: false, scope: 'application_database' });
     expect(

@@ -1,3 +1,4 @@
+import { giftRetentionArchive } from '../workspace-gifts/retention.js';
 import { privateWorkspaceRoutes } from './private-routes.js';
 import pg from 'pg';
 import tables from '../../shared/runtime-tables.json' with {type:'json'};
@@ -31,9 +32,10 @@ export async function retentionInventoryDigest(db:pg.Client,workspace:string) {
  if((await db.query("SELECT to_regclass('flockletter_retention_control.platform_records') present")).rows[0]?.present)counts['private.platform_records']=Number((await db.query("SELECT count(*) n FROM flockletter_retention_control.platform_records WHERE workspace_id=$1 AND kind<>'approval'",[workspace])).rows[0].n);
  return retentionDigest(counts);
 }
-export async function privateRetentionExceptions(db:pg.Client,workspace:string):Promise<RetentionException[]> {
+export async function privateRetentionExceptions(db:pg.Client,workspace:string,now=new Date()):Promise<RetentionException[]> {
  const mappings=(await db.query<{registry_namespace:string|null;registry_workspace_digest:string|null}>('SELECT DISTINCT registry_namespace,registry_workspace_digest FROM customer_trial_setups WHERE workspace_id=$1',[workspace])).rows;
- const exceptions:RetentionException[]=[];
+ const gift = await giftRetentionArchive(db,workspace,now);
+ const exceptions:RetentionException[]=gift.exception ? [gift.exception] : [];
  for(const mapping of mappings){if(!mapping.registry_namespace&&!mapping.registry_workspace_digest)continue;requireRetention(mapping.registry_namespace&&mapping.registry_workspace_digest,'private_inventory_mapping_incomplete');
   const raw=(await db.query('SELECT flockletter_customer_jobs.trial_retention_inventory($1,$2) inventory',[mapping.registry_namespace,mapping.registry_workspace_digest])).rows[0]?.inventory;
   requireRetention(raw&&Number.isSafeInteger(raw.recordCount)&&raw.recordCount>=0,'private_inventory_invalid');
@@ -55,7 +57,7 @@ export async function planHostedRetention(db:pg.Client,options:HostedPlanOptions
   const checkpoint=evidence.checkpoint,inventory=evidence.inventory;
   requireRetention(sameRetentionScope(checkpoint.facts.scope,scope)&&sameRetentionScope(inventory.facts.scope,scope)&&checkpoint.facts.mode===inventory.facts.mode&&checkpoint.facts.phase==='quarantined','checkpoint_scope_mismatch');
   requireRetention(now.getTime()-Date.parse(checkpoint.verifiedAt)<30000&&now.getTime()-Date.parse(inventory.verifiedAt)<30000,'operator_evidence_stale');
-  const exceptions=await privateRetentionExceptions(db,target.workspaceId);
+  const exceptions=await privateRetentionExceptions(db,target.workspaceId,now);
   requireRetention(retentionDigest(exceptions)===retentionDigest([...inventory.facts.exceptions].sort((a,b)=>a.digest.localeCompare(b.digest))),'private_exception_review_required');
   const plan={...scope,caseId:request.case_id,caseVersion:request.version,inventoryDigest:await retentionInventoryDigest(db,target.workspaceId),checkpoint:checkpoint.reference,externalInventoryDigest:inventory.digest,exceptionDigest:retentionDigest(exceptions)};
   await db.query('COMMIT');return plan;

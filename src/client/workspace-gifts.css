@@ -1,0 +1,75 @@
+.workspace-gifts {
+  display: grid;
+  gap: 1rem;
+  max-width: 72rem;
+  overflow-wrap: anywhere;
+}
+.workspace-gifts :is(.wg-balances, .wg-grid) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 1rem;
+}
+.workspace-gifts .wg-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  align-items: start;
+}
+.workspace-gifts .wg-card {
+  min-width: 0;
+  padding: clamp(1rem, 3vw, 1.75rem);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: white;
+}
+.workspace-gifts .wg-balances dt {
+  color: var(--muted);
+}
+.workspace-gifts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-gifts .wg-balances dd {
+  font-size: 1.35rem;
+  font-weight: 650;
+}
+.workspace-gifts .wg-list > div,
+.workspace-gifts .wg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+}
+.workspace-gifts .wg-list > div {
+  justify-content: space-between;
+}
+.workspace-gifts .wg-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr));
+  gap: 0.25rem 1rem;
+}
+.workspace-gifts .wg-choices label,
+.workspace-gifts .wg-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  margin: 0;
+}
+.workspace-gifts .wg-choices input {
+  flex: none;
+}
+.workspace-gifts .wg-review {
+  border-inline-start: 3px solid var(--accent);
+  background: #fff7f8;
+  padding: 0.75rem 1rem;
+  margin-block: 1rem;
+}
+.workspace-gifts :is(fieldset, .wg-field) {
+  margin: 0 0 1rem;
+}
+.workspace-gifts .wg-card > :last-child {
+  margin-bottom: 0;
+}
+.workspace-gifts :focus-visible {
+  outline: 3px solid #99385d;
+  outline-offset: 3px;
+}

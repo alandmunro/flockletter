@@ -1,3 +1,5 @@
+import { RetentionIntegrationError } from './approval.js';
+import { giftRetentionArchive, reconcileGiftServiceEnd } from '../workspace-gifts/retention.js';
 import {lockWorkspace} from '../workspace-lock.js';
 import { createHash, randomUUID } from 'node:crypto';
 import tables from '../../shared/runtime-tables.json' with { type: 'json' };
@@ -270,6 +272,7 @@ export class CustomerRetention {
       'retention_not_ended',
       'Service must end before a retention case starts.',
     );
+    await reconcileGiftServiceEnd(sql,workspace,current,now);
     if (!refresh) {
       const existing = (
         await sql.query<Row>('SELECT * FROM customer_retention_cases WHERE source_version=$1', [
@@ -419,6 +422,12 @@ export class CustomerRetention {
             'retention_inventory_changed',
             'Inspect the current retention inventory before requesting execution.',
           );
+          try { await giftRetentionArchive(sql,actor.workspaceId,now); }
+          catch (error) {
+            if (error instanceof RetentionIntegrationError && error.code === 'gift_reconciliation_required')
+              requireCondition(false,409,error.code,'Reconcile gift offers, credit, refunds and disputes before erasure.');
+            throw error;
+          }
           const manifest = retentionManifestDigest();
           await sql.query(
             "INSERT INTO customer_retention_jobs(workspace_id,id,case_id,case_version,state,requested_by,manifest_digest) VALUES($1,$2,$3,$4,'awaiting_operator',$5,$6)",

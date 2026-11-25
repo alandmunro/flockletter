@@ -48,6 +48,7 @@ export function CustomerDeliveryPanel({api,brands,canChooseProvider=false}:{api:
 function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
   const [status,setStatus]=useState<Status|null>(null),[campaigns,setCampaigns]=useState<Campaign[]>([]),[deliveries,setDeliveries]=useState<DeliveryView[]>([]),[groups,setGroups]=useState<SegmentDirectory|null>(null);
   const [campaignId,setCampaignId]=useState(''),[schedule,setSchedule]=useState(''),[segmentId,setSegmentId]=useState('');
+  const [giftCampaignId,setGiftCampaignId]=useState('');
   const [busy,setBusy]=useState(''),[loaded,setLoaded]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const [outcomeRevision,setOutcomeRevision]=useState(0);
   const [testRestoreId,setTestRestoreId]=useState<string|null>(null);
@@ -113,7 +114,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
     let dueAt:string|undefined;
     if(schedule){const date=new Date(schedule);if(!Number.isFinite(date.getTime())){setError('Choose a valid date and time.');return;}dueAt=date.toISOString();}
     const input={brandId:brand.id,campaignId,expectedVersion:campaign.version,...(segmentId?{segmentId}:{}),...(dueAt?{dueAt}:{})};
-    await mutate<DeliveryView>('delivery.review',input,'review',result=>{setReview(result);setReviewAudience(selectedGroup?.name??'All confirmed contacts');},async()=>{
+    await mutate<DeliveryView>('delivery.review',{...input,...(giftCampaignId?{giftCampaignId}:{})},'review',result=>{setReview(result);setReviewAudience(selectedGroup?.name??'All confirmed contacts');},async()=>{
       const observed=await api.call<CustomerCampaignPreflight>('delivery.preflight',input);setChecks(observed);
       return observed.gaps.length===0;
     });
@@ -144,6 +145,11 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
           {groups?.items.map(group=><option key={group.id} value={group.id}>{group.name} · {group.counts.confirmed} confirmed</option>)}</select>
           {status?.scope==='tests'?<p className="help">Group delivery is disabled, including groups named Test. Choose one intended confirmed contact in the test panel below. This selector does not choose your test recipient.</p>:missingGroup?<p className="help" role="status">Selected group unavailable. Choose an available audience.</p>:<p className="help">Review freezes the eligible recipients in this audience. Later group additions are not added to that review.</p>}
         </div>
+        {status?.giftDeliveryEnabled&&status.scope!=='tests'&&<div className="field">
+          <label htmlFor="gift-campaign">Funded gift campaign ID (optional)</label>
+          <input id="gift-campaign" value={giftCampaignId} onChange={event=>{setGiftCampaignId(event.target.value.trim());setReview(null);setChecks(null);}}/>
+          {giftCampaignId&&<p>Each selected recipient will receive “Thank you! We have a gift for you.” and their personal claim link.</p>}
+        </div>}
         {!campaigns.length&&<p>Create and save a campaign before reviewing delivery.</p>}
         <div className="field"><label htmlFor="delivery-time">Schedule in your local time, optional</label><input id="delivery-time" type="datetime-local" disabled={status?.scope==='tests'} value={schedule} onChange={event=>{setSchedule(event.target.value);setReview(null);setChecks(null);}}/></div>
         <button className="btn" disabled={!campaignId||status?.mode==='off'||status?.scope==='tests'||missingGroup} onClick={()=>void reviewSaved()}>{busy==='review'?'Reviewing…':'Review saved campaign'}</button>
@@ -160,6 +166,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
   <section className="card"><h2>Delivery history</h2>{loaded&&!deliveries.length&&<p>No reviewed deliveries yet.</p>}
     {deliveries.map(item=><article className="delivery-record" key={item.id}>
       <h3>{item.subject}</h3><p>Version {item.version} · {item.state} · {new Date(item.dueAt).toLocaleString()}</p>
+      {item.giftCampaignId&&<p>Reserved gift campaign {item.giftCampaignId}</p>}
       {item.senderProfile&&<p className="help">From {item.senderProfile.fromName} &lt;{item.senderProfile.fromEmail}&gt; · Reply to {item.senderProfile.replyTo}</p>}
       <p>{item.selected} selected · {item.accepted} accepted · {item.delivered} {item.mode==='capture'?'captured delivery outcomes':'delivered'} · {item.uncertain} uncertain · {item.rejected} rejected · {item.skipped+item.excluded} excluded</p>
       <p className="help">{item.pending+item.preparing+item.submitting} processing · {item.hardBounced} hard bounces · {item.complained} complaints</p>

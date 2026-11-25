@@ -330,3 +330,7 @@ D-063 accepts the texting add-on and authorizes this phase only: core SMS sendin
 
 **FL-SMS-015 — Inbound and audit.** Inbound texts SHALL be stored against the contact; replies other than STOP, HELP, START and pending confirmations are forwarded to the workspace's notification email, and unknown numbers are never added as contacts. Sends, consent changes, registration actions and settings changes are audited. (INB-1/2/4/6, PLT-4)
 
+
+### Workspace gifting
+
+D-066 authorizes implementation and staging verification of WA-09-R01 through WA-09-R08. WA-09-AT01 through WA-09-AT04 and the sandbox portion of WA-09-AT05 apply to this release. Preserve the existing identifiers and source mappings for eligibility, delivery, reporting and financial retention. The live portion of AT05 remains a separate activation decision. [Gifting requirements and acceptance](supplemental-requirements/specs/09-tremendous-gifting.md) · [Decision ledger](DECISIONS.md#d-066--workspace-gifting-implementation-and-staging-acceptance)

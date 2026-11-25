@@ -119,3 +119,25 @@ it('materializes only greetings due within thirty days across a month boundary',
     (await sql.query('SELECT local_date::text FROM date_occurrences ORDER BY local_date')).rows);
   expect(rows).toEqual([{ local_date: '2032-03-31' }]);
 });
+
+it('binds a gift revision to explicit capture activation and preserves the attachment when paused', async () => {
+  const brandId = randomUUID(), giftCampaignId = randomUUID();
+  await db.tenant(actor.workspaceId, sql => sql.query(
+    'INSERT INTO brands(workspace_id,id,name) VALUES($1,$2,$3)', [actor.workspaceId, brandId, 'Gift fixture']));
+  const capture = new DateAutomations(db, 'capture', async user => user === 'owner', {mode:'capture',account:'acct_test'});
+  const input = { kind: 'birthday', brandId };
+  await capture.execute('dateAutomation.save', { ...input, expectedRevision: 0,
+    settings: { ...settings, giftCampaignId }, operationKey: randomUUID() }, actor);
+  const liveDates = new DateAutomations(db, 'live', async user => user === 'owner', {mode:'capture',account:'acct_test'});
+  const activate = { ...input, giftMode:'capture', expectedRevision: 1, confirmRecurring: true, operationKey: randomUUID() };
+  await expect(liveDates.execute('dateAutomation.activate', activate, actor)).rejects.toMatchObject({ code: 'gifting_off' });
+  await expect(dates.execute('dateAutomation.activate', activate, actor)).rejects.toMatchObject({code:'gifting_off'});
+  await capture.execute('dateAutomation.activate', activate, actor);
+  expect(await capture.execute('dateAutomation.list', { brandId }, actor)).toMatchObject({
+    definitions: [{ enabled: true, settings: { giftCampaignId } }],
+  });
+  await capture.execute('dateAutomation.pause', { ...input, expectedRevision: 1, operationKey: randomUUID() }, actor);
+  expect(await capture.execute('dateAutomation.list', { brandId }, actor)).toMatchObject({
+    definitions: [{ enabled: false, settings: { giftCampaignId } }],
+  });
+});

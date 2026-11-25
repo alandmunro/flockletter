@@ -1,3 +1,4 @@
+import type { GiftRecipient } from '../workspace-gifts/audience.js';
 import type { Sql } from '../db.js';
 
 export type DateKind = 'birthday' | 'anniversary';
@@ -35,4 +36,15 @@ export async function smsRoute(sql:Sql,brand:string,s:DateSource) {
   if (!s.contact_id || s.shared_phone) return null;
   return (await sql.query<{company_id:string}>(`SELECT cb.company_id FROM company_brands cb JOIN sms_consents x USING(workspace_id,company_id)
     JOIN sms_contacts c ON c.id=x.contact_id WHERE cb.brand_id=$1 AND c.id=$2 AND c.textable AND x.state='opted_in'`,[brand,s.contact_id])).rows[0]??null;
+}
+
+// The audience owner resolves deduplication. A shared or newly reassigned endpoint
+// cannot borrow an offer belonging to a different canonical person.
+export function dateGiftPerson(people:ReadonlyMap<string,GiftRecipient>, source:DateSource, channel:'sms'|'email') {
+  const sourceId=source.subscriber_id??source.contact_id;
+  const person=sourceId?people.get(sourceId):undefined;
+  if (!person) return null;
+  return (channel==='sms'
+    ? !source.shared_phone && person.phone && person.phone===source.phone_e164
+    : person.email && person.email===source.email) ? person.id : null;
 }

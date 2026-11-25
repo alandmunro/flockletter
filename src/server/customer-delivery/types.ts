@@ -10,7 +10,7 @@ import type { CustomerBillingStatus } from '../../shared/customer-billing.js';
 export type DeliveryRow = {
   date_automation?:boolean;purpose:'broadcast'|'test';test_day:string|null;test_slot:number|null;test_admitted_at:Date|null;
   workspace_id:string; brand_id:string; id:string; campaign_id:string; version:number; actor_id:string; creator_id:string;
-  mode:'capture'|'ses'|'resend'; provider_revision?:number; state:string; content:CampaignContent; rendered_html:string; rendered_text:string;
+  mode:'capture'|'ses'|'resend'; provider_revision?:number; state:string; content:CampaignContent & {giftCampaignId?:string}; rendered_html:string; rendered_text:string;
   asset_digests:{id:string;name:string;sha256:string}[]; provider_binding:string; due_at:Date;
   selected:number; excluded:number; reason:string|null; reservation_key:string|null; created_at:Date;
   sender_profile:CustomerSenderProfile|null; preference_segment_id?:string|null;
@@ -28,6 +28,7 @@ export type CustomerProvider = {
   lookup(operation:string,messageId?:string|null):Promise<{outcome:DeliveryOutcome;messageId?:string}>;
 };
 export type DeliveryOptions = {
+  giftDelivery?:import('../workspace-gifts/delivery.js').GiftDeliveryPolicy|undefined;
   annualClaim?:(sql:Sql,workspace:string,brand:string,id:string,now:Date)=>Promise<string|null>;
   safeguards?:import('./safeguards.js').SendingSafeguards;
   mode:DeliveryMode; origin:string; environment:'local'|'test'|'staging'|'production';

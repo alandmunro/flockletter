@@ -45,7 +45,7 @@ async function executeHostedRetentionLocked(db:pg.Client,options:HostedOperatorO
  const executor={...options,verifyCheckpoint:async()=>{const current=await checkpoint();return current.facts.phase==='quarantined'&&current.facts.mode==='live';},verifyExternalStores:verifyAbsent,verifyLockedPlan:async(sql:pg.Client,w:string,j:string)=>{
   verifyRetentionApproval(signed,options.approvalKeys,now(),'live');requireRetention(w===scope.workspaceId&&j===scope.jobId,'approval_target_changed');
   const requested=(await sql.query('SELECT j.case_id,c.version FROM customer_retention_jobs j JOIN customer_retention_cases c ON (c.workspace_id,c.id)=(j.workspace_id,j.case_id) WHERE j.workspace_id=$1 AND j.id=$2',[w,j])).rows[0];requireRetention(requested?.case_id===approval.caseId&&requested.version===approval.caseVersion,'approved_case_changed');
-  requireRetention(await retentionInventoryDigest(sql,w)===approval.inventoryDigest&&retentionDigest(await privateRetentionExceptions(sql,w))===approval.exceptionDigest,'approved_inventory_changed');
+  requireRetention(await retentionInventoryDigest(sql,w)===approval.inventoryDigest&&retentionDigest(await privateRetentionExceptions(sql,w,now()))===approval.exceptionDigest,'approved_inventory_changed');
  }};
  await authorizeRetention(db,executor,{...scope,checkpointDigest:approval.checkpoint.digest,authorizedBy:approval.operatorId,expiresAt:new Date(approval.expiresAt)});
  return executeAuthorizedRetention(db,executor,scope.workspaceId,scope.jobId);

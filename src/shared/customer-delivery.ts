@@ -28,7 +28,7 @@ export const customerDeliveryCommands = {
   'delivery.list': command('List this brand’s reviewed campaigns and delivery outcomes.', 'campaign:send', false, {brandId:id,purpose:z.enum(['broadcast','test']).optional()}),
   'delivery.review': command('Freeze the saved draft and confirmed audience before approval.', 'campaign:send', true, {
     operationKey,brandId:id,campaignId:id,expectedVersion:z.number().int().positive(),
-    segmentId:id.optional(),dueAt:z.iso.datetime({offset:true}).optional(),
+    giftCampaignId:id.optional(),segmentId:id.optional(),dueAt:z.iso.datetime({offset:true}).optional(),
   }),
   'delivery.approve': command('Reserve allowance and queue exactly this reviewed campaign.', 'campaign:send', true, {operationKey,brandId:id,id}),
   'delivery.cancel': command('Cancel future submissions and preserve unknown provider outcomes for reconciliation.', 'campaign:send', true, {operationKey,brandId:id,id}),
@@ -53,7 +53,7 @@ export type DeliveryProviders = {selected:SendingProvider|null;revision:number;m
 export type DeliveryScope = 'all'|'tests';
 export type CustomerDeliveryStatus={
   trust?:SendingTrustStatus|null;
-  mode:DeliveryMode;scope:DeliveryScope;externalSendingEnabled:boolean;testSendingEnabled:boolean;broadcastsEnabled:boolean;
+  giftDeliveryEnabled?:boolean;mode:DeliveryMode;scope:DeliveryScope;externalSendingEnabled:boolean;testSendingEnabled:boolean;broadcastsEnabled:boolean;
   eligible:boolean;eligibility:CustomerBillingStatus;brandId:string|null;senderVerified:boolean|null;providerConfigured:boolean|null;
   rendererConfigured:boolean;gaps:string[];
   context:{environment:'local'|'test'|'staging'|'production';workspaceId:string;observedAt:string};
@@ -67,7 +67,7 @@ export type DeliveryOutcomesPage = {
 };
 export type CustomerSenderProfile={fromName:string;fromEmail:string;replyTo:string;organization:string;postalAddress:string;revision:number};
 export type DeliveryView = {
-  purpose:'broadcast'|'test';testDay:string|null;testAdmittedAt:string|null;
+  giftCampaignId?:string;purpose:'broadcast'|'test';testDay:string|null;testAdmittedAt:string|null;
   senderProfile?:CustomerSenderProfile|null;
   id:string; brandId:string; campaignId:string; version:number; subject:string;
   state:string; mode:DeliveryMode; dueAt:string; selected:number; excluded:number;

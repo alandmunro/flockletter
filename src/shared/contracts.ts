@@ -20,11 +20,12 @@ import { customerRetentionCommands } from './customer-retention.js';
 import { customerDeliveryCommands } from './customer-delivery.js';
 import { customerOperationsCommands } from './customer-operations.js';
 import { customerInfrastructureCommands } from './customer-infrastructure.js';
+import {workspaceGiftCommands} from './workspace-gifts.js';
 import {giftAction} from './gifting.js';
 import { textingCommands } from './texting.js';
 
 export type { IntakeStatus } from './subscriber.js';
-export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write','audience:confirm','delivery:configure','sender:configure','sms:send','automation:manage'] as const;
+export const capabilities = ['read', 'draft:write', 'assets:write', 'subscriber:signup', 'audience:summary','campaign:rehearse','campaign:simulate','campaign:send','audience:write','audience:confirm','delivery:configure','sender:configure','sms:send','automation:manage','gifts:read'] as const;
 export type Capability = typeof capabilities[number];
 export const limits = { fileBytes: 5 * 1024 * 1024, batchBytes: 20 * 1024 * 1024, batchFiles: 10, imagePixels: 25_000_000, campaignImages: 6, workspaceBytes: 100 * 1024 * 1024, assets: 500, drafts: 100, connections: 10, preparationOperations: 2000 } as const;
 export const plans = [
@@ -76,6 +77,7 @@ const newsletterImportFields = {
   replace: z.object({id, expectedVersion:z.number().int().positive()}).strict().optional(),
 };
 export const commands = {
+  ...workspaceGiftCommands,
   ...customerBillingCommands,
   ...customerAudienceCommands,
   ...dateCommands,

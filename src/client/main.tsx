@@ -10,7 +10,7 @@ import {CookieControls} from './CookieControls.js';
 import {Privacy} from './Privacy.js';
 import './app.css';
 
-type PublicConfig = { environment: string; localIdentity: boolean; clerkPublishableKey: string | null; setupGaps: string[]; sendingEnabled: boolean;testSendingEnabled?:boolean };
+type PublicConfig = { environment: string; localIdentity: boolean; clerkPublishableKey: string | null; setupGaps: string[]; sendingEnabled: boolean;workspaceGifts?:boolean;testSendingEnabled?:boolean };
 const HostedPortal=lazy(()=>import('./Hosted.js'));
 const localToken = async () => 'local-development-only';
 function Root() {
@@ -18,9 +18,9 @@ function Root() {
   useEffect(() => { void fetch('/api/config').then(async response => { if (!response.ok) throw new Error('Service configuration is unavailable.'); setConfig(await response.json() as PublicConfig); }).catch(() => setError('We could not reach Flockletter. Refresh to retry.')); }, []);
   if (!config) return <><Header /><main className="main"><p role="status">{error || 'Opening Flockletter…'}</p></main></>;
   const workspaceConfigured = config.setupGaps.length === 0;
-  if (config.localIdentity && workspaceConfigured) return window.location.pathname==='/operator'?<OperatorPortal getToken={localToken}/>:<Portal getToken={localToken} local environment={config.environment} />;
+  if (config.localIdentity && workspaceConfigured) return window.location.pathname==='/operator'?<OperatorPortal getToken={localToken}/>:<Portal getToken={localToken} local environment={config.environment} workspaceGifts={config.workspaceGifts === true} />;
   if (!config.localIdentity && config.clerkPublishableKey) {
-    return <Suspense fallback={<><Header/><main className="main"><p role="status">Loading sign-in…</p></main></>}><HostedPortal publishableKey={config.clerkPublishableKey} environment={config.environment} setupGaps={config.setupGaps}/></Suspense>;
+    return <Suspense fallback={<><Header/><main className="main"><p role="status">Loading sign-in…</p></main></>}><HostedPortal workspaceGifts={config.workspaceGifts === true} publishableKey={config.clerkPublishableKey} environment={config.environment} setupGaps={config.setupGaps}/></Suspense>;
   }
   return <><Header /><main className="main"><SetupStatus environment={config.environment} gaps={config.setupGaps}/></main></>;
 }

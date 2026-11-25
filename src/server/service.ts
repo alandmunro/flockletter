@@ -143,7 +143,7 @@ export class CommandService {
     });
     if(this.customer&&name==='workspace.preflight')return this.customer.preflight(actor);
     if(this.customer?.owns(name))return this.customer.execute(name,raw,actor);
-    if(['dateAutomation.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'].some(prefix=>name.startsWith(prefix)))
+    if(['gifts.','dateAutomation.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'].some(prefix=>name.startsWith(prefix)))
       throw new AppError(503,'customer_workflow_unavailable','This workflow needs the customer service configuration.');
     if (name === 'billing.comparePlan') {
       const { plan } = commands[name].schema.parse(raw);
@@ -211,7 +211,7 @@ export class CommandService {
         }
         const disablingIntake = name === 'intake.configure' && 'enabled' in input && input.enabled === false;
         if (name !== 'connection.revoke' && name !== 'team.revoke' && name !== 'rehearsal.cancel' && name !== 'audience.updateContact' && name !== 'audience.stopTexts' && !disablingIntake && !optOut) {
-          const count = (await sql.query<{ count: string }>('SELECT count(*) FROM operations')).rows[0];
+          const count = (await sql.query<{ count: string }>("SELECT count(*) FROM operations WHERE actor_id NOT LIKE 'workspace-gifts:%'")).rows[0];
           requireCondition(Number(count?.count) < limits.preparationOperations, 422, 'preparation_limit', 'This foundation workspace has reached its preparation operation limit. Contact the operator; connection revocation remains available.');
         }
       }
