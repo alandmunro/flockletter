@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type { Sql } from '../db.js';
 import { requireCondition } from '../errors.js';
-import { textingSettings, type TextingSettingKey } from '../../shared/texting.js';
+import { areaCodeZones, textingSettings, type TextingSettingKey } from '../../shared/texting.js';
 
 export type Interface = 'ui' | 'api' | 'mcp' | 'worker' | 'webhook' | 'signup_page' | 'operator_ui' | 'operator_api' | 'operator_mcp';
 export type SettingValues = { [K in TextingSettingKey]?: (typeof textingSettings)[K]['kind'] extends 'int' ? number : string[] };
@@ -43,6 +43,13 @@ export function localParts(at: Date, zone: string) {
   return parts as { year: number; month: number; day: number; hour: number; minute: number };
 }
 export function validZone(zone: string) { try { new Intl.DateTimeFormat('en-US', { timeZone: zone }); return true; } catch { return false; } }
+export async function smsRecipientZones(sql: Sql, contactZone: string | null | undefined, phone: string): Promise<readonly string[]> {
+  if (contactZone && validZone(contactZone)) return [contactZone];
+  const byArea = areaCodeZones(phone);
+  if (byArea.length) return byArea;
+  const zone = (await sql.query<{ time_zone: string }>('SELECT time_zone FROM sms_workspace_profile')).rows[0]?.time_zone;
+  return [zone && validZone(zone) ? zone : 'America/New_York'];
+}
 /**
  * Earliest instant at or after `from` that falls inside [start, end) local hours in every zone given.
  * Several zones are given when an area code spans more than one; the window is their intersection.

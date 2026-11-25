@@ -9,14 +9,13 @@ import type { Texting } from '../texting/service.js';
 import { businessName, queueText } from '../texting/messaging.js';
 import { coversTextCompany } from '../texting/company-access.js';
 import { authorized, type AutomationMode } from './service.js';
-import { dateSources, smsRoute, type DateKind } from './sources.js';
-import { insideWindow, monthsOfYear, schedule } from './planner.js';
-import { recipientZones } from './calendar.js';
+import { dateSources, type DateKind } from './sources.js';
+import { annualPolicy, insideWindow, monthsOfYear, schedule } from './planner.js';
 import type { Actor } from '../service.js';
 
 type Occurrence = {id:string;activated_at:Date;date_id:string;kind:DateKind;annual_year:number;zone:string;state:string;
   local_date:string;due_at:Date;expires_at:Date;revision:number;active_revision:number;enabled:boolean;
-  settings:DateSettings;issuer:string;actor:string;mode:AutomationMode;mailing_id:string;source_digest:string|null};
+  settings:DateSettings;issuer:string;actor:string;mode:AutomationMode;mailing_id:string;source_digest:string|null;channel:'sms'|'email'|null};
 const joinOccurrence=`SELECT o.*,o.local_date::text,a.enabled,a.activated_at,a.revision active_revision,a.issuer,a.actor,a.mode,r.settings,r.mailing_id
  FROM date_occurrences o JOIN date_automations a USING(workspace_id,brand_id,kind)
  JOIN date_automation_revisions r ON (r.workspace_id,r.brand_id,r.kind,r.revision)=(o.workspace_id,o.brand_id,o.kind,o.revision)`;
@@ -25,7 +24,6 @@ type Ports={texting?:Texting|undefined;delivery:CustomerDelivery;mode:Automation
 async function inspect(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Date) {
   requireCondition(o.enabled&&o.revision===o.active_revision&&o.mode===ports.mode&&ports.mode!=='off',409,'definition_changed','Automation approval changed.');
   requireCondition(o.due_at>=o.activated_at,409,'definition_changed','The date predates the current activation.');
-  requireCondition(now<o.expires_at,409,'expired','Catch-up window closed.');
   let permitted:boolean;
   try { permitted=await authorized(sql,w,b,o.issuer,o.actor,ports.isOwner,o.settings); }
   catch { throw new AppError(503,'authority_verification_unavailable','Current send authority could not be verified.'); }
@@ -36,10 +34,11 @@ async function inspect(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Da
   }
   const source=(await dateSources(sql,b,o.kind,monthsOfYear,null,1,o.date_id))[0];
   requireCondition(source,409,'date_changed','Date removed or changed.');
-  const when=schedule(source,o.annual_year,o.settings);
-  requireCondition(when&&when.localDate===o.local_date&&when.dueAt.getTime()===o.due_at.getTime(),409,'date_changed','Date or time changed.');
-  const zones=recipientZones(source.time_zone,source.phone_e164,o.settings.zone);
-  requireCondition(now>=when.dueAt&&insideWindow(now,zones.windows,o.settings),409,'outside_window','Waiting for the recipient window.');
+  const policy=await annualPolicy(sql,w);
+  const when=await schedule(sql,b,source,o.annual_year,o.settings,policy,o.channel);
+  requireCondition(when&&when.localDate===o.local_date,409,'date_changed','Date removed or changed.');
+  requireCondition(now<when.expiresAt,409,'expired','Catch-up window closed.');
+  requireCondition(!when.hold&&now>=when.dueAt&&insideWindow(now,when.windows),409,'outside_window','Waiting for a permitted recipient window.');
   const signature=digest(JSON.stringify([source.id,source.subscriber_id,source.contact_id,source.phone_e164,
     source.email,source.first_name,source.label,source.year,source.month,source.day,when.years,when.zone]));
   return {source,when,signature};
@@ -61,7 +60,7 @@ export async function annualClaim(sql:Sql,workspace:string,brand:string,channel:
     // Occurrences queued before the controls release stored a digest of the full source row.
     if(signature!==o.source_digest && digest(JSON.stringify([source,when.years]))!==o.source_digest) return 'date_changed';
     if(channel==='sms'){
-      const current=await smsRoute(sql,brand,source);
+      const current=when.route;
       if(!current||current.company_id!==company) return 'no_consent';
       await checkCompany(sql,current.company_id,o.actor);
       if(ports.texting?.options.mode!==(ports.mode==='capture'?'mock':'live'))return 'delivery_configuration_changed';
@@ -73,7 +72,7 @@ export async function annualClaim(sql:Sql,workspace:string,brand:string,channel:
 async function handoff(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Date) {
   const {source,when,signature}=await inspect(sql,w,b,o,ports,now);
   const render=(s:string)=>renderGreeting(s,source.first_name,source.label,when.years);
-  const route=await smsRoute(sql,b,source);
+  const route=when.route;
   const channel=route?'sms':'email';
   // A phone-only signup can later gain its own subscriber date and hence a new date ID.
   // Keep the original annual receipt effective across that transition and across channels.
