@@ -6,6 +6,7 @@ RUN npm ci --no-audit --no-fund
 
 COPY scripts/prepare-listmonk.mjs ./scripts/prepare-listmonk.mjs
 COPY src ./src
+COPY labs/gifting ./labs/gifting
 COPY public ./public
 COPY index.html vite.config.ts tsconfig.json tsconfig.server.json ./
 RUN npm run build
@@ -18,6 +19,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && rm -rf /root/.npm
 
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/labs/gifting ./labs/gifting
 COPY LICENSE ./LICENSE
 COPY migrations ./migrations
 COPY scripts/apply-migrations.mjs ./scripts/apply-migrations.mjs

@@ -1,3 +1,7 @@
+import { schedule } from './planner.js';
+import { productionConsentEligible } from '../customer-audience/service.js';
+import { dateSources,smsRoute } from './sources.js';
+import { renderGreeting } from '../../shared/date-automations.js';
 import type { Actor } from '../service.js';
 import type { Database, Sql } from '../db.js';
 import { requireCondition } from '../errors.js';
@@ -26,6 +30,26 @@ export class DateAutomations {
       await lockWorkspace(sql,workspace);
       await brandScope(sql,actor,brand);
       requireCondition(await authorized(sql,workspace,brand,actor.userId,actor.actorId,this.isOwner),403,'automation_access','Current automation access is required.');
+      if(name==='dateAutomation.preview'){
+        const p=dateCommands[name].schema.parse(raw);
+        const now=new Date(),end=new Date(now.getTime()+30*86400000);
+        const months=new Set([now.getUTCMonth()+1,end.getUTCMonth()+1,new Date(now.getTime()-86400000).getUTCMonth()+1,new Date(end.getTime()+86400000).getUTCMonth()+1]);
+        months.add(new Date(now.getTime()+15*86400000).getUTCMonth()+1);
+        const sources=await dateSources(sql,brand,p.kind,[...months],p.cursor,100);
+        const rows=[];
+        for(const source of sources)for(let year=now.getUTCFullYear()-1;year<=end.getUTCFullYear()+1;year++){
+          const when=schedule(source,year,p.settings);
+          if(!when||when.dueAt<now||when.dueAt>end)continue;
+          const sms=await smsRoute(sql,brand,source);
+          const email=p.settings.email&&source.subscriber_id&&source.email_state==='confirmed'
+            &&(this.mode!=='live'||await productionConsentEligible(sql,source.subscriber_id));
+          const template=sms?p.settings.sms:email?p.settings.email!.body:null;
+          rows.push({id:source.id,recipient:source.first_name??source.email??(source.phone_e164?'Phone ending '+source.phone_e164.slice(-4):'Unnamed contact'),
+            dueAt:when.dueAt,zone:when.zone,channel:sms?'SMS':email?'Email':'No eligible channel',
+            message:template?renderGreeting(template,source.first_name,source.label,when.years):null});
+        }
+        return {rows:rows.sort((a,b)=>a.dueAt.getTime()-b.dueAt.getTime()),next:sources.length===100?sources.at(-1)!.id:null};
+      }
       if(name==='dateAutomation.list') return {mode:this.mode, definitions:(await sql.query(
         'SELECT kind,revision,enabled,settings FROM date_automations JOIN date_automation_revisions USING(workspace_id,brand_id,kind,revision) ORDER BY kind')).rows};
       if (name==='dateAutomation.occurrences') {

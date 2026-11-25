@@ -21,6 +21,7 @@ export type DateOccurrence = { id:string; kind:DateKind; local_date:string; due_
 const revision = {brandId,kind,operationKey,expectedRevision:z.number().int().nonnegative()};
 const manage = 'automation:manage';
 export const dateCommands = {
+  'dateAutomation.preview':commandDefinition('Project the next 30 days for a draft without recording or submitting greetings.',manage,false,{brandId,kind,settings:dateSettings,cursor:z.uuid().nullable().default(null)}),
   'dateAutomation.list':commandDefinition('Read date automation settings for a brand.',manage,false,{brandId}),
   'dateAutomation.save':commandDefinition('Save a reviewed birthday or anniversary draft. Saving pauses an active revision.',manage,true,{...revision,settings:dateSettings}),
   'dateAutomation.activate':commandDefinition('Authorize recurring marketing under the exact saved revision.',manage,true,{...revision,confirmRecurring:z.literal(true)}),

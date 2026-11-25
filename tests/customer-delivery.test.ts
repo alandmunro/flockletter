@@ -1127,4 +1127,5 @@ it('hands an eligible annual email to marketing delivery exactly once, with unsu
   expect(captures[0]!.payload).toMatchObject({to:'confirmed@shop.test',subject:'Your birthday greeting'});
   expect(captures[0]!.payload.text).toContain('Happy birthday, friend.');
   expect(captures[0]!.payload.text.toLowerCase()).toContain('unsubscribe');
+  expect((await billing.status(f.workspaceId)).usage).toMatchObject({emails:1,campaigns:1,reservedEmails:0,reservedCampaigns:0});
 });
