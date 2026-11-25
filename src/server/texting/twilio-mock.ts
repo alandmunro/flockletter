@@ -2,7 +2,7 @@
 // adapter, keeps its state in the database so staging survives restarts, and is scriptable: faults,
 // carrier decisions and inbound replies are queued by tests or by the staging operator console.
 import { randomBytes } from 'node:crypto';
-import type { Database } from '../db.js';
+import type { Database, Sql } from '../db.js';
 import { bodyDigest, twilioSignature, type AccountCredentials, type BusinessProfile, type CallbackUrls, type CampaignInput, type ProvisionFacts, type ProvisionKind, type Result, type SendResult, type TwilioMessagingPort, type TwilioPlatformPort } from './twilio.js';
 
 import { mockFaults, type MockFault } from '../../shared/texting-mock.js';
@@ -18,13 +18,26 @@ export class TwilioMockState {
   async get<T>(key: string): Promise<T | null> { return ((await this.db.pool.query('SELECT flockletter_customer_jobs.texting_mock_get($1) v', [key])).rows[0]?.v ?? null) as T | null; }
   async put(key: string, value: unknown) { await this.db.pool.query('SELECT flockletter_customer_jobs.texting_mock_put($1,$2)', [key, JSON.stringify(value)]); }
   async list<T>(prefix: string): Promise<{ key: string; value: T }[]> { return (await this.db.pool.query('SELECT * FROM flockletter_customer_jobs.texting_mock_list($1)', [prefix])).rows; }
-  /** Queue faults for the next calls of one kind (provisioning step or 'send'). */
-  async script(kind: ProvisionKind | 'send', faults: MockFault[]) { await this.put('fault/' + kind, [...await this.get<MockFault[]>('fault/' + kind) ?? [], ...faults]); }
-  async next(kind: ProvisionKind | 'send'): Promise<MockFault | null> {
-    const queue = await this.get<MockFault[]>('fault/' + kind) ?? [];
-    if (!queue.length) return null;
-    await this.put('fault/' + kind, queue.slice(1));
-    return queue[0]!;
+  private async faultQueue(sql: Sql, key: string): Promise<MockFault[]> {
+    await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [key]);
+    return (await sql.query('SELECT flockletter_customer_jobs.texting_mock_get($1) faults', [key])).rows[0]?.faults ?? [];
+  }
+  async script(sql: Sql, kind: ProvisionKind | `send/${string}`, faults: MockFault[]) {
+    const key = 'fault/' + kind, current = await this.faultQueue(sql, key);
+    await sql.query('SELECT flockletter_customer_jobs.texting_mock_put($1,$2)', [key, JSON.stringify([...current, ...faults])]);
+  }
+  async next(kind: ProvisionKind | `send/${string}`): Promise<MockFault | null> {
+    const key = 'fault/' + kind, client = await this.db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const queue = await this.faultQueue(client, key);
+      if (queue.length) await client.query('SELECT flockletter_customer_jobs.texting_mock_put($1,$2)', [key, JSON.stringify(queue.slice(1))]);
+      await client.query('COMMIT');
+      return queue[0] ?? null;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
   }
   async enqueue(callback: Omit<MockCallback, 'id'>) { const id = mockSid('CB'); await this.put('callback/' + Date.now().toString().padStart(15, '0') + '/' + id, { ...callback, id }); }
   async pending(): Promise<MockCallback[]> { return (await this.list<MockCallback | null>('callback/')).flatMap(row => row.value ? [row.value] : []); }
@@ -122,7 +135,7 @@ export class TwilioMockMessaging implements TwilioMessagingPort {
   readonly mode = 'mock' as const;
   constructor(readonly state: TwilioMockState) {}
   async send(account: AccountCredentials, m: { op: string; serviceSid: string; to: string; body: string; statusCallback: string }): Promise<SendResult> {
-    const fault = await this.state.next('send');
+    const fault = await this.state.next(`send/${account.accountSid}`);
     if (fault === '429') return { outcome: 'not_submitted', retryAfterSeconds: 1, reason: 'twilio_20429' };
     if (fault === '5xx') return { outcome: 'unknown', reason: 'http_503' };
     if (fault === 'invalid' || fault === 'landline' || fault === 'unsubscribed') return { outcome: 'rejected', permanent: fault, reason: 'mock_' + fault };
@@ -144,11 +157,11 @@ export class TwilioMockMessaging implements TwilioMessagingPort {
   /** How many times the provider accepted a POST for one operation key. Must never exceed 1. */
   sends(op: string) { return this.state.get<number>(`sends/${op}`); }
   /** Staging console and tests: a reply from a phone to one of our numbers. */
-  async inbound(from: string, to: string, body: string) {
+  async inbound(accountSid: string, from: string, to: string, body: string) {
     const number = await this.state.get<{ accountSid: string; serviceSid: string }>('number/' + to);
-    if (!number) return false;
+    if (!number || number.accountSid !== accountSid) return false;
     const service = await this.state.get<CallbackUrls & { accountSid: string }>('service/' + number.serviceSid);
-    if (!service) return false;
+    if (!service || service.accountSid !== accountSid) return false;
     await this.state.enqueue({ url: service.inbound, accountSid: number.accountSid, params: { AccountSid: number.accountSid, MessageSid: mockSid('SM'), MessagingServiceSid: number.serviceSid, From: from, To: to, Body: body, NumMedia: '0' } });
     return true;
   }

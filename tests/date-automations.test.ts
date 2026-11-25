@@ -17,6 +17,16 @@ beforeAll(async()=>{
   dates=new DateAutomations(db,'capture',async user=>user==='owner');
 });
 afterAll(async()=>{await db?.close();await fixture?.stop();});
+it('previews an empty brand without creating a definition or occurrence',async()=>{
+  const list=()=>dates.execute('dateAutomation.list',{brandId:brand},actor);
+  const upcoming=()=>dates.execute('dateAutomation.occurrences',{brandId:brand,view:'upcoming'},actor);
+  const before=await list();
+  expect(await upcoming()).toEqual({rows:[]});
+  expect(await dates.execute('dateAutomation.preview',{brandId:brand,kind:'anniversary',settings,cursor:null},actor))
+    .toEqual({rows:[],next:null});
+  expect(await list()).toEqual(before);
+  expect(await upcoming()).toEqual({rows:[]});
+});
 it('replays draft writes and binds recurring approval to a current owner and a saved revision',async()=>{
   const input={operationKey:randomUUID(),kind:'birthday',expectedRevision:0,brandId:brand,settings};
   expect(await dates.execute('dateAutomation.save',input,actor)).toEqual({kind:'birthday',revision:1});
@@ -83,4 +93,29 @@ it('checks the live connection and each selected channel grant before recurring 
   await dates.execute('dateAutomation.activate',activate,delegated);
   await db.tenant(actor.workspaceId,sql=>sql.query('UPDATE connections SET revoked_at=now() WHERE id=$1',[id]));
   await expect(dates.execute('dateAutomation.list',{brandId:target},delegated)).rejects.toMatchObject({code:'automation_access'});
+});
+
+it('materializes only greetings due within thirty days across a month boundary', async () => {
+  const { planBrand } = await import('../src/server/date-automations/planner.js');
+  const { setDate } = await import('../src/server/subscribers/people.js');
+  const scopedBrand = randomUUID(), kind = 'anniversary';
+  await db.tenant(actor.workspaceId, sql => sql.query(
+    'INSERT INTO brands(workspace_id,id,name) VALUES($1,$2,$3)', [actor.workspaceId, scopedBrand, 'Horizon fixture']));
+  const definition = { brandId: scopedBrand, kind };
+  await dates.execute('dateAutomation.save', { ...definition, expectedRevision: 0, settings, operationKey: randomUUID() }, actor);
+  await dates.execute('dateAutomation.activate', { ...definition, expectedRevision: 1, confirmRecurring: true, operationKey: randomUUID() }, actor);
+  const clock = new Date('2032-03-01T15:00:00Z');
+  await db.brand(actor.workspaceId, scopedBrand, async sql => {
+    await sql.query('UPDATE date_automations SET activated_at=$1,next_scan=$1 WHERE kind=$2', [clock, kind]);
+    for (const [month, day] of [[3, 31], [4, 1]] as const) {
+      const subscriber = randomUUID();
+      await sql.query("INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES($1,$2,$3,$4,'confirmed')",
+        [actor.workspaceId, scopedBrand, subscriber, `horizon-${month}@example.test`]);
+      await setDate(sql, actor.workspaceId, scopedBrand, { subscriber, contact: null }, kind, { month, day }, 'Membership');
+    }
+  });
+  await planBrand(db, actor.workspaceId, scopedBrand, 'capture', clock);
+  const rows = await db.brand(actor.workspaceId, scopedBrand, async sql =>
+    (await sql.query('SELECT local_date::text FROM date_occurrences ORDER BY local_date')).rows);
+  expect(rows).toEqual([{ local_date: '2032-03-31' }]);
 });

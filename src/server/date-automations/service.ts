@@ -44,7 +44,7 @@ export class DateAutomations {
           const email=p.settings.email&&source.subscriber_id&&source.email_state==='confirmed'
             &&(this.mode!=='live'||await productionConsentEligible(sql,source.subscriber_id));
           const template=sms?p.settings.sms:email?p.settings.email!.body:null;
-          rows.push({id:source.id,recipient:source.first_name??source.email??'Phone ending '+source.phone_e164?.slice(-4),
+          rows.push({id:source.id,recipient:source.first_name??source.email??(source.phone_e164?'Phone ending '+source.phone_e164.slice(-4):'Unnamed contact'),
             dueAt:when.dueAt,zone:when.zone,channel:sms?'SMS':email?'Email':'No eligible channel',
             message:template?renderGreeting(template,source.first_name,source.label,when.years):null});
         }

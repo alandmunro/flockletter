@@ -41,7 +41,7 @@ async function inspect(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Da
   const zones=recipientZones(source.time_zone,source.phone_e164,o.settings.zone);
   requireCondition(now>=when.dueAt&&insideWindow(now,zones.windows,o.settings),409,'outside_window','Waiting for the recipient window.');
   const signature=digest(JSON.stringify([source.id,source.subscriber_id,source.contact_id,source.phone_e164,
-    source.first_name,source.label,source.year,source.month,source.day,when.years,when.zone]));
+    source.email,source.first_name,source.label,source.year,source.month,source.day,when.years,when.zone]));
   return {source,when,signature};
 }
 async function checkCompany(sql:Sql,company:string,actor:string) {
@@ -57,8 +57,9 @@ export async function annualClaim(sql:Sql,workspace:string,brand:string,channel:
   const o=(await sql.query<Occurrence>(joinOccurrence+' WHERE o.channel=$1 AND o.delivery_id=$2',[channel,deliveryId])).rows[0];
   if (!o||o.state!=='queued') return 'occurrence_cancelled';
   try {
-    const {source,signature}=await inspect(sql,workspace,brand,o,ports,now);
-    if(signature!==o.source_digest) return 'date_changed';
+    const {source,when,signature}=await inspect(sql,workspace,brand,o,ports,now);
+    // Occurrences queued before the controls release stored a digest of the full source row.
+    if(signature!==o.source_digest && digest(JSON.stringify([source,when.years]))!==o.source_digest) return 'date_changed';
     if(channel==='sms'){
       const current=await smsRoute(sql,brand,source);
       if(!current||current.company_id!==company) return 'no_consent';

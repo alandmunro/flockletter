@@ -11,6 +11,7 @@ type Registration = { mode: string; settingsNeeded?: string[]; registrations: { 
 export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformApi; workspaceId: string; onError: (message: string) => void }) {
   const [settings, setSettings] = useState<Setting[]>([]), [scope, setScope] = useState<'platform' | 'workspace'>('platform'), [reg, setReg] = useState<Registration | null>(null);
   const [edits, setEdits] = useState<Record<string, string>>({}), [reason, setReason] = useState(''), [busy, setBusy] = useState(false), [history, setHistory] = useState<unknown[] | null>(null);
+  const [testPhone, setTestPhone] = useState(''), [reply, setReply] = useState('YES'), [mockResult, setMockResult] = useState('');
   const load = useCallback(async () => {
     try {
       setSettings(await api.call<Setting[]>('platform.textingSettings', workspaceId ? { workspaceId } : {}));
@@ -67,6 +68,22 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
           <button className="btn secondary" disabled={busy} onClick={() => void run(() => api.call('platform.textingProcess', { operationKey: operationKey(), workspaceId }))}>Run worker pass</button>
         </div></div></article>)}
       {reg.numbers.map(n => <p key={n.e164}>Number {n.e164} · {n.state}</p>)}
+      {reg.mode === 'mock' && reg.numbers.some(n => n.state === 'active') && <fieldset disabled={busy}>
+        <legend>Simulated carrier delivery</legend>
+        <label>Fictional subscriber number<input type="tel" placeholder="+13035550123" value={testPhone} onChange={event => setTestPhone(event.target.value)} /></label>
+        <label>Subscriber reply<select value={reply} onChange={event => setReply(event.target.value)}>{['YES','STOP','START'].map(word => <option key={word}>{word}</option>)}</select></label>
+        {reg.numbers.filter(n => n.state === 'active').map(n => <button key={n.e164} className="btn secondary" disabled={!/^\+1[2-9]\d{2}55501\d{2}$/.test(testPhone)} onClick={() => void run(async () => {
+          setMockResult('');
+          await api.call('platform.textingMock', { operationKey: operationKey(), workspaceId, action: { kind:'inbound', from:testPhone, to:n.e164, body:reply } });
+          setMockResult(`Simulated ${reply} to ${n.e164}. Check the subscriber’s consent history.`);
+        })}>Simulate reply to {n.e164}</button>)}
+        <button className="btn secondary" onClick={() => void run(async () => {
+          setMockResult('');
+          await api.call('platform.textingMock', { operationKey:operationKey(), workspaceId, action:{ kind:'fault', target:'send', faults:['timeout_after_commit'] } });
+          setMockResult('The next simulated text in this workspace will time out after carrier acceptance.');
+        })}>Simulate timeout on next text</button>
+        {mockResult && <p role="status">{mockResult}</p>}
+      </fieldset>}
     </section>}
   </>;
 }

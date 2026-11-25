@@ -13,6 +13,8 @@ GFT-1–12; BIL-3; PRC-5; CBK-1–6; IDV-10; CMP-7/8; DSH-3/4/7/9; NTF-2; RET-3
 
 Evidence baseline: GitHub revision `456b64fe6aa21b5e2df71ecddbdf34aa0ba0831d`. Source review and recorded tests are not a fresh execution or production certification.
 
+[Run the local gifting lab](../../../labs/gifting/README.md) to exercise WA-09 with synthetic workspaces, inspect the requirements mapping and reproduce the mock acceptance results.
+
 ## Existing implementation
 
 Tremendous was selected and the separate November 16 sandbox runoff passed core ordering/choice/retry checks. No Flockletter credit ledger, claim workflow or production gift acceptance was established. The runoff build guide predates prepaid-credit and variable-expiry requirements.

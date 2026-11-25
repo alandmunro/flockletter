@@ -23,7 +23,9 @@ export function schedule(source:DateSource, year:number, settings:DateSettings) 
 }
 
 async function planPage(sql:Sql, workspace:string,brand:string,def:ActiveDefinition,now:Date) {
-  const from=new Date(now.getTime()-4*dayMs), through=new Date(now.getTime()+31*dayMs);
+  const horizon=new Date(now.getTime()+30*dayMs);
+  // A recipient's local date can fall in the next month or year at the UTC boundary.
+  const from=new Date(now.getTime()-4*dayMs), through=new Date(horizon.getTime()+dayMs);
   const months=new Set<number>();
   for(let t=from.getTime();t<=through.getTime();t+=dayMs) months.add(new Date(t).getUTCMonth()+1);
   const sources=await dateSources(sql,brand,def.kind,[...months],def.scan_after,100);
@@ -31,7 +33,7 @@ async function planPage(sql:Sql, workspace:string,brand:string,def:ActiveDefinit
     const approximate=Date.UTC(year,source.month-1,source.day);
     if(approximate<from.getTime()-dayMs || approximate>through.getTime()+dayMs) continue;
     const when=schedule(source,year,def.settings);
-    if (!when || when.dueAt<def.activated_at || when.dueAt>through || when.expiresAt<=now) continue;
+    if (!when || when.dueAt<def.activated_at || when.dueAt>horizon || when.expiresAt<=now) continue;
     await sql.query(`INSERT INTO date_occurrences(workspace_id,brand_id,id,kind,revision,date_id,annual_year,local_date,due_at,expires_at,zone,state)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'planned') ON CONFLICT(workspace_id,brand_id,kind,date_id,annual_year)
       DO UPDATE SET revision=EXCLUDED.revision,local_date=EXCLUDED.local_date,due_at=EXCLUDED.due_at,

@@ -1121,12 +1121,22 @@ it('hands an eligible annual email to marketing delivery exactly once, with unsu
   await Promise.all([1,2].map(()=>dispatchBrand(db,f.workspaceId,f.brandId,ports,base)));
   const rows=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT state,reason,channel,delivery_id FROM date_occurrences')).rows);
   expect(rows).toMatchObject([{state:'queued',reason:null,channel:'email'}]);
+  // A delivery queued by the previous release must survive the controls rollout.
+  const {dateSources}=await import('../src/server/date-automations/sources.js');
+  const {digest}=await import('../src/server/content.js');
+  await db.brand(f.workspaceId,f.brandId,async sql=>{
+    const [source]=await dateSources(sql,f.brandId,'birthday',[11],null,1);
+    expect(source?.subscriber_id).toBe(f.subscriberId);
+    await sql.query('UPDATE date_occurrences SET source_digest=$1 WHERE delivery_id=$2',
+      [digest(JSON.stringify([source,null])),rows[0]!.delivery_id]);
+  });
   for(let i=0;i<4;i++)await f.delivery.worker.tick(f.workspaceId,rows[0]!.delivery_id);
   const captures=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT payload FROM customer_delivery_captures')).rows);
   expect(captures).toHaveLength(1);
   expect(captures[0]!.payload).toMatchObject({to:'confirmed@shop.test',subject:'Your birthday greeting'});
   expect(captures[0]!.payload.text).toContain('Happy birthday, friend.');
   expect(captures[0]!.payload.text.toLowerCase()).toContain('unsubscribe');
+  expect((await billing.status(f.workspaceId)).usage).toMatchObject({emails:1,campaigns:1,reservedEmails:0,reservedCampaigns:0});
 
   // Edit another recipient's date after handoff but before submission. Keep the original
   // negative channel receipt and let the planner move the unsent greeting to the new day.
