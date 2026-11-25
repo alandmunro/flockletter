@@ -5,7 +5,9 @@ import { audit, type Interface } from './storage.js';
 export async function enrollmentNotices(sql: Sql, brand: string) {
   const { rows } = await sql.query<{ at: Date; message: string }>(`SELECT at,new_value->>'message' message
     FROM sms_audit WHERE target=$1 AND action='onboarding.notice_captured' ORDER BY at DESC,id DESC LIMIT 20`, [brand]);
-  return rows.map(row => ({ at: row.at.toISOString(), message: row.message }));
+  // Earlier approval notices described the number as ready before workspace sending checks ran.
+  return rows.map(row => ({ at: row.at.toISOString(), message: row.message === 'Registration approved. Your assigned number is ready to send.'
+    ? 'Registration approved. Your assigned number is active.' : row.message }));
 }
 
 // A failed first broadcast never releases its unattempted remainder. The next reviewed broadcast gets a new cohort.

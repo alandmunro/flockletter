@@ -41,7 +41,7 @@ function enrollmentNotice(action: string, value: unknown): string | null {
   const facts = value as { state?: string; status?: string } | null;
   switch (action) {
     case 'registration.submit': return 'Your carrier registration was submitted.';
-    case 'registration.approved': return 'Registration approved. Your assigned number is ready to send.';
+    case 'registration.approved': return 'Registration approved. Your assigned number is active.';
     case 'registration.brand_status': case 'registration.campaign_status':
       if (facts?.status === 'FAILED') return 'The carrier requested corrections. Open business texting to see the next step.';
       if (facts?.status === 'SUSPENDED') return 'The carrier suspended this registration. Sending is on hold.';
