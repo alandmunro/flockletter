@@ -1127,4 +1127,27 @@ it('hands an eligible annual email to marketing delivery exactly once, with unsu
   expect(captures[0]!.payload).toMatchObject({to:'confirmed@shop.test',subject:'Your birthday greeting'});
   expect(captures[0]!.payload.text).toContain('Happy birthday, friend.');
   expect(captures[0]!.payload.text.toLowerCase()).toContain('unsubscribe');
+
+  // Edit another recipient's date after handoff but before submission. Keep the original
+  // negative channel receipt and let the planner move the unsent greeting to the new day.
+  const second=await db.brand(f.workspaceId,f.brandId,async sql=>{
+    const id=(await sql.query<{id:string}>("SELECT id FROM subscribers WHERE email_normalized='another@shop.test'")).rows[0]!.id;
+    await setDate(sql,f.workspaceId,f.brandId,{subscriber:id,contact:null},'birthday',{month:11,day:8},'Birthday');
+    return id;
+  });
+  const later=new Date(base.getTime()+120000);
+  await planBrand(db,f.workspaceId,f.brandId,'capture',later);
+  await dispatchBrand(db,f.workspaceId,f.brandId,ports,later);
+  const initial=await db.brand(f.workspaceId,f.brandId,async sql=>{
+    const row=(await sql.query<{id:string;delivery_id:string}>(`SELECT o.id,o.delivery_id FROM date_occurrences o JOIN contact_dates d
+      ON d.id=o.date_id WHERE d.subscriber_id=$1`,[second])).rows[0]!;
+    await setDate(sql,f.workspaceId,f.brandId,{subscriber:second,contact:null},'birthday',{month:11,day:10},'Birthday');
+    return row;
+  });
+  for(let i=0;i<4;i++)await f.delivery.worker.tick(f.workspaceId,initial.delivery_id);
+  await planBrand(db,f.workspaceId,f.brandId,'capture',new Date(later.getTime()+120000));
+  const result=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query(
+    'SELECT state,delivery_id,local_date::text FROM date_occurrences WHERE id=$1',[initial.id])).rows[0]);
+  expect(result).toEqual({state:'planned',delivery_id:null,local_date:'2026-11-10'});
+  expect(await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT FROM customer_delivery_captures')).rowCount)).toBe(1);
 });
