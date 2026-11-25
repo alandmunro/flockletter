@@ -60,7 +60,17 @@ describe('public enrollment documents', () => {
     const wrong = await scanEnrollmentPages({ ...external, hostedPages: true }, vi.fn());
     expect(wrong.issues[0]?.message).toContain('for this company');
   });
-  it('bounds concurrent website checks without queuing additional requests to the same domain', async () => {
+  it('shares the same deadline across DNS and every allowed redirect, and stops at the redirect limit', async () => {
+    const signals = new Set<AbortSignal>();
+    const resolve = vi.fn(async (_host: string, signal: AbortSignal) => { signals.add(signal); return ['93.184.216.34']; });
+    const get = vi.fn(async (_url: URL, _address: string, signal: AbortSignal) => { signals.add(signal); return { redirect: '/next' }; });
+    const read = enrollmentPageReader('https://staging.example', new Set(), resolve, get);
+    await expect(read('https://elm.example')).rejects.toThrow();
+    expect(get).toHaveBeenCalledTimes(3);
+    expect(resolve).toHaveBeenCalledTimes(3);
+    expect(signals.size).toBe(1);
+  });
+  it('limits concurrent checks to two per website, three globally, and releases capacity after completion', async () => {
     let finish!: (body: string) => void;
     const delayed = new Promise<string>(resolve => { finish = resolve; });
     const read = vi.fn(async () => delayed);
@@ -69,10 +79,15 @@ describe('public enrollment documents', () => {
     const busy = await scanEnrollmentPages(external, read);
     expect(busy.issues[0]?.message).toContain('busy');
     expect(read).toHaveBeenCalledTimes(8);
-    finish('<p>fixture</p>');
-    await Promise.all([first, second]);
-    await scanEnrollmentPages(external, read);
+    const third = scanEnrollmentPages({ ...external, website: 'https://maple.example' }, read);
     expect(read).toHaveBeenCalledTimes(12);
+    const globalBusy = await scanEnrollmentPages({ ...external, website: 'https://cedar.example' }, read);
+    expect(globalBusy.issues[0]?.message).toContain('busy');
+    expect(read).toHaveBeenCalledTimes(12);
+    finish('<p>fixture</p>');
+    await Promise.all([first, second, third]);
+    await scanEnrollmentPages(external, read);
+    expect(read).toHaveBeenCalledTimes(16);
   });
 });
 
@@ -92,6 +107,13 @@ describe('public hosted pages and preflight', () => {
       const urls = hostedBusinessUrls(signupUrl);
       res.type('html').send(optIn(urls.privacyPolicyUrl, urls.smsTermsUrl));
     });
+    app.get('/size-check/:mode', (req, res) => {
+      const limit = 256 * 1024;
+      res.type('html');
+      if (req.params.mode === 'exact') res.end('a'.repeat(limit));
+      else if (req.params.mode === 'stream') { res.write('b'.repeat(limit)); res.end('c'); }
+      else res.send('d'.repeat(limit + 1));
+    });
     server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     origin = 'http://127.0.0.1:' + (server.address() as AddressInfo).port;
@@ -99,6 +121,14 @@ describe('public hosted pages and preflight', () => {
     load.mockImplementation(async (_slug, revision) => makeHostedPolicySnapshot({ ...sample, signupUrl, revision: revision ?? 2 }));
   });
   afterAll(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+
+  it('accepts the document size limit and rejects oversized fixed or streamed responses', async () => {
+    const pages = ['exact', 'fixed', 'stream'].map(mode => origin + '/size-check/' + mode);
+    const read = enrollmentPageReader(origin, new Set(pages));
+    expect(await read(pages[0]!)).toHaveLength(256 * 1024);
+    await expect(read(pages[1]!)).rejects.toThrow();
+    await expect(read(pages[2]!)).rejects.toThrow();
+  });
 
   it('reads the actually served business, terms, privacy and signup pages together', async () => {
     const urls = hostedBusinessUrls(signupUrl);

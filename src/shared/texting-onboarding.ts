@@ -55,12 +55,14 @@ const define = <T extends z.ZodRawShape>(description: string, isMutation: boolea
   description, scope: 'owner' as const, mutation: isMutation, schema: z.strictObject(shape),
 });
 
+const planAcceptance = { acceptedPlan: textPlanId.optional(), acceptedMonthlyUsdCents: z.number().int().nonnegative().optional() };
+
 export const textingOnboardingCommands = {
   'sms.onboardingStatus': define('Read the current owner’s carrier enrollment and required next actions.', false, { companyId }),
-  'sms.onboardingSave': define('Save and accept an EIN-based business and SMS policy snapshot.', true, {
+  'sms.onboardingSave': define('Save the accepted practice registration details and SMS policy revision.', true, {
     ...mutation, expectedRevision: revision.nullable(), business: onboardingBusiness, accepted: z.literal(true),
   }),
-  'sms.onboardingChallenge': define('Start a business email or phone verification challenge.', true, { ...mutation, channel }),
+  'sms.onboardingChallenge': define('Request a practice verification code for this registration and channel.', true, { ...mutation, channel }),
   'sms.onboardingVerify': define('Check the code for the current business verification challenge.', true, {
     ...mutation, channel, code: z.string().regex(/^\d{6}$/),
   }),
@@ -70,8 +72,8 @@ export const textingOnboardingCommands = {
   'sms.onboardingPay': define('Exercise the setup payment in the isolated mock checkout.', true, {
     ...mutation, result: z.enum(['paid', 'declined', 'payer_mismatch']).default('paid'),
   }),
-  'sms.onboardingFinish': define('Confirm a practice setup fee and submit the verified enrollment in one transaction.', true, { ...mutation, acceptedFee: z.number().int().positive(), currency: z.literal('USD') }),
-  'sms.onboardingSubmit': define('Submit the paid, verified enrollment to carrier registration.', true, mutation),
+  'sms.onboardingFinish': define('Confirm a practice setup fee and submit the verified enrollment in one transaction.', true, { ...mutation, ...planAcceptance, acceptedFee: z.number().int().positive(), currency: z.literal('USD') }),
+  'sms.onboardingSubmit': define('Submit the paid, verified enrollment to carrier registration.', true, { ...mutation, ...planAcceptance }),
 } as const;
 export type TextingOnboardingCommand = keyof typeof textingOnboardingCommands;
 

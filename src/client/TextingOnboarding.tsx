@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { twilioBusinessTypes, twilioIndustries } from '../shared/texting-business.js';
 import type { OnboardingBusiness, OnboardingView } from '../shared/texting-onboarding.js';
 import { TextingPlanChoice } from './TextingPlan.js';
+import { practiceTextPlans } from '../shared/texting-commercial.js';
 import { policyPreview } from '../shared/texting-policy-pages.js';
 import type { VerificationChannel } from '../shared/texting-onboarding.js';
 import { operationKey, type Api } from './api.js';
@@ -82,6 +83,8 @@ function Enrollment({ api, company, refreshCompanies, onOpenAudience }: { onOpen
   const verified = view.requiredChannels.every(channel => channel === 'carrier' ? view.carrierVerified : view.verified[channel]);
   const pagesReady = !!view.pageCheck && view.pageCheck.issues.length === 0;
   const published = view.publicPages;
+  const planId = view.checkoutMode === 'capture' ? view.business?.plan : undefined;
+  const offer = planId ? {acceptedPlan:planId, acceptedMonthlyUsdCents:practiceTextPlans[planId].monthly} : {};
   return <>
     <p role="status"><strong>{states[view.state] ?? 'Registration progress'}</strong>{view.message ? ` · ${view.message}` : ''}</p>
     {error && <p className="notice error" role="alert">{error}</p>}
@@ -130,18 +133,19 @@ function Enrollment({ api, company, refreshCompanies, onOpenAudience }: { onOpen
       <h3>Setup payment</h3>
       <p>{new Intl.NumberFormat('en-US', { style: 'currency', currency: view.setupFee.currency }).format(view.setupFee.amount / 100)}
         {view.checkout === 'paid' ? ' setup payment verified' : view.checkoutMode === 'stripe_test' ? ' Stripe test setup fee' : ' simulated setup fee'}</p>
+      {planId && <p>{practiceTextPlans[planId].name} · {new Intl.NumberFormat('en-US', {style:'currency',currency:'USD'}).format(practiceTextPlans[planId].monthly / 100)} per month in practice once the registration is active.</p>}
       {view.checkout === 'pending' && <p role="status">Waiting for Stripe to verify the test payment.</p>}
       {view.checkout === 'declined' && <p className="notice">The practice payment was declined. Try again.</p>}
 
       {view.checkoutMode === 'capture' && view.checkout !== 'paid' && <button className="btn" disabled={busy || !verified || !pagesReady || !!view.review}
-        onClick={()=>void action(async()=>{ await api.call('sms.onboardingFinish', {...context(), acceptedFee:view.setupFee.amount,currency:view.setupFee.currency}); })}>Confirm practice setup and submit</button>}
+        onClick={()=>void action(async()=>{ await api.call('sms.onboardingFinish', {...context(), ...offer, acceptedFee:view.setupFee.amount,currency:view.setupFee.currency}); })}>Confirm practice setup and submit</button>}
       {view.checkout !== 'paid' && <button className="btn secondary" disabled={busy || !verified || !pagesReady || !!view.review} onClick={() => void action(async () => {
         const result = await api.call<{ checkoutUrl?: string }>('sms.onboardingPay', context());
         if (result.checkoutUrl) window.location.assign(result.checkoutUrl);
       })}>{view.checkoutMode === 'stripe_test' ? 'Open Stripe test checkout' : 'Simulate setup payment'}</button>}
       {view.checkout === 'pending' && <button className="btn secondary" disabled={busy} onClick={() => void action(async () => {})}>Refresh payment status</button>}
       <button className="btn" disabled={busy || view.checkout !== 'paid' || !verified || !pagesReady || !!view.review} onClick={() => void action(async () => {
-        await api.call('sms.onboardingSubmit', context());
+        await api.call('sms.onboardingSubmit', {...context(), ...offer});
       })}>Submit carrier registration</button>
     </>}
     {pending && view.progress?.stage === 'carrier_recovery' && <p role="status">An operator is reconciling the existing carrier account or registration. Your application is saved and you can leave this page.</p>}

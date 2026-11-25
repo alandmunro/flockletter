@@ -5,7 +5,7 @@ import { textStateLabel, type SpecialDate } from '../shared/audience.js';
 const monthDay = (d: SpecialDate | null) =>
   d ? (d.year ? String(d.year) : '-') + '-' + String(d.month).padStart(2, '0') + '-' + String(d.day).padStart(2, '0') : '';
 
-function csvCell(value: string) {
+export function csvCell(value: string) {
   // Spreadsheet programs can interpret formula markers in quoted CSV fields.
   const safe = /^[\t\r\n]/u.test(value) || /^\s*[=+\-@＝＋－＠]/u.test(value) ? "'" + value : value;
   return '"' + safe.replaceAll('"', '""') + '"';

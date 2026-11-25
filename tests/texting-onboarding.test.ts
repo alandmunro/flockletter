@@ -112,6 +112,7 @@ it('opens one Stripe test checkout intent and accepts only a matching signed pai
   await expect(cmd('sms.onboardingSubmit')).rejects.toMatchObject({ code: 'setup_payment_required' });
   await send({ payment_status:'unpaid', status:'expired' }, true, 'checkout.session.expired', 'evt_expired');
   expect((await testService.execute('sms.onboardingStatus', {companyId}, c, 'api') as OnboardingView).checkout).toBe('declined');
+  await expect(send({},true,'checkout.session.completed','evt_conflicting')).rejects.toMatchObject({code:'checkout_reconciliation_required'});
   open.mockResolvedValue({id:'cs_test_second',url:'https://checkout.stripe.com/test2'});
   await Promise.all([cmd('sms.onboardingPay'), cmd('sms.onboardingPay')]);
   expect(open.mock.calls.at(-1)![2]).not.toBe(open.mock.calls[0]![2]);
@@ -122,6 +123,7 @@ it('opens one Stripe test checkout intent and accepts only a matching signed pai
   await expect(send({id:'cs_test_second',metadata:{...metadata,plan:'text_1000'}},true,'checkout.session.completed','evt_wrong_plan')).rejects.toMatchObject({code:'checkout_mismatch'});
   const latest = {id:'cs_test_second',metadata};
   await Promise.all([send(latest, true, 'checkout.session.completed','evt_new'), send(latest, true, 'checkout.session.completed','evt_new')]);
+  await expect(cmd('sms.onboardingSave',{business:{...business,ein:'00-0072322',plan:'text_1000'},accepted:true})).rejects.toMatchObject({code:'paid_enrollment_locked'});
   await send({...latest, payment_status:'unpaid'}, true,'checkout.session.async_payment_failed','evt_stale_failure');
   await expect(cmd('sms.onboardingSubmit')).resolves.toEqual({ submitted: true });
   const verified = await db.read(c.workspaceId, sql => sql.query("SELECT 1 FROM sms_audit WHERE action='onboarding.checkout_verified'"));
@@ -218,6 +220,9 @@ it('resumes the verified and paid owner flow, isolates EIN claims and holds a fa
   ] }] });
   expect(await registration(b.workspaceId)).toMatchObject({ registrations: [{ firstBroadcast: [] }] });
   expect((await status(a)).notices.some(n => n.message.startsWith('Sending paused.'))).toBe(true);
+  expect(await run(a, 'sms.status')).toMatchObject({companies:[{canSend:false,sendingHold:'probation_paused'}]});
+  await expect(texting.operator('platform.textingOnboardingReview', {workspaceId:a.workspaceId,companyId:company,expectedRevision:1,
+    operationKey:randomUUID(),action:'complete_probation',reason:'Try ending probation while the first cohort is held.'},operator)).rejects.toMatchObject({code:'registration_not_approved'});
   const resume = () => mutation(a,'sms.onboardingResume',{ reason:'Reviewed the synthetic recipient failure and prepared a new cohort.' });
   expect(await resume()).toEqual({resumed:true});
   await expect(resume()).rejects.toMatchObject({ code:'probation_state_changed' });
@@ -238,9 +243,11 @@ it('completes an authorized setup once and requires a separate carrier verificat
     registrationType:'sole_proprietor',legalName:'Robin Garden',ein:'',plan:'text_300',phone:'+12125550140'}});
   await practiceVerify(sole,'email');
   await practiceVerify(sole,'phone');
-  const finish = (amount=4900) => mutation(sole,'sms.onboardingFinish',{acceptedFee:amount,currency:'USD'});
+  const finish = (amount=4900, monthly=1900) => mutation(sole,'sms.onboardingFinish',{
+    acceptedPlan:'text_300',acceptedMonthlyUsdCents:monthly,acceptedFee:amount,currency:'USD'});
   await expect(finish()).rejects.toMatchObject({code:'identity_unverified'});
   await practiceVerify(sole,'carrier');
+  await expect(finish(4900,3900)).rejects.toMatchObject({code:'setup_agreement_changed'});
   await expect(finish(9900)).rejects.toMatchObject({code:'setup_agreement_changed'});
   expect(await Promise.all([finish(),finish()])).toEqual([{submitted:true},{submitted:true}]);
   for(let pass=0;pass<7;pass++) await tick(sole);

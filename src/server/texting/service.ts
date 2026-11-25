@@ -123,8 +123,9 @@ export class Texting {
   private async status(sql: Sql, w: string, actor: Actor) {
     const settings = await readSettings(sql, w);
     const profile = actor.kind === 'session' && actor.owner ? await this.profile(sql) : null;
-    const companies = (await sql.query<{ id: string; name: string; carrier_brand_id: string | null; registration: string | null; registration_state: string | null; e164: string | null; number_state: string | null }>(`
-      SELECT c.id,c.name,b.id carrier_brand_id,r.id registration,r.state registration_state,n.e164,n.state number_state FROM companies c
+    const companies = (await sql.query<{ id: string; name: string; carrier_brand_id: string | null; registration: string | null; registration_state: string | null; e164: string | null; number_state: string | null; probation_state: string | null }>(`
+      SELECT c.id,c.name,b.id carrier_brand_id,r.id registration,r.state registration_state,n.e164,n.state number_state,
+        b.profile#>>'{onboarding,probation,state}' probation_state FROM companies c
       LEFT JOIN sms_carrier_brands b ON b.company_id=c.id LEFT JOIN sms_registrations r ON r.carrier_brand_id=b.id
       LEFT JOIN sms_numbers n ON n.carrier_brand_id=b.id AND n.state<>'released'
       WHERE $1::uuid[] IS NULL OR (
@@ -139,7 +140,8 @@ export class Texting {
       ? await practicePlanStatus(sql, w, this.now()) : null, profile: profile ? { shortName: profile.short_name, notificationEmail: profile.notification_email, timeZone: profile.time_zone,
         phoneField: profile.phone_field, birthdayField: profile.birthday_field, anniversaryField: profile.anniversary_field, anniversaryLabel: profile.anniversary_label, nameField: profile.name_field, phoneOnlySignup: profile.phone_only_signup, revision: profile.revision } : null,
       companies: companies.map(c => ({ id: c.id, name: c.name, carrierBrand: !!c.carrier_brand_id, registration: c.registration_state ?? 'not_started', number: c.e164, numberState: c.number_state,
-        canSend: c.registration_state === 'approved' && c.number_state === 'active' && !limits.hold })),
+        sendingHold: ['paused', 'suspended'].includes(c.probation_state ?? '') ? 'probation_' + c.probation_state : limits.hold,
+        canSend: c.registration_state === 'approved' && c.number_state === 'active' && !limits.hold && !['paused', 'suspended'].includes(c.probation_state ?? '') })),
       usage: { month: this.now().toISOString().slice(0, 7), used: usage?.segments_used ?? 0, reserved: usage?.segments_reserved ?? 0, allowance: limits.allowance ?? null },
       settingsNeeded: missing };
   }

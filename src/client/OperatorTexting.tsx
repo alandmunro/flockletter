@@ -72,7 +72,7 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
           {r.onboardingRevision && r.onboardingReview && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingOnboardingReview', {
             operationKey: operationKey(), workspaceId, companyId: r.company_id, expectedRevision: r.onboardingRevision, action: 'request_correction', reason,
           }))}>Return enrollment for correction</button>}
-          {r.onboardingRevision && r.state === 'approved' && r.probationState !== 'complete' && r.probationState !== 'suspended' && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingOnboardingReview', {
+          {r.onboardingRevision && r.state === 'approved' && !['complete', 'suspended', 'paused'].includes(r.probationState ?? '') && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingOnboardingReview', {
             operationKey: operationKey(), workspaceId, companyId: r.company_id, expectedRevision: r.onboardingRevision, action: 'complete_probation', reason,
           }))}>End practice probation</button>}
           {reg.mode === 'live' && (['brand', 'campaign', 'number'] as const).map(step => <button key={step} className="btn secondary" disabled={busy || reason.trim().length < 12}

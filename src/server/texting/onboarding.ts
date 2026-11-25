@@ -7,7 +7,7 @@ import { requireCondition } from '../errors.js';
 import type { Actor } from '../service.js';
 import { lockWorkspace } from '../workspace-lock.js';
 import { signupPage, type TextingRegistration } from './registration.js';
-import { setupFeeFor } from '../../shared/texting-commercial.js';
+import { practiceTextPlans, setupFeeFor } from '../../shared/texting-commercial.js';
 import { acceptEnrollmentPlan } from './commercial.js';
 import { hostedBusinessUrls, makeHostedPolicySnapshot } from '../../shared/texting-policy-pages.js';
 import { scanEnrollmentPages } from './website-preflight.js';
@@ -220,6 +220,12 @@ export class TextingOnboarding {
         const business = readBusiness(row);
         const setupFee = setupFeeFor(business.plan);
         const finish = name === 'sms.onboardingFinish';
+        if ((name === 'sms.onboardingSubmit' || name === 'sms.onboardingFinish') && !this.stripe) {
+          const acceptance = commands[name].schema.parse(raw);
+          const plan = business.plan;
+          requireCondition(acceptance.acceptedPlan === plan && acceptance.acceptedMonthlyUsdCents === (plan ? practiceTextPlans[plan].monthly : undefined),
+            409, 'setup_agreement_changed', 'Review the selected texting plan and its monthly practice price before submitting.');
+        }
         if (finish) {
           const acceptance = commands[name].schema.parse(raw);
           requireCondition(!this.stripe && acceptance.acceptedFee === setupFee.amount, 409, 'setup_agreement_changed', 'Review the current practice setup fee before submitting.');
@@ -419,7 +425,7 @@ export class TextingOnboarding {
       delete state.evidence;
       state.challenges = {};
     } else {
-      requireCondition(row.state === 'approved' && state.probation?.state !== 'suspended', 409, 'registration_not_approved', 'Wait for carrier approval before ending probation.');
+      requireCondition(row.state === 'approved' && !['paused', 'suspended'].includes(state.probation?.state ?? ''), 409, 'registration_not_approved', 'The sender must be approved and clear of holds before ending probation.');
       state.probation = { state: 'complete', startsAt: state.probation?.startsAt ?? this.now().toISOString(), overrideAt: this.now().toISOString() };
     }
     await this.record(sql, row, state);
@@ -453,7 +459,8 @@ export class TextingOnboarding {
       const original = readBusiness(row);
       requireCondition(original.ein.replace('-', '') === ein && original.legalName === business.legalName && original.street === street &&
         original.region === region && original.postalCode === postalCode && (original.registrationType ?? 'ein') === (business.registrationType ?? 'ein') &&
-        original.dbaName === business.dbaName && previous.payment.amount === setupFeeFor(business.plan).amount, 409, 'paid_enrollment_locked',
+        original.dbaName === business.dbaName && original.city === city && original.plan === business.plan &&
+        previous.payment.amount === setupFeeFor(business.plan).amount, 409, 'paid_enrollment_locked',
       'Ask an operator to reconcile the setup payment before changing the registered business or its billing address.');
       state.payment = { ...previous.payment, revision };
     }

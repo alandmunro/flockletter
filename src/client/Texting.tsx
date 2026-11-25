@@ -8,7 +8,7 @@ import { TextingOnboarding } from './TextingOnboarding.js';
 
 // FL-SMS-007/008/011/015: the workspace texting page. Every action calls the same commands as the API and MCP.
 type Status = { mode: string; practicePlan?: PracticePlanStatus | null; onboardingAvailable?: boolean; profile: null | { shortName: string | null; notificationEmail: string | null; timeZone: string; phoneField: boolean; birthdayField: boolean; anniversaryField: boolean; anniversaryLabel: string; nameField: boolean; phoneOnlySignup: boolean; revision: number };
-  companies: { id: string; name: string; registration: string; number: string | null; canSend: boolean }[]; usage: { month: string; used: number; reserved: number; allowance: number | null }; settingsNeeded: string[] };
+  companies: { id: string; name: string; registration: string; number: string | null; canSend: boolean; sendingHold?: string | null }[]; usage: { month: string; used: number; reserved: number; allowance: number | null }; settingsNeeded: string[] };
 type Review = { id: string; revision: number; preview: string; encoding: string; perSegment: number; recipients: number; segments: number; gsm7Recipients: number; ucs2Recipients: number;
   allowance: { total: number | null; remaining: number | null; afterSend: number | null }; daysNeeded: number | null; links: { link: string; allowed: boolean }[]; gaps: string[]; digest?: string };
 type Contact = { id: string; phone: string; name: string | null; textable: boolean; notTextableReason: string | null; consents: { companyId: string; state: string }[] };
@@ -21,7 +21,7 @@ const gapText: Record<string, string> = {
   allowance_insufficient: 'This send needs more segments than remain this month.',
   probation_settings_required: 'An operator must configure probation limits before this broadcast can send.',
   probation_suspended: 'This sender needs operator review before sending can resume.',
-  probation_paused: 'The first broadcast test group needs operator review.',
+  probation_paused: 'Sending is paused. Review the sender before restarting probation.',
   probation_template_required: 'During probation, use one of your approved campaign message examples.',
 };
 
@@ -64,7 +64,7 @@ export function Texting({ api, manage = true, onOpenAudience }: { api: Api; mana
     <p className="page-intro">Text customers who confirmed by replying YES. {status.mode === 'mock' ? 'Staging uses a simulated carrier: no real text is sent.' : ''}</p>
     {(error || loadError) && <div role="alert" className="notice error">{error || loadError}</div>}
     <section className="card"><h2>Companies and numbers</h2>
-      {status.companies.map(c => <p key={c.id}><strong>{c.name}</strong> · registration {c.registration.replaceAll('_', ' ')} {c.number ? '· ' + c.number : ''} {c.canSend ? '· ready to send' : ''}</p>)}
+      {status.companies.map(c => <p key={c.id}><strong>{c.name}</strong> · registration {c.registration.replaceAll('_', ' ')} {c.number ? '· ' + c.number : ''} {c.sendingHold ? '· ' + (gapText[c.sendingHold] ?? 'Sending is on hold.') : c.canSend ? '· ready to send' : ''}</p>)}
       <p className="help">Segments this month: {status.usage.used} used, {status.usage.reserved} in progress{status.usage.allowance !== null ? `, of ${status.usage.allowance}` : ''}.</p>
       {status.settingsNeeded.length > 0 && <p className="notice">Waiting for platform settings: {status.settingsNeeded.join(', ')}.</p>}
     </section>
