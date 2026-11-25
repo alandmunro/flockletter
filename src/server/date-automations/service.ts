@@ -1,4 +1,4 @@
-import { schedule } from './planner.js';
+import { replannableOccurrence, schedule } from './planner.js';
 import { productionConsentEligible } from '../customer-audience/service.js';
 import { dateSources,smsRoute } from './sources.js';
 import { renderGreeting } from '../../shared/date-automations.js';
@@ -36,8 +36,14 @@ export class DateAutomations {
         const months=new Set([now.getUTCMonth()+1,end.getUTCMonth()+1,new Date(now.getTime()-86400000).getUTCMonth()+1,new Date(end.getTime()+86400000).getUTCMonth()+1]);
         months.add(new Date(now.getTime()+15*86400000).getUTCMonth()+1);
         const sources=await dateSources(sql,brand,p.kind,[...months],p.cursor,100);
+        const closed=await sql.query<{date_id:string;annual_year:number}>(`SELECT date_id,annual_year FROM date_occurrences
+          WHERE brand_id=$1 AND kind=$2 AND date_id=ANY($3::uuid[]) AND annual_year BETWEEN $4 AND $5
+          AND (${replannableOccurrence}) IS NOT TRUE`,
+          [brand,p.kind,sources.map(source=>source.id),now.getUTCFullYear()-1,end.getUTCFullYear()+1]);
+        const closedYears=new Set(closed.rows.map(row=>row.date_id+'/'+row.annual_year));
         const rows=[];
         for(const source of sources)for(let year=now.getUTCFullYear()-1;year<=end.getUTCFullYear()+1;year++){
+          if(closedYears.has(source.id+'/'+year))continue;
           const when=schedule(source,year,p.settings);
           if(!when||when.dueAt<now||when.dueAt>end)continue;
           const sms=await smsRoute(sql,brand,source);

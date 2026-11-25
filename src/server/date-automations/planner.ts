@@ -14,6 +14,9 @@ export const monthsOfYear=Array.from({length:12},(_,i)=>i+1);
 export const activeDefinitions = `SELECT a.*,r.settings FROM date_automations a JOIN date_automation_revisions r
   USING(workspace_id,brand_id,kind,revision) WHERE enabled`;
 
+// The draft preview and planner must agree on whether this annual receipt can change.
+export const replannableOccurrence = `date_occurrences.state='planned' OR date_occurrences.reason IN ('definition_paused','date_changed')`;
+
 export function schedule(source:DateSource, year:number, settings:DateSettings) {
   const zones=recipientZones(source.time_zone,source.phone_e164,settings.zone);
   const annual=annualOccurrence(source,year,settings.time,zones.clock);
@@ -38,7 +41,7 @@ async function planPage(sql:Sql, workspace:string,brand:string,def:ActiveDefinit
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'planned') ON CONFLICT(workspace_id,brand_id,kind,date_id,annual_year)
       DO UPDATE SET revision=EXCLUDED.revision,local_date=EXCLUDED.local_date,due_at=EXCLUDED.due_at,
         expires_at=EXCLUDED.expires_at,zone=EXCLUDED.zone,state='planned',reason=NULL
-      WHERE date_occurrences.state='planned' OR date_occurrences.reason IN ('definition_paused','date_changed')`,
+      WHERE ${replannableOccurrence}`,
     [workspace,brand,randomUUID(),def.kind,def.revision,source.id,year,when.localDate,when.dueAt,when.expiresAt,when.zone]);
   }
   const more=sources.length===100;

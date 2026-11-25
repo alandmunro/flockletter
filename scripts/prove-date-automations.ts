@@ -59,6 +59,8 @@ try {
   await panel.getByRole('button',{name:'Cancel this greeting'}).click();
   await panel.getByRole('combobox',{name:'Show',exact:true}).selectOption('history');
   await panel.getByRole('listitem').filter({hasText:'owner cancelled'}).waitFor();
+  await panel.getByRole('button',{name:'Preview next 30 days'}).click();
+  await panel.getByText('No upcoming dates on this page.').waitFor();
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   await panel.getByRole('button',{name:'Pause greeting'}).click();
   await panel.getByRole('button',{name:'Review activation'}).waitFor();
