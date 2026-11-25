@@ -1,17 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { operationKey } from './api.js';
 import type { PlatformApi } from './platform-api.js';
 
 // FL-SMS-004/013: operator texting controls. Same commands as /api/operator/v1 and the operator MCP.
 type Setting = { key: string; kind: string; min?: number; max?: number; required: string; description: string; platform: { value: unknown; revision: number } | null; workspace: { value: unknown; revision: number } | null };
+type CohortCount = { first: boolean; state: string; reason: string | null; texts: number; attempts: number };
 type Registration = { mode: string; settingsNeeded?: string[]; registrations: { id: string; company_id: string; legal_name: string; state: string; revision: number; rejection_reason: string | null; carrier_brand_id: string;
-  onboardingRevision?: number | null; onboardingReview?: string | null; probationState?: string | null;
+  onboardingRevision?: number | null; onboardingReview?: string | null; probationState?: string | null; firstBroadcast?: CohortCount[];
   steps: { step: string; state: string; attempts: number; operationKey: string; reason: string | null }[] }[]; numbers: { e164: string; state: string }[] };
 
 export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformApi; workspaceId: string; onError: (message: string) => void }) {
   const [settings, setSettings] = useState<Setting[]>([]), [scope, setScope] = useState<'platform' | 'workspace'>('platform'), [reg, setReg] = useState<Registration | null>(null);
   const [edits, setEdits] = useState<Record<string, string>>({}), [reason, setReason] = useState(''), [busy, setBusy] = useState(false), [history, setHistory] = useState<unknown[] | null>(null);
   const [testPhone, setTestPhone] = useState(''), [reply, setReply] = useState('YES'), [mockResult, setMockResult] = useState('');
+  const pendingFailure = useRef<{ workspaceId: string; key: string } | null>(null);
   const load = useCallback(async () => {
     try {
       setSettings(await api.call<Setting[]>('platform.textingSettings', workspaceId ? { workspaceId } : {}));
@@ -50,6 +52,13 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
         <strong>{r.legal_name}</strong> · {r.state.replaceAll('_', ' ')} · revision {r.revision}{r.rejection_reason ? ' · ' + r.rejection_reason : ''}
         {r.onboardingReview && <p>Enrollment review required · {r.onboardingReview.replaceAll('_', ' ')}</p>}
         {r.probationState && <p>Probation · {r.probationState}</p>}
+        {reg.mode === 'mock' && !!r.firstBroadcast?.length && <div>
+          <h3>First broadcast</h3>
+          <ul>{r.firstBroadcast.map(group => <li key={JSON.stringify([group.first, group.state, group.reason])}>
+            {group.first ? 'First cohort' : 'Remaining texts'} · {group.texts} {group.state}
+            {group.reason && ` (${group.reason.replaceAll('_', ' ')})`} · {group.attempts} carrier {group.attempts === 1 ? 'attempt' : 'attempts'}
+          </li>)}</ul>
+        </div>}
         <ul>{r.steps.map(s => <li key={s.step}>{s.step.replaceAll('_', ' ')}: {s.state}{s.attempts ? ` (${s.attempts} call${s.attempts > 1 ? 's' : ''})` : ''}{s.reason ? ' · ' + s.reason : ''} <code>{s.operationKey}</code></li>)}</ul>
         <div className="button-row">
           {!r.onboardingRevision && ['draft', 'rejected'].includes(r.state) && <button className="btn" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingSubmit', { operationKey: operationKey(), workspaceId, registrationId: r.id, reason }))}>Submit registration</button>}
@@ -82,6 +91,13 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
           await api.call('platform.textingMock', { operationKey:operationKey(), workspaceId, action:{ kind:'fault', target:'send', faults:['timeout_after_commit'] } });
           setMockResult('The next simulated text in this workspace will time out after carrier acceptance.');
         })}>Simulate timeout on next text</button>
+        <button className="btn secondary" onClick={() => void run(async () => {
+          setMockResult('');
+          if (pendingFailure.current?.workspaceId !== workspaceId) pendingFailure.current = { workspaceId, key: operationKey() };
+          await api.call('platform.textingMock', { operationKey: pendingFailure.current.key, workspaceId, action: { kind: 'fault', target: 'send', faults: ['failed'] } });
+          pendingFailure.current = null;
+          setMockResult('The mock carrier will report the next text in this workspace as failed.');
+        })}>Fail next text</button>
         {mockResult && <p role="status">{mockResult}</p>}
       </fieldset>}
     </section>}

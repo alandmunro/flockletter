@@ -162,7 +162,7 @@ it('resumes the verified and paid owner flow, isolates EIN claims and holds a fa
 
   // Fictional opted-in contacts let the worker exercise its real queue admission rules.
   const company = ids.get(a.workspaceId)!;
-  for (const phone of ['+12125550121', '+12125550122']) {
+  for (const phone of ['+12125550121', '+12125550122', '+12125550123']) {
     const result = await run<{ contactId: string }>(a, 'sms.addContact', { operationKey: randomUUID(), companyId: company, phone });
     await db.tenant(a.workspaceId, sql => sql.query("UPDATE sms_consents SET state='opted_in' WHERE contact_id=$1", [result.contactId]));
   }
@@ -180,13 +180,19 @@ it('resumes the verified and paid owner flow, isolates EIN claims and holds a fa
   await run(a, 'sms.confirm', { operationKey: randomUUID(), id: draft.id, expectedRevision: draft.revision, digest: review.digest });
   clock = Date.UTC(new Date(clock).getUTCFullYear(), new Date(clock).getUTCMonth(), new Date(clock).getUTCDate() + 1, 18);
   await texting.operator('platform.textingMock', {
-    operationKey: randomUUID(), workspaceId: a.workspaceId, action: { kind: 'fault', target: 'send', faults: ['undelivered'] },
+    operationKey: randomUUID(), workspaceId: a.workspaceId, action: { kind: 'fault', target: 'send', faults: ['failed'] },
   }, operator);
   await tick(a);
   clock += 65_000;
   await tick(a);
   const result = await run<{ counts: { state: string; reason: string; n: number }[] }>(a, 'sms.sendStatus', { id: draft.id });
   expect(result.counts).toEqual(expect.arrayContaining([
-    expect.objectContaining({ state: 'undelivered', n: 1 }), expect.objectContaining({ state: 'pending', reason: 'probation_paused', n: 1 }),
+    expect.objectContaining({ state: 'failed', n: 1 }), expect.objectContaining({ state: 'pending', reason: 'probation_paused', n: 2 }),
   ]));
+  const registration = (workspaceId: string) => texting.operator('platform.textingRegistration', { workspaceId }, operator);
+  expect(await registration(a.workspaceId)).toMatchObject({ registrations: [{ probationState: 'paused', firstBroadcast: [
+    { first: true, state: 'failed', reason: 'twilio_30005', texts: 1, attempts: 1 },
+    { first: false, state: 'pending', reason: 'probation_paused', texts: 2, attempts: 0 },
+  ] }] });
+  expect(await registration(b.workspaceId)).toMatchObject({ registrations: [{ firstBroadcast: [] }] });
 });
