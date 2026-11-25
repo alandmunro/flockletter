@@ -39,10 +39,7 @@ const orderSchema = z.object({
 });
 export function giftBindings(env: NodeJS.ProcessEnv) {
   // Existing Flockletter subscription test credentials can serve the same staging account.
-  const useBilling =
-    !env.FLOCKLETTER_STRIPE_TEST_KEY &&
-    !env.FLOCKLETTER_STRIPE_TEST_ACCOUNT &&
-    env.FLOCKLETTER_CUSTOMER_BILLING === 'stripe_test';
+  const useBilling = !env.FLOCKLETTER_STRIPE_TEST_KEY && !env.FLOCKLETTER_STRIPE_TEST_ACCOUNT;
   const key = (useBilling ? env.FLOCKLETTER_CUSTOMER_STRIPE_KEY : env.FLOCKLETTER_STRIPE_TEST_KEY) ?? '';
   const account =
     (useBilling ? env.FLOCKLETTER_CUSTOMER_STRIPE_ACCOUNT : env.FLOCKLETTER_STRIPE_TEST_ACCOUNT) ?? '';
@@ -52,6 +49,45 @@ export function giftBindings(env: NodeJS.ProcessEnv) {
   if (!/^acct_[A-Za-z0-9]+$/.test(account)) missing.push('FLOCKLETTER_STRIPE_TEST_ACCOUNT');
   if (!/^TEST_\S+$/.test(tremendous)) missing.push('TREMENDOUS_SANDBOX_API_KEY');
   return { missing, key, account, tremendous };
+}
+export async function availableGiftProviders(env: NodeJS.ProcessEnv, request: typeof fetch = fetch) {
+  const { missing, key, account, tremendous } = giftBindings(env);
+  check(env.APP_ENV === 'staging', 'sandbox_configuration');
+  const status = { stripe: 'missing', tremendous: 'missing' };
+  await Promise.all([
+    (async () => {
+      if (missing.some((name) => name.startsWith('FLOCKLETTER_STRIPE'))) return;
+      try {
+        const stripe = new Stripe(key, {
+          timeout: 10000,
+          maxNetworkRetries: 1,
+          httpClient: Stripe.createFetchHttpClient(request),
+        });
+        status.stripe =
+          (await stripe.accounts.retrieveCurrent()).id === account ? 'verified' : 'account_mismatch';
+      } catch {
+        status.stripe = 'unverified';
+      }
+    })(),
+    (async () => {
+      if (missing.includes('TREMENDOUS_SANDBOX_API_KEY')) return;
+      try {
+        const response = await request(
+          'https://testflight.tremendous.com/api/v2/products?country=US&currency=USD',
+          {
+            headers: { Authorization: 'Bearer ' + tremendous },
+            redirect: 'error',
+            signal: AbortSignal.timeout(10000),
+          },
+        );
+        status.tremendous =
+          response.ok && Array.isArray((await response.json()).products) ? 'verified' : 'unverified';
+      } catch {
+        status.tremendous = 'unverified';
+      }
+    })(),
+  ]);
+  return status;
 }
 export function stagingGiftProviders(
   env: NodeJS.ProcessEnv,

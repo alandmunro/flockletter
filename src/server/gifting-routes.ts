@@ -6,7 +6,12 @@ import type { Database } from './db.js';
 import { requireCondition } from './errors.js';
 import { verifyStagingGifts } from './gifting-evidence.js';
 import { recipientGift, rewardLink, viewReward } from './gifting.js';
-import { giftBindings, GiftProviderError, stagingGiftProviders } from './gifting-providers.js';
+import {
+  availableGiftProviders,
+  giftBindings,
+  GiftProviderError,
+  stagingGiftProviders,
+} from './gifting-providers.js';
 import { sandboxRun, type SandboxResult } from './gifting-sandbox.js';
 import { giftPracticeEnabled, sandboxGiftWorkspace } from '../shared/gifting.js';
 
@@ -22,6 +27,11 @@ export function giftingRoutes(app: Express, config: Config, db?: Database) {
   let sandbox: ReturnType<typeof sandboxRun> | undefined;
   if (config.environment === 'staging') {
     const { missing } = giftBindings(process.env);
+    let providerAccess: { stripe: string; tremendous: string } | undefined;
+    if (process.env.APP_ENV === 'staging' && missing.length)
+      void availableGiftProviders(process.env).then((access) => {
+        providerAccess = access;
+      });
     let phase = 'Awaiting configuration',
       outcome = 'awaiting_configuration',
       problem: string | undefined,
@@ -61,6 +71,7 @@ export function giftingRoutes(app: Express, config: Config, db?: Database) {
           state: outcome,
           phase,
           missing,
+          providerAccess,
           problem,
           result,
         }),
