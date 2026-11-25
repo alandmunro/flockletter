@@ -1,3 +1,5 @@
+import { DateAutomations } from './date-automations/service.js';
+import type { DateCommand } from '../shared/date-automations.js';
 import { coversTextCompany } from './texting/company-access.js';
 import { memberPermissions } from './team.js';
 import {ResendSenderSetup,resendSenderSetupPort,capturedSenderSetupPort} from './customer-delivery/sender-setup.js';
@@ -47,8 +49,9 @@ import { parseSesRoute, type SesRoute } from './campaign/ses-runtime.js';
 import { createTexting, loadTextingSecrets, type TextingSecrets } from './texting/runtime.js';
 import type { Texting } from './texting/service.js';
 
-const prefixes=['senderSetup.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
+const prefixes=['dateAutomation.','senderSetup.','customerBilling.','audienceOnboarding.','teamLifecycle.','support.','retention.','delivery.','operations.','infrastructure.'];
 export class CustomerWorkflows {
+  readonly dates:DateAutomations;
   readonly settings;
   readonly billing:CustomerBilling;
   readonly audience:CustomerAudience;
@@ -77,6 +80,8 @@ export class CustomerWorkflows {
   }
   constructor(readonly db:Database,readonly config:Config,readonly identity:IdentityProvider,readonly env:NodeJS.ProcessEnv=process.env,textingSecrets?:TextingSecrets) {
     const settings=this.settings=customerSettings(config,env);
+    const dateMode=env.FLOCKLETTER_DATE_AUTOMATIONS;
+    this.dates=new DateAutomations(db,dateMode==='capture'&&config.environment!=='production'?'capture':dateMode==='live'?'live':'off',identity.isOwner);
     const gateway=stripeCustomerProvider(config.origin,env);
     const eventGateway=gateway??stripeCustomerEventProvider(config.origin,env);
     this.billing=new CustomerBilling(db,{environment:config.environment,exerciseEnabled:settings.billing==='exercise',
@@ -319,6 +324,7 @@ export class CustomerWorkflows {
     } else if(name.startsWith('customerBilling.'))result=await this.billing.execute(name,raw,actor);
     else if(name.startsWith('audienceOnboarding.'))result=await this.audience.execute(name,raw,actor);
     else if(name.startsWith('teamLifecycle.'))result=await this.team.execute(name,raw,actor);
+    else if(name.startsWith('dateAutomation.'))result=await this.dates.execute(name as DateCommand,raw,actor);
     else if(name.startsWith('support.'))result=await this.support.execute(name,raw,actor);
     else if(name.startsWith('retention.'))result=await this.retention.execute(name,raw,actor);
     else if(name.startsWith('senderSetup.'))result=await this.senderSetup.execute(name,raw,actor);
