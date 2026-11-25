@@ -16,7 +16,7 @@ const owner = (workspaceId: string): Actor => ({
   workspaceId, userId: 'user_' + workspaceId, actorId: 'user:' + workspaceId, kind: 'session', owner: true, scopes: ['read'], brandIds: null,
 });
 const a = owner('org_onboarding_a'), b = owner('org_onboarding_b'), c = owner('org_onboarding_stripe');
-const sole = owner('org_onboarding_sole'), hosted = owner('org_onboarding_hosted');
+const sole = owner('org_onboarding_sole'), hosted = owner('org_onboarding_hosted'), secondHosted = owner('org_onboarding_hosted_other');
 const business = {
   legalName: 'Robin’s Garden LLC', ein: '00-0072321', businessType: 'Limited Liability Corporation', vertical: 'RETAIL',
   website: 'https://garden.example.test', privacyPolicyUrl: 'https://garden.example.test/privacy', smsTermsUrl: 'https://garden.example.test/terms',
@@ -57,7 +57,7 @@ beforeAll(async () => {
   service = new CommandService(db, undefined, checkOwner);
   Object.assign(service, { customer: { texting, owns: () => false } });
   const audience = new CustomerAudience(db, { origin, mode: 'exercise', checkOwner, contactLimit: async () => 250, texting });
-  for (const actor of [a, b, c, sole, hosted]) {
+  for (const actor of [a, b, c, sole, hosted, secondHosted]) {
     await run(actor, 'workspace.initialize', { operationKey: randomUUID(), name: 'Synthetic workspace', brandName: 'Garden' });
     const context = await db.read(actor.workspaceId, async sql => ({
       company: (await sql.query<{ id: string }>('SELECT id FROM companies')).rows[0]!.id,
@@ -265,7 +265,15 @@ it('keeps domainless practice ownership in review until a bound synthetic letter
     companyId:ids.get(hosted.workspaceId),expectedRevision:1,action:'accept_evidence',reason:'Reviewed the attached synthetic ownership evidence.'},operator);
   await expect(review()).rejects.toMatchObject({code:'evidence_unavailable'});
   await expect(mutation(sole,'sms.onboardingEvidence',{companyId:ids.get(hosted.workspaceId),document:'CP575'})).rejects.toMatchObject({code:'not_found'});
-  await mutation(hosted,'sms.onboardingEvidence',{document:'CP575'});
+  const template = (await status(hosted)).evidenceFiles!.CP575!;
+  await expect(mutation(hosted,'sms.onboardingEvidence',{document:'147C',contents:template})).rejects.toMatchObject({code:'practice_letter_mismatch'});
+  await expect(mutation(hosted,'sms.onboardingEvidence',{document:'CP575',contents:template.replace('revision: 1','revision: 2')})).rejects.toMatchObject({code:'practice_letter_mismatch'});
+  await mutation(secondHosted,'sms.onboardingSave',{expectedRevision:null,accepted:true,business:{...business,ein:'00-9400042',hostedPages:true,
+    description:'Fictional second garden.',publicContact:'care@example.test',website:'',smsTermsUrl:'',privacyPolicyUrl:''}});
+  const other = (await status(secondHosted)).evidenceFiles!.CP575!;
+  await expect(mutation(hosted,'sms.onboardingEvidence',{document:'CP575',contents:other})).rejects.toMatchObject({code:'practice_letter_mismatch'});
+  await mutation(hosted,'sms.onboardingEvidence',{document:'CP575',contents:template});
+  expect((await status(hosted)).evidence).toMatchObject({document:'CP575',source:'upload',fingerprint:expect.stringMatching(/^[0-9a-f]{64}$/)});
   await practiceVerify(hosted,'phone'); await practiceVerify(hosted,'email');
   const finish=()=>mutation(hosted,'sms.onboardingFinish',{acceptedFee:4900,currency:'USD'});
   await expect(finish()).rejects.toMatchObject({code:'onboarding_review'});

@@ -45,6 +45,14 @@ type Row = {
   profile: Record<string, unknown> & { onboarding?: Enrollment; campaign?: { samples: string[] } };
 };
 
+// These fixtures contain no business data and have no value as real identity documents.
+function practiceLetter(workspace: string, row: Row, revision: number, document: 'CP575' | '147C') {
+  const ref = requestHash(['practice-ownership-letter-v1', workspace, row.id, revision, document]);
+  return ['FLOCKLETTER STAGING PRACTICE', 'Fictional ownership letter: ' + document,
+    'Enrollment revision: ' + revision, 'Practice reference: ' + ref,
+    'For the simulated enrollment review only. Contains no taxpayer information.', ''].join('\n');
+}
+
 function campaign(business: OnboardingBusiness) {
   const topics = business.vertical === 'FOOD_AND_BEVERAGE'
     ? ['Reservations are open for our weekend special.', 'Here are our new hours for the holiday weekend.']
@@ -111,6 +119,9 @@ export class TextingOnboarding {
       requiredChannels: channelsFor(business?.registrationType === 'sole_proprietor'),
       carrierVerified: personal?.challenges.carrier?.verified === true,
       pageCheck: personal?.pageCheck ?? null, review: personal?.review ?? null, evidence: personal?.evidence ?? null,
+      ...(row && personal && (personal.review === 'payer_mismatch' || personal.review === 'hosted_ownership') && {
+        evidenceFiles: { CP575: practiceLetter(workspace, row, personal.revision, 'CP575'), '147C': practiceLetter(workspace, row, personal.revision, '147C') },
+      }),
       publicPages: business?.hostedPages ? { website: business.website, privacyPolicyUrl: business.privacyPolicyUrl, smsTermsUrl: business.smsTermsUrl } : null,
       progress, probation: personal?.probation?.state ?? null,
       notices: personal && row ? await enrollmentNotices(sql, row.id) : [],
@@ -178,12 +189,20 @@ export class TextingOnboarding {
           return restartPracticeProbation(sql, workspace, row.id, row.registration_id, actor.actorId, via, reason, this.now(), 'paused');
         }
         if (name === 'sms.onboardingEvidence') {
-          const { document } = commands[name].schema.parse(raw);
-          requireCondition(state.review, 409, 'review_unavailable', 'Evidence is only available for a practice ownership review.');
+          const { document, contents } = commands[name].schema.parse(raw);
+          requireCondition(state.review === 'hosted_ownership' || state.review === 'payer_mismatch', 409, 'review_unavailable',
+            'A practice ownership letter is available for hosted-page and payer reviews.');
+          const expected = practiceLetter(workspace, row, state.revision, document);
+          requireCondition(contents === undefined || contents === expected, 422, 'practice_letter_mismatch',
+            'Use the practice letter downloaded for this company, letter type and enrollment revision.');
+          requireCondition(!state.evidence || state.evidence.document === document, 409, 'evidence_already_attached',
+            'A different practice letter is already attached to this review.');
           if (!state.evidence) {
-            state.evidence = { document, attachedAt: this.now().toISOString() };
+            const source = contents === undefined ? 'template' : 'upload';
+            const fingerprint = requestHash(expected);
+            state.evidence = { document, fingerprint, source, attachedAt: this.now().toISOString() };
             await this.record(sql, row, state);
-            await audit(sql, workspace, actor.actorId, via, 'onboarding.practice_evidence', row.id, null, { revision: state.revision, document });
+            await audit(sql, workspace, actor.actorId, via, 'onboarding.practice_evidence', row.id, null, { revision: state.revision, document, fingerprint, source });
           }
           return { attached: true };
         }

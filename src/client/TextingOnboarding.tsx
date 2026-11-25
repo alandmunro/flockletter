@@ -106,8 +106,11 @@ function Enrollment({ api, company, refreshCompanies, onOpenAudience }: { onOpen
     </>}
     {view.state === 'review' && <section><h3>Ownership review</h3>
       {view.review === 'hosted_ownership' || view.review === 'payer_mismatch' ? view.evidence ? <p>Practice letter {view.evidence.document} attached. An operator will review it.</p> : <>
-        <label>Practice IRS letter<select value={document} onChange={e=>setDocument(e.target.value as 'CP575'|'147C')}><option>CP575</option><option>147C</option></select></label>
-        <p>This stages a fictional letter for review. Use synthetic business details here.</p>
+        <label>Practice IRS letter<select value={document} disabled={busy} onChange={e=>setDocument(e.target.value as 'CP575'|'147C')}><option>CP575</option><option>147C</option></select></label>
+        <p>Use the fictional letter for this company and enrollment revision.</p>
+        {view.evidenceFiles?.[document] && <PracticeEvidenceFile key={view.revision + document}
+          expected={view.evidenceFiles[document]} document={document} busy={busy} action={action}
+          attach={contents => api.call('sms.onboardingEvidence', { ...context(), document, contents })} />}
         <button className="btn secondary" disabled={busy} onClick={()=>void action(async()=>{await api.call('sms.onboardingEvidence',{...context(),document});})}>Attach practice ownership letter</button>
       </> : <p>An operator can return this application for correction.</p>}
     </section>}
@@ -157,6 +160,27 @@ function Enrollment({ api, company, refreshCompanies, onOpenAudience }: { onOpen
     {view.probation === 'suspended' && <p>Sending is suspended. An operator must review the sender.</p>}
     {!!view.notices.length && <details><summary>Enrollment updates</summary><ul>{view.notices.map((n,i)=><li key={n.at+n.message+i}><time dateTime={n.at}>{new Date(n.at).toLocaleString()}</time> · {n.message}</li>)}</ul><p>Owner email notifications are captured on staging.</p></details>}
     {pending && <button className="btn secondary" disabled={busy} onClick={() => void action(async () => {})}>Refresh registration status</button>}
+  </>;
+}
+
+function PracticeEvidenceFile({ document, expected, busy, action, attach }: {
+  document: 'CP575' | '147C'; expected: string; busy: boolean;
+  action: (run: () => Promise<void>) => Promise<void>; attach: (contents: string) => Promise<void>;
+}) {
+  const [file, setFile] = useState<File>();
+  const verify = async () => {
+    if (!file || file.size > 1024) throw new Error('Choose a practice letter of 1 KiB or less.');
+    const reference = new TextEncoder().encode(expected);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (bytes.length !== reference.length || !bytes.every((byte, index) => byte === reference[index]))
+      throw new Error('This file does not match the selected practice letter. Download the letter for this enrollment and try again.');
+    await attach(expected);
+  };
+  return <>
+    <a download={'practice-' + document + '.txt'} href={'data:text/plain;charset=utf-8,' + encodeURIComponent(expected)}>Download practice {document} letter</a>
+    <label>Select downloaded practice letter<input type="file" accept="text/plain,.txt" disabled={busy}
+      onChange={event => setFile(event.currentTarget.files?.[0])} /></label>
+    <button className="btn secondary" disabled={busy || !file} onClick={() => void action(verify)}>Verify and attach file</button>
   </>;
 }
 

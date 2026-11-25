@@ -10069,6 +10069,10 @@
                       "CP575",
                       "147C"
                     ]
+                  },
+                  "contents": {
+                    "type": "string",
+                    "maxLength": 1024
                   }
                 },
                 "required": [

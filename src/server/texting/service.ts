@@ -743,7 +743,8 @@ export class Texting {
         return this.db.read(w, async sql => {
           const regs = (await sql.query<RegistrationRow & { company_id: string; legal_name: string }>(`
             SELECT r.*,b.company_id,b.legal_name,b.profile#>'{onboarding,revision}' "onboardingRevision",
-              b.profile#>>'{onboarding,review}' "onboardingReview",b.profile#>>'{onboarding,evidence,document}' "evidenceDocument",b.profile#>>'{onboarding,probation,state}' "probationState"
+              b.profile#>>'{onboarding,review}' "onboardingReview",b.profile#>>'{onboarding,evidence,document}' "evidenceDocument",
+              b.profile#>>'{onboarding,evidence,source}' "evidenceSource",b.profile#>>'{onboarding,evidence,fingerprint}' "evidenceFingerprint",b.profile#>>'{onboarding,probation,state}' "probationState"
             FROM sms_registrations r JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id ORDER BY r.created_at`)).rows;
           const steps = (await sql.query<StepRow>('SELECT * FROM sms_registration_steps ORDER BY created_at')).rows;
           const numbers = (await sql.query('SELECT id,carrier_brand_id AS "carrierBrandId",e164,state FROM sms_numbers')).rows;

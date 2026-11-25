@@ -67,7 +67,7 @@ export const textingOnboardingCommands = {
     ...mutation, channel, code: z.string().regex(/^\d{6}$/),
   }),
   'sms.onboardingScan': define('Check the business website, signup and policy pages for this revision.', true, mutation),
-  'sms.onboardingEvidence': define('Attach a synthetic ownership letter to a practice review.', true, { ...mutation, document: z.enum(['CP575', '147C']) }),
+  'sms.onboardingEvidence': define('Attach a synthetic ownership letter to a practice review.', true, { ...mutation, document: z.enum(['CP575', '147C']), contents: z.string().max(1024).optional() }),
   'sms.onboardingResume': define('Resume a paused practice sender after reviewing the cause.', true, { ...mutation, reason: text(300).min(12) }),
   'sms.onboardingPay': define('Exercise the setup payment in the isolated mock checkout.', true, {
     ...mutation, result: z.enum(['paid', 'declined', 'payer_mismatch']).default('paid'),
@@ -93,7 +93,8 @@ export type OnboardingView = {
   carrierVerified: boolean;
   pageCheck: { checkedAt: string; signupUrl?: string | null; issues: { page: string; message: string }[] } | null;
   review: string | null;
-  evidence: { document: 'CP575' | '147C'; attachedAt: string } | null;
+  evidence: { document: 'CP575' | '147C'; attachedAt: string; fingerprint?: string; source?: 'template' | 'upload' } | null;
+  evidenceFiles?: Partial<Record<'CP575' | '147C', string>>;
   publicPages: { website: string; privacyPolicyUrl: string; smsTermsUrl: string } | null;
   progress: { stage: string; stalled: boolean; since: string } | null;
   probation: string | null;

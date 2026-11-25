@@ -6,7 +6,7 @@ import type { PlatformApi } from './platform-api.js';
 type Setting = { key: string; kind: string; min?: number; max?: number; required: string; description: string; platform: { value: unknown; revision: number } | null; workspace: { value: unknown; revision: number } | null };
 type CohortCount = { first: boolean; state: string; reason: string | null; texts: number; attempts: number };
 type Registration = { mode: string; settingsNeeded?: string[]; reviewQueue?: {id:string;company:string;reason:string;since:string}[]; registrations: { id: string; company_id: string; legal_name: string; state: string; revision: number; rejection_reason: string | null; carrier_brand_id: string;
-  onboardingRevision?: number | null; onboardingReview?: string | null; evidenceDocument?:string | null; probationState?: string | null; firstBroadcast?: CohortCount[];
+  onboardingRevision?: number | null; onboardingReview?: string | null; evidenceDocument?:string | null; evidenceSource?: string | null; evidenceFingerprint?: string | null; probationState?: string | null; firstBroadcast?: CohortCount[];
   steps: { step: string; state: string; attempts: number; operationKey: string; reason: string | null }[] }[]; numbers: { e164: string; state: string }[] };
 
 export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformApi; workspaceId: string; onError: (message: string) => void }) {
@@ -64,7 +64,9 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
         <div className="button-row">
           {!r.onboardingRevision && ['draft', 'rejected'].includes(r.state) && <button className="btn" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingSubmit', { operationKey: operationKey(), workspaceId, registrationId: r.id, reason }))}>Submit registration</button>}
           {r.evidenceDocument && r.onboardingRevision && ['hosted_ownership','payer_mismatch'].includes(r.onboardingReview ?? '') && <>
-            <p>Practice evidence · {r.evidenceDocument} · enrollment revision {r.onboardingRevision}</p>
+            <p>Practice evidence · {r.evidenceDocument} · enrollment revision {r.onboardingRevision}
+              {r.evidenceSource === 'upload' ? ' · Verified practice file' : ' · Generated practice letter'}
+              {r.evidenceFingerprint && ' · Receipt ' + r.evidenceFingerprint.slice(0, 12)}</p>
             <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={()=>void run(()=>api.call('platform.textingOnboardingReview',{
               operationKey:operationKey(),workspaceId,companyId:r.company_id,expectedRevision:r.onboardingRevision,action:'accept_evidence',reason}))}>Accept practice ownership evidence</button></>}
           {r.onboardingRevision && r.probationState === 'suspended' && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={()=>void run(()=>api.call('platform.textingOnboardingReview',{

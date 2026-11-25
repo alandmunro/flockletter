@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import { startDatabase } from './database-fixture.js';
@@ -67,8 +68,35 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
     await publication.getByRole('link', { name: 'Privacy policy', exact: true }).last().click();
     await publication.getByText(/will not be sold or shared with third parties for marketing/).waitFor();
     await publication.close();
-    await button('Attach practice ownership letter').click();
-    await panel.getByText(/Practice letter CP575 attached/).waitFor();
+    const evidence: Record<string, unknown>[] = [];
+    page.on('request', req => {
+      if (new URL(req.url()).pathname === '/api/v1/commands/sms.onboardingEvidence') evidence.push(req.postDataJSON());
+    });
+    assert.ok(await button('Attach practice ownership letter').isVisible());
+    await field('Practice IRS letter').selectOption('147C');
+    const [download] = await Promise.all([page.waitForEvent('download'), panel.getByRole('link', { name: 'Download practice 147C letter' }).click()]);
+    const path = await download.path();
+    assert.ok(path);
+    const bytes = await readFile(path);
+    assert.ok(bytes.length > 1 && bytes.length <= 1024);
+    const upload = async (buffer: Buffer) => {
+      await field('Select downloaded practice letter').setInputFiles({ name: 'local-fixture-name.txt', mimeType: 'text/plain', buffer });
+      await button('Verify and attach file').click();
+    };
+    await upload(Buffer.alloc(1025));
+    await panel.getByRole('alert').filter({ hasText: '1 KiB or less' }).waitFor();
+    const changed = Buffer.from(bytes);
+    changed[0] = changed[0]! ^ 1;
+    await upload(changed);
+    await panel.getByRole('alert').filter({ hasText: 'does not match the selected practice letter' }).waitFor();
+    assert.equal(evidence.length, 0, 'Invalid files must stay in the browser.');
+    await upload(bytes);
+    await panel.getByText(/Practice letter 147C attached/).waitFor();
+    assert.equal(evidence.length, 1);
+    assert.deepEqual(Object.keys(evidence[0]!).sort(), ['companyId', 'contents', 'document', 'expectedRevision', 'operationKey']);
+    assert.equal(evidence[0]!.contents, bytes.toString('utf8'));
+    assert.equal(evidence[0]!.document, '147C');
+    assert.equal(evidence[0]!.expectedRevision, 1);
     assert.equal(await button('Confirm practice setup and submit').isEnabled(), false);
   }
   await button('Request email code').waitFor();
@@ -149,7 +177,7 @@ try {
     throw error;
   }
   assert.deepEqual(errors, []);
-  console.log(hosted ? 'Verified actual hosted business, privacy, terms and opt-in pages, fictional ownership review, one-step setup and submission, number activation and owner notices.'
+  console.log(hosted ? 'Verified actual hosted business, privacy, terms and opt-in pages, local rejection of two invalid files, downloaded letter attachment, fictional ownership review, one-step setup and submission, number activation and owner notices.'
     : 'Verified a blocked policy check, corrected enrollment, captured verification, one-step setup and submission, worker number activation, and owner notices.');
 } finally {
   stop.abort();
