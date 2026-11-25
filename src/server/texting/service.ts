@@ -134,10 +134,11 @@ export class Texting {
       ) ORDER BY c.name`, [actor.brandIds])).rows;
     const limits = this.practiceBilling ? await practicePlanLimits(sql, w, this.now(), settings.monthly_segment_allowance) : { allowance: settings.monthly_segment_allowance, hold: null };
     const usage = (await sql.query<{ segments_used: number; segments_reserved: number }>(`SELECT segments_used,segments_reserved FROM sms_usage WHERE period_month=$1::date`, [this.now().toISOString().slice(0, 8) + '01'])).rows[0];
+    let plan = this.onboarding && !this.options.onboardingStripe && actor.kind === 'session' && actor.owner ? await practicePlanStatus(sql, w, this.now()) : null;
+    if (plan && !await this.options.isOwner(actor.userId, w).catch(() => false)) plan = null;
     const missing = textingSettingKeys.filter(key => ['sending', 'always'].includes(textingSettings[key].required) && settings[key] === undefined);
     if (settings.reconcile_settle_minutes === undefined && (await sql.query(`SELECT 1 FROM sms_registration_steps s JOIN sms_registrations r ON r.id=s.registration_id AND r.revision=s.revision WHERE s.state='uncertain' LIMIT 1`)).rowCount) missing.push('reconcile_settle_minutes');
-    return { mode: this.options.mode, onboardingAvailable: !!this.onboarding, practicePlan: this.onboarding && !this.options.onboardingStripe && actor.kind === 'session' && actor.owner && await this.options.isOwner(actor.userId, w)
-      ? await practicePlanStatus(sql, w, this.now()) : null, profile: profile ? { shortName: profile.short_name, notificationEmail: profile.notification_email, timeZone: profile.time_zone,
+    return { mode: this.options.mode, onboardingAvailable: !!this.onboarding, practicePlan: plan, profile: profile ? { shortName: profile.short_name, notificationEmail: profile.notification_email, timeZone: profile.time_zone,
         phoneField: profile.phone_field, birthdayField: profile.birthday_field, anniversaryField: profile.anniversary_field, anniversaryLabel: profile.anniversary_label, nameField: profile.name_field, phoneOnlySignup: profile.phone_only_signup, revision: profile.revision } : null,
       companies: companies.map(c => ({ id: c.id, name: c.name, carrierBrand: !!c.carrier_brand_id, registration: c.registration_state ?? 'not_started', number: c.e164, numberState: c.number_state,
         sendingHold: ['paused', 'suspended'].includes(c.probation_state ?? '') ? 'probation_' + c.probation_state : limits.hold,
