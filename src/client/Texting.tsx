@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { operationKey, type Api } from './api.js';
 import { blockedCharacters, encodeText, plainText } from '../shared/texting.js';
+import { TextingOnboarding } from './TextingOnboarding.js';
 
 // FL-SMS-007/008/011/015: the workspace texting page. Every action calls the same commands as the API and MCP.
-type Status = { mode: string; profile: null | { shortName: string | null; notificationEmail: string | null; timeZone: string; phoneField: boolean; birthdayField: boolean; anniversaryField: boolean; anniversaryLabel: string; nameField: boolean; phoneOnlySignup: boolean; revision: number };
+type Status = { mode: string; onboardingAvailable?: boolean; profile: null | { shortName: string | null; notificationEmail: string | null; timeZone: string; phoneField: boolean; birthdayField: boolean; anniversaryField: boolean; anniversaryLabel: string; nameField: boolean; phoneOnlySignup: boolean; revision: number };
   companies: { id: string; name: string; registration: string; number: string | null; canSend: boolean }[]; usage: { month: string; used: number; reserved: number; allowance: number | null }; settingsNeeded: string[] };
 type Review = { id: string; revision: number; preview: string; encoding: string; perSegment: number; recipients: number; segments: number; gsm7Recipients: number; ucs2Recipients: number;
   allowance: { total: number | null; remaining: number | null; afterSend: number | null }; daysNeeded: number | null; links: { link: string; allowed: boolean }[]; gaps: string[]; digest?: string };
@@ -13,6 +14,9 @@ const gapText: Record<string, string> = {
   text_too_long: 'The text is longer than 10 segments for some recipients.', no_opted_in_recipients: 'No contacts have confirmed texts from this company yet.',
   registration_not_approved: 'Carrier registration for this company is not approved yet.', texting_setting_required: 'The platform operator has not finished texting settings.',
   allowance_insufficient: 'This send needs more segments than remain this month.',
+  probation_settings_required: 'An operator must configure probation limits before this broadcast can send.',
+  probation_paused: 'The first broadcast test group needs operator review.',
+  probation_template_required: 'During probation, use one of your approved campaign message examples.',
 };
 
 export function Texting({ api, manage = true }: { api: Api; manage?: boolean }) {
@@ -30,6 +34,7 @@ export function Texting({ api, manage = true }: { api: Api; manage?: boolean }) 
       <p className="help">Segments this month: {status.usage.used} used, {status.usage.reserved} in progress{status.usage.allowance !== null ? `, of ${status.usage.allowance}` : ''}.</p>
       {status.settingsNeeded.length > 0 && <p className="notice">Waiting for platform settings: {status.settingsNeeded.join(', ')}.</p>}
     </section>
+    {manage && status.onboardingAvailable && <TextingOnboarding api={api} companies={status.companies} />}
     {manage && <Profile api={api} status={status} busy={busy} act={act} />}
     {status.companies.length > 0
       ? <Composer api={api} companies={status.companies} busy={busy} act={act} />
