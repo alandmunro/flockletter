@@ -9,7 +9,7 @@ import { recipientGift, rewardLink, viewReward } from './gifting.js';
 import {
   availableGiftProviders,
   giftBindings,
-  GiftProviderError,
+  giftProblem,
   stagingGiftProviders,
 } from './gifting-providers.js';
 import { sandboxRun, type SandboxResult } from './gifting-sandbox.js';
@@ -41,6 +41,7 @@ export function giftingRoutes(app: Express, config: Config, db?: Database) {
       const run = sandbox;
       const verify = async (attempt: number) => {
         try {
+          problem = undefined;
           phase = 'Checking providers';
           outcome = 'running';
           result = await run.verify((step) => {
@@ -51,8 +52,7 @@ export function giftingRoutes(app: Express, config: Config, db?: Database) {
           problem = undefined;
         } catch (error) {
           // SDK errors and raw provider responses can contain credentials, PII or reward links.
-          problem =
-            error instanceof GiftProviderError ? error.message : 'provider_verification_incomplete';
+          problem = giftProblem(error);
           outcome = 'incomplete';
           if (attempt < 3) setTimeout(() => void verify(attempt + 1), 30000 * attempt).unref();
         }
