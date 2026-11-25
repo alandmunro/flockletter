@@ -82,6 +82,10 @@ export class CustomerDeliveryWorker {
     if(!deliveryPurposeAllowed(this.options.scope,row.purpose))return 'broadcasts_disabled';
     const selected=await selectedDelivery(sql,this.options,row.workspace_id,row.brand_id);
     if(row.mode!==selected.mode||(row.provider_revision??0)!==selected.revision)return 'delivery_configuration_changed';
+    if(row.date_automation && phase==='submit') {
+      const reason=this.options.annualClaim ? await this.options.annualClaim(sql,row.workspace_id,row.brand_id,row.id,this.now()) : 'automation_off';
+      if(reason) return reason;
+    }
     if(row.purpose==='test') {
       if(!await sameTestDay(sql,row))return 'test_day_expired';
       if(!(await testRecipient(sql,row,undefined,this.options)).matches)return 'test_snapshot_invalid';
@@ -201,7 +205,7 @@ export class CustomerDeliveryWorker {
         }
       } else {
         const blocked=await this.block(sql,row);
-        if(blocked==='authority_verification_unavailable'){
+        if(blocked==='authority_verification_unavailable'||blocked==='outside_window'){
           // This exact claim has not reached submit. Retrying it must recheck all gates.
           await sql.query("UPDATE customer_delivery_recipients SET state='prepared',attempts=attempts-1,reason=$2,next_check_at=$3 WHERE id=$1",[p.id,blocked,new Date(this.now().getTime()+15000)]);
           return;

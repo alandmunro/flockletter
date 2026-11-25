@@ -6,6 +6,7 @@ import {customerCampaignPreflight} from './preflight.js';
 import { randomUUID } from 'node:crypto';
 import { customerDeliveryCommands } from '../../shared/customer-delivery.js';
 import type { Campaign,CampaignContent } from '../../shared/contracts.js';
+import { emptyContent } from '../../shared/contracts.js';
 import { authorize,type Actor } from '../service.js';
 import type { Database,Sql } from '../db.js';
 import { contentGaps,digest,renderPreview } from '../content.js';
@@ -187,7 +188,23 @@ export class CustomerDelivery {
     }
     return {...capture.payload,images};
   }
-  private async review(sql:Sql,actor:Actor,input:ReturnType<typeof customerDeliveryCommands['delivery.review']['schema']['parse']>,testSubscriberId?:string) {
+  /** One recurring revision owns one source campaign. Each occurrence freezes a single
+   * recipient and consumes the same one campaign slot and email allowance as a broadcast. */
+  async queueAnnualEmail(sql:Sql,actor:Actor,brand:string,mailingId:string,subscriber:string,
+    subject:string,body:string,label:string) {
+    const profile=await senderProfile(sql,brand);
+    requireCondition(profile||this.options.mode==='capture',409,'sender_ineligible','Configure a marketing sender.');
+    const source={...emptyContent(),title:label,heading:label,subject:label,body:label,
+      fromName:profile?.fromName??'Captured sender',replyTo:profile?.replyTo??'sender@example.test'};
+    await sql.query('INSERT INTO campaigns(workspace_id,brand_id,id,content) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',
+      [actor.workspaceId,brand,mailingId,source]);
+    const review=await this.review(sql,actor,{brandId:brand,campaignId:mailingId,expectedVersion:1,operationKey:randomUUID()},
+      undefined,{subscriber,subject,body});
+    await sql.query('UPDATE customer_deliveries SET date_automation=true WHERE id=$1',[review.id]);
+    await this.approve(sql,actor,await deliveryRow(sql,review.id,brand));
+    return review.id;
+  }
+  private async review(sql:Sql,actor:Actor,input:ReturnType<typeof customerDeliveryCommands['delivery.review']['schema']['parse']>,testSubscriberId?:string,annual?:{subscriber:string;subject:string;body:string}) {
     const purpose=testSubscriberId?'test':'broadcast';
     requireCondition(this.options.mode!=='off',503,'delivery_off','Choose an available delivery configuration.');
     requireCondition(deliveryPurposeAllowed(this.options.scope,purpose),403,'broadcasts_disabled','Only separately reviewed one-recipient tests are enabled. Broadcasts and schedules are disabled.');
@@ -197,6 +214,7 @@ export class CustomerDelivery {
     requireCondition(draft.version===input.expectedVersion,409,'version_conflict','The campaign changed. Reload its saved version.');
     const campaign:Campaign={id:draft.id,brandId:draft.brand_id,version:draft.version,content:draft.content,
       createdAt:draft.created_at.toISOString(),updatedAt:draft.updated_at.toISOString(),status:'draft'};
+    if (annual) campaign.content={...campaign.content,subject:annual.subject,heading:annual.subject,body:annual.body};
     requireCondition(!contentGaps(campaign).length,422,'incomplete_content','Complete the subject, sender and message before review.');
     const now=this.options.now?.()??new Date(), due=input.dueAt?new Date(input.dueAt):now;
     requireCondition(!input.dueAt||(due>now&&due.getTime()<=now.getTime()+30*86400000),422,'invalid_schedule','Choose a future time within 30 days.');
@@ -212,7 +230,7 @@ export class CustomerDelivery {
           AND ($2::uuid IS NULL OR s.id=$2)
       )
       SELECT *, (SELECT count(*)::int FROM population) total FROM population
-      WHERE state='confirmed' ORDER BY id LIMIT 10001`,[input.segmentId??null,testSubscriberId??null])).rows;
+      WHERE state='confirmed' ORDER BY id LIMIT 10001`,[input.segmentId??null,testSubscriberId??annual?.subscriber??null])).rows;
     requireCondition(population.length<=10000,422,'audience_limit','Choose a group with at most 10,000 confirmed contacts.');
     const selectedProvider=await selectedDelivery(sql,this.options,actor.workspaceId,input.brandId),provider=selectedProvider.provider;
     const selected=await eligibleBroadcastContacts(sql,this.options,selectedProvider.mode,population);

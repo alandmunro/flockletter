@@ -1098,3 +1098,33 @@ it('observes canonical one-recipient test preflight and UTC budget without requi
  const checked=await f.delivery.execute('delivery.preflight',{brandId:f.brandId,campaignId:f.campaign.id,expectedVersion:1,purpose:'test',subscriberId:f.subscriberId},f.actor) as {purpose:string;gaps:unknown[];testBudget:{day:string;limit:number;used:number;remaining:number}};
  expect(checked).toMatchObject({purpose:'test',gaps:[],testBudget:{limit:5,used:0,remaining:5}});expect(checked.testBudget.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 });
+
+it('hands an eligible annual email to marketing delivery exactly once, with unsubscribe and no extra recipients',async()=>{
+  const {DateAutomations}=await import('../src/server/date-automations/service.js');
+  const {planBrand}=await import('../src/server/date-automations/planner.js');
+  const {annualClaim,dispatchBrand}=await import('../src/server/date-automations/dispatch.js');
+  const {setDate}=await import('../src/server/subscribers/people.js');
+  const f=await factory(),dates=new DateAutomations(db,'capture',async()=>true);
+  const settings={time:'09:00',startHour:9,endHour:20,zone:'America/New_York',sms:'Happy birthday!',
+    email:{subject:'Your birthday greeting',body:'Happy birthday, {{firstName}}.'}};
+  const keys={brandId:f.brandId,kind:'birthday'};
+  await dates.execute('dateAutomation.save',{...keys,operationKey:randomUUID(),expectedRevision:0,settings},f.actor);
+  await dates.execute('dateAutomation.activate',{...keys,operationKey:randomUUID(),expectedRevision:1,confirmRecurring:true},f.actor);
+  await db.brand(f.workspaceId,f.brandId,async sql=>{
+    await sql.query("UPDATE date_automations SET activated_at=$1,next_scan=$1",[new Date('2026-11-07')]);
+    await setDate(sql,f.workspaceId,f.brandId,{subscriber:f.subscriberId,contact:null},'birthday',{month:11,day:8},'Birthday');
+    await sql.query("INSERT INTO subscribers(workspace_id,brand_id,id,email_normalized,state) VALUES($1,$2,$3,'another@shop.test','confirmed')",[f.workspaceId,f.brandId,randomUUID()]);
+  });
+  const ports={mode:'capture' as const,isOwner:f.options.isOwner,delivery:f.delivery};
+  f.options.annualClaim=(sql,w,b,id,now)=>annualClaim(sql,w,b,'email',id,ports,now);
+  await planBrand(db,f.workspaceId,f.brandId,'capture',base);
+  await Promise.all([1,2].map(()=>dispatchBrand(db,f.workspaceId,f.brandId,ports,base)));
+  const rows=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT state,reason,channel,delivery_id FROM date_occurrences')).rows);
+  expect(rows).toMatchObject([{state:'queued',reason:null,channel:'email'}]);
+  for(let i=0;i<4;i++)await f.delivery.worker.tick(f.workspaceId,rows[0]!.delivery_id);
+  const captures=await db.brand(f.workspaceId,f.brandId,async sql=>(await sql.query('SELECT payload FROM customer_delivery_captures')).rows);
+  expect(captures).toHaveLength(1);
+  expect(captures[0]!.payload).toMatchObject({to:'confirmed@shop.test',subject:'Your birthday greeting'});
+  expect(captures[0]!.payload.text).toContain('Happy birthday, friend.');
+  expect(captures[0]!.payload.text.toLowerCase()).toContain('unsubscribe');
+});

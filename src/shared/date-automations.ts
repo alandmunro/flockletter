@@ -29,3 +29,9 @@ export const dateCommands = {
   'dateAutomation.cancel':commandDefinition('Cancel one annual greeting.',manage,true,{brandId,operationKey,id:z.uuid()}),
 };
 export type DateCommand = keyof typeof dateCommands;
+
+export function renderGreeting(template:string,firstName:string|null,label:string,years:number|null) {
+  return template.replace(/\{\{(firstName|label|years)\}\}/g,(_,field:string)=>
+    field==='firstName' ? firstName??'friend' : field==='label' ? label : years===null?'':String(years))
+    .replace(/[ \t]{2,}/g,' ').trim();
+}

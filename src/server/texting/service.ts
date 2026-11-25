@@ -221,7 +221,7 @@ export class Texting {
     return send;
   }
   /** FL-SMS-010: only the workspace's verified domain or its Flockletter-hosted pages. */
-  private async linkProblems(sql: Sql, companyId: string, body: string) {
+  async linkProblems(sql: Sql, companyId: string, body: string) {
     const links = findLinks(body);
     if (!links.length) return { links, problems: [] as string[] };
     const domains: string[] = [];
