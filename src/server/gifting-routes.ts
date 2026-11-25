@@ -6,7 +6,14 @@ import type { Database } from './db.js';
 import { requireCondition } from './errors.js';
 import { verifyStagingGifts } from './gifting-evidence.js';
 import { recipientGift, rewardLink, viewReward } from './gifting.js';
-import { giftPracticeEnabled } from '../shared/gifting.js';
+import {
+  availableGiftProviders,
+  giftBindings,
+  GiftProviderError,
+  stagingGiftProviders,
+} from './gifting-providers.js';
+import { sandboxRun, type SandboxResult } from './gifting-sandbox.js';
+import { giftPracticeEnabled, sandboxGiftWorkspace } from '../shared/gifting.js';
 
 const recipient = z
   .object({
@@ -17,7 +24,58 @@ const recipient = z
   .strict();
 export function giftingRoutes(app: Express, config: Config, db?: Database) {
   if (!giftPracticeEnabled(config.environment) || !db) return;
+  let sandbox: ReturnType<typeof sandboxRun> | undefined;
   if (config.environment === 'staging') {
+    const { missing } = giftBindings(process.env);
+    let providerAccess: { stripe: string; tremendous: string } | undefined;
+    if (process.env.APP_ENV === 'staging' && missing.length)
+      void availableGiftProviders(process.env).then((access) => {
+        providerAccess = access;
+      });
+    let phase = 'Awaiting configuration',
+      outcome = 'awaiting_configuration',
+      problem: string | undefined,
+      result: SandboxResult | undefined;
+    if (!missing.length && process.env.APP_ENV === 'staging') {
+      sandbox = sandboxRun(db, stagingGiftProviders(process.env));
+      const run = sandbox;
+      const verify = async (attempt: number) => {
+        try {
+          phase = 'Checking providers';
+          outcome = 'running';
+          result = await run.verify((step) => {
+            phase = step;
+          });
+          outcome = 'passed';
+          phase = 'Refund verified';
+          problem = undefined;
+        } catch (error) {
+          // SDK errors and raw provider responses can contain credentials, PII or reward links.
+          problem =
+            error instanceof GiftProviderError ? error.message : 'provider_verification_incomplete';
+          outcome = 'incomplete';
+          if (attempt < 3) setTimeout(() => void verify(attempt + 1), 30000 * attempt).unref();
+        }
+      };
+      void verify(1);
+    }
+    app.get('/api/staging/gifting/providers', (_req, res) =>
+      res
+        .set('Cache-Control', 'no-store')
+        .status(outcome === 'passed' ? 200 : 503)
+        .json({
+          environment: 'staging',
+          providers: ['stripe_test', 'tremendous_sandbox'],
+          buildSha: config.buildSha,
+          unit: 'USD cents',
+          state: outcome,
+          phase,
+          missing,
+          providerAccess,
+          problem,
+          result,
+        }),
+    );
     let evidence: Awaited<ReturnType<typeof verifyStagingGifts>> | undefined;
     let state = 'running';
     void verifyStagingGifts(db).then(
@@ -83,10 +141,30 @@ export function giftingRoutes(app: Express, config: Config, db?: Database) {
           'Open the gift page to confirm your claim.',
         );
       const { workspace, person, token } = recipient.parse(req.body);
-      const offer = await recipientGift(db, workspace, person, token, action === 'claim');
+      if (workspace === sandboxGiftWorkspace)
+        requireCondition(
+          sandbox,
+          503,
+          'gift_provider_unavailable',
+          'The sandbox provider is unavailable.',
+        );
+      const offer = await recipientGift(
+        db,
+        workspace,
+        person,
+        token,
+        action === 'claim',
+        sandbox?.submit,
+      );
       res.json(
         offer.state === 'claimed'
-          ? { ...offer, reward: await rewardLink(db, workspace, person, token) }
+          ? {
+              ...offer,
+              reward:
+                workspace === sandboxGiftWorkspace && sandbox
+                  ? await sandbox.link(person)
+                  : await rewardLink(db, workspace, person, token),
+            }
           : offer,
       );
     });

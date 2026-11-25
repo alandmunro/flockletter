@@ -188,7 +188,7 @@ export class GiftLab {
       name,
     );
   }
-  launch(name, { label, rows, face, days, products, probationRemaining = 0 }) {
+  launch(name, { label, rows, face, days, products, probationRemaining = 0 }, allowedProducts = catalog) {
     requireThat(
       typeof label === 'string' && label.length > 0 && positive(face) && [15, 30, 60].includes(days),
       'Invalid campaign terms',
@@ -198,7 +198,7 @@ export class GiftLab {
       'Choose one or five to ten products',
     );
     requireThat(
-      new Set(products).size === products.length && products.every((p) => catalog.includes(p)),
+      new Set(products).size === products.length && products.every((p) => allowedProducts.includes(p)),
       'Invalid catalog selection',
     );
     requireThat(
@@ -341,7 +341,7 @@ export class GiftLab {
     if (order?.state === 'approved' && order.face === o.face && order.products === o.products)
       this.finish(o, 'claimed');
   }
-  tick(days = 0) {
+  tick(days = 0, reconcilePending = true) {
     requireThat(Number.isSafeInteger(days) && days >= 0 && days <= 365, 'Invalid clock advance');
     this.atomic(() => {
       this.run('UPDATE platform SET day=day+?', days);
@@ -353,6 +353,7 @@ export class GiftLab {
           }
       }
     });
+    if (!reconcilePending) return;
     for (const name of workspaces)
       for (const o of this.offers(name)) if (o.state === 'pending') this.reconcile(name, o.id);
   }
