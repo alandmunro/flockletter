@@ -21,20 +21,48 @@ const gapText: Record<string, string> = {
 
 export function Texting({ api, manage = true }: { api: Api; manage?: boolean }) {
   const [status, setStatus] = useState<Status | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { try { setStatus(await api.call<Status>('sms.status', {})); } catch (e) { setError(e instanceof Error ? e.message : 'Texting is unavailable.'); } }, [api]);
-  useEffect(() => { void load(); }, [load]);
+  const [loadError, setLoadError] = useState('');
+  const latestRequest = useRef(0);
+  const load = useCallback(async () => {
+    const request = ++latestRequest.current;
+    try {
+      const next = await api.call<Status>('sms.status', {});
+      if (request === latestRequest.current) {
+        setStatus(next);
+        setLoadError('');
+      }
+    } catch (failure) {
+      if (request === latestRequest.current) setLoadError(failure instanceof Error ? failure.message : 'Texting is unavailable.');
+    }
+  }, [api]);
+  useEffect(() => {
+    void load();
+    return () => { latestRequest.current++; };
+  }, [load]);
+  const pending = status?.companies.some(company => ['provisioning', 'brand_pending', 'campaign_pending'].includes(company.registration));
+  const pollMs = pending ? 5000 : 30000;
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      if (document.visibilityState === 'visible') await load();
+      if (!stopped) timer = setTimeout(poll, pollMs);
+    };
+    timer = setTimeout(poll, pollMs);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [load, pollMs]);
   const act = async (action: () => Promise<unknown>) => { setBusy(true); setError(''); try { await action(); await load(); } catch (e) { setError(e instanceof Error ? e.message : 'The action failed.'); } finally { setBusy(false); } };
-  if (!status) return <section className="card"><h1 className="page-heading">Texting</h1>{error ? <div role="alert" className="notice error">{error}</div> : <p>Loading texting…</p>}</section>;
+  if (!status) return <section className="card"><h1 className="page-heading">Texting</h1>{loadError ? <div role="alert" className="notice error">{loadError}</div> : <p>Loading texting…</p>}</section>;
   return <>
     <h1 className="page-heading">Texting</h1>
     <p className="page-intro">Text customers who confirmed by replying YES. {status.mode === 'mock' ? 'Staging uses a simulated carrier: no real text is sent.' : ''}</p>
-    {error && <div role="alert" className="notice error">{error}</div>}
+    {(error || loadError) && <div role="alert" className="notice error">{error || loadError}</div>}
     <section className="card"><h2>Companies and numbers</h2>
       {status.companies.map(c => <p key={c.id}><strong>{c.name}</strong> · registration {c.registration.replaceAll('_', ' ')} {c.number ? '· ' + c.number : ''} {c.canSend ? '· ready to send' : ''}</p>)}
       <p className="help">Segments this month: {status.usage.used} used, {status.usage.reserved} in progress{status.usage.allowance !== null ? `, of ${status.usage.allowance}` : ''}.</p>
       {status.settingsNeeded.length > 0 && <p className="notice">Waiting for platform settings: {status.settingsNeeded.join(', ')}.</p>}
     </section>
-    {manage && status.onboardingAvailable && <TextingOnboarding api={api} companies={status.companies} />}
+    {manage && status.onboardingAvailable && <TextingOnboarding api={api} companies={status.companies} refreshCompanies={load} />}
     {manage && <Profile api={api} status={status} busy={busy} act={act} />}
     {status.companies.length > 0
       ? <Composer api={api} companies={status.companies} busy={busy} act={act} />
