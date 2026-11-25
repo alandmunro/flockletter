@@ -89,7 +89,7 @@ export class CustomerWorkflows {
     const giftDelivery=configuredGiftDelivery(config.environment,env.FLOCKLETTER_GIFT_DELIVERY,this.gifts);
     const settings=this.settings=customerSettings(config,env);
     const dateMode=env.FLOCKLETTER_DATE_AUTOMATIONS;
-    this.dates=new DateAutomations(db,dateMode==='capture'&&config.environment!=='production'?'capture':dateMode==='live'?'live':'off',identity.isOwner,giftDelivery);
+    this.dates=new DateAutomations(db,dateMode==='capture'&&config.environment!=='production'?'capture':dateMode==='live'?'live':'off',identity.isOwner,undefined,giftDelivery);
     const gateway=stripeCustomerProvider(config.origin,env);
     const eventGateway=gateway??stripeCustomerEventProvider(config.origin,env);
     this.billing=new CustomerBilling(db,{environment:config.environment,exerciseEnabled:settings.billing==='exercise',

@@ -5,7 +5,7 @@ import { operationKey,type Api } from './api.js';
 type Props={api:Api;brandId:string};
 type LegacyDate={id:string;label:string;month:number;day:number;ending:string;version:string};
 type Catalog={mode:string;giftDeliveryEnabled:boolean;unattributed:LegacyDate[];definitions:DateDefinition[];health:{oldest_due:string|null;uncertain:number;skipped:number}};
-type Preview={rows:{id:string;recipient:string;dueAt:string;zone:string;channel:string;message:string|null}[];next:string|null};
+type Preview={rows:{id:string;recipient:string;dueAt:string;zone:string;hold?:string|null;channel:string;message:string|null}[];next:string|null};
 const title=(kind:DateKind)=>kind==='birthday'?'Birthday':'Anniversary';
 const defaults=(kind:DateKind):DateSettings=>({time:'10:00',zone:Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC',startHour:9,endHour:20,
   sms:kind==='birthday'?'Happy birthday, {{firstName}}!':'Happy {{label}}, {{firstName}}!',email:null});
@@ -80,7 +80,7 @@ function Editor({api,brandId,kind,def,mode,giftDeliveryEnabled,changed}:Props&{k
     <p><strong>Example without a name or year</strong> {renderGreeting(settings.sms,null,title(kind),null)}</p></>}
     <button type="button" onClick={()=>void action('preview')}>Preview next 30 days</button>
     {preview&&<div role="status">{!preview.rows.length&&<p>No upcoming dates on this page.</p>}
-      <ul>{preview.rows.map(r=><li key={r.id}>{r.recipient} · {local(r.dueAt,r.zone)} ({r.zone}) · {r.channel} {r.message}</li>)}</ul>
+      <ul>{preview.rows.map(r=><li key={r.id}>{r.recipient} · {r.hold?'Held · '+r.hold.replaceAll('_',' ')+' · '+new Date(r.dueAt).toLocaleDateString(undefined,{timeZone:r.zone}):local(r.dueAt,r.zone)} ({r.zone}) · {r.channel} {r.message}</li>)}</ul>
       {preview.next&&<button onClick={()=>void action('preview',preview.next)}>Preview more contacts</button>}</div>}
     <button type="button" disabled={!dirty} onClick={()=>void action('save')}>{def?.enabled?'Save and pause':'Save draft'}</button>
     {def?.enabled?<button type="button" onClick={()=>void action('pause')}>Pause greeting</button>:

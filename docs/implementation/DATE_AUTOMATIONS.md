@@ -4,6 +4,10 @@ Owners configure each brand in **Audience → Birthday and anniversary automatio
 
 The SMS template supports `{{firstName}}`, `{{label}}` and `{{years}}`. Wrap optional wording in `{{#years}}…{{/years}}` to omit the whole phrase when an anniversary year is unavailable. The preview substitutes “friend” for a missing first name. Dates without evidence of a source brand stay out of the scheduler. The controls show attributable legacy phone dates for explicit confirmation. Shared household phones are excluded from personalized SMS.
 
+The SMS preview shows the first time allowed by both the greeting window and the effective operator texting hours, using the same recipient zones as the SMS worker. A greeting with no permitted SMS time is shown as held. Email fallback uses the greeting window.
+
+The operator setting `annual_catch_up_days` controls how many local days after the occasion remain eligible. The platform starts at two. Operators may set zero through 30 and may override the platform value for a workspace. Changes are audited and apply to outstanding work at planning and before submission. A completed, cancelled or expired greeting keeps its receipt. After an outage, the worker resumes from its last complete scan and records eligible dates it missed outside the window as expired, including dates it had never queued. Dates first entered after the missed occasion do not create expired history.
+
 ## Release and capture verification
 
 1. Merge the five changes in order. For each candidate verify the exact commit on main and its Foundation and self-host checks. Record the currently serving staging web and worker revisions. Rehearse each schema change against those revisions, then use the protected staging migration runner and the repository's staging deployment workflow. Verify the deployed version and readiness for both processes. [Release operations](RELEASE_RUNNER.md)

@@ -1182,7 +1182,7 @@ it('binds captured annual SMS and fallback email to one reserved offer and reche
   const { Texting } = await import('../src/server/texting/service.js');
   const f = await factory(), w = f.workspaceId, b = f.brandId, phoneId = randomUUID();
   const policy={mode:'capture' as const,account:'acct_test'};
-  const dates = new DateAutomations(db, 'capture', f.options.isOwner, policy);
+  const dates = new DateAutomations(db, 'capture', f.options.isOwner, undefined, policy);
   const campaignId = randomUUID();
   const offer = {
     id: randomUUID(), brand: b, campaign: campaignId, person: f.subscriberId, face: 500,

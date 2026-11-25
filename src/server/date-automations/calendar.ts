@@ -35,13 +35,13 @@ export function wallMinute(year: number, month: number, day: number, time: strin
   throw Error('Cannot resolve local send time.');
 }
 
-export function annualOccurrence(source: AnnualDate, year: number, time: string, zone: string) {
+export function annualOccurrence(source: AnnualDate, year: number, time: string, zone: string, catchUpDays: number) {
   if (source.year !== null && source.year > year) return null;
   const monthEnd = new Date(Date.UTC(year, source.month, 0)).getUTCDate();
   const observed = source.month === 2 && source.day === 29 ? Math.min(29, monthEnd) : source.day;
   if (source.month < 1 || source.month > 12 || observed < 1 || observed > monthEnd) return null;
   const date = new Date(Date.UTC(year, source.month - 1, observed));
-  const cutoff = new Date(date.getTime() + 3 * dayMs);
+  const cutoff = new Date(date.getTime() + (1 + catchUpDays) * dayMs);
   return {
     localDate: date.toISOString().slice(0,10),
     dueAt: wallMinute(year, source.month, observed, time, zone),
