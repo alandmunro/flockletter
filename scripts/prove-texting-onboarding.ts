@@ -117,7 +117,7 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
   await panel.getByText('Enrollment updates', { exact: true }).click();
   await panel.getByText(/owner email notifications are captured/i).waitFor();
   await panel.getByRole('listitem').filter({ hasText: 'Your carrier registration was submitted.' }).waitFor();
-  await panel.getByRole('listitem').filter({ hasText: 'Registration approved. Your assigned number is ready to send.' }).waitFor();
+  await panel.getByRole('listitem').filter({ hasText: 'Registration approved. Your assigned number is active.' }).waitFor();
 }
 
 const fixture = await startDatabase();

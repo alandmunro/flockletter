@@ -4,6 +4,10 @@ import { audit, requireSettings, type SettingValues } from './storage.js';
 
 const policyKeys = ['probation_canary_count', 'probation_canary_minutes', 'probation_min_days', 'probation_delivered_min',
   'probation_initial_days', 'probation_initial_daily_limit', 'probation_daily_limit'] as const;
+export function needsProbationSettings(settings: SettingValues) {
+  return policyKeys.some(key => settings[key] === undefined);
+}
+
 type State = { state: 'canary' | 'active' | 'paused' | 'complete' | 'suspended' | 'awaiting_canary'; startsAt: string; sendId?: string; members?: string[] };
 type Profile = { id: string; samples: string[] | null; state: State | null; approved_at: Date };
 
@@ -25,7 +29,7 @@ export async function probationGaps(sql: Sql, company: string, template: string,
   if (pending.state?.state === 'suspended') return ['probation_suspended'];
   if (pending.state?.state === 'paused') return ['probation_paused'];
   const gaps = [];
-  if (policyKeys.some(key => settings[key] === undefined)) gaps.push('probation_settings_required');
+  if (needsProbationSettings(settings)) gaps.push('probation_settings_required');
   if (!pending.samples?.some(sample => plainText(sample) === template)) gaps.push('probation_template_required');
   return gaps;
 }
@@ -50,7 +54,7 @@ export async function probationHold(sql: Sql, workspace: string, company: string
   if (current?.state === 'suspended') return hold('probation_suspended');
   if (current?.state === 'paused') return hold('probation_paused', new Date(now.getTime() + 15 * 60_000));
   if (!current || current.state === 'awaiting_canary') return hold('probation_canary_required');
-  if (policyKeys.some(key => settings[key] === undefined)) return hold('probation_settings_required');
+  if (needsProbationSettings(settings)) return hold('probation_settings_required');
   const policy = requireSettings(settings, policyKeys);
   if (current.state === 'canary') {
     const cohort = (await sql.query<{ state: string; updated_at: Date }>(

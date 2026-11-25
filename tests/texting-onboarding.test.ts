@@ -253,7 +253,15 @@ it('completes an authorized setup once and requires a separate carrier verificat
   for(let pass=0;pass<7;pass++) await tick(sole);
   const view=await status(sole);
   expect(view).toMatchObject({state:'approved',checkout:'paid',requiredChannels:['email','phone','carrier']});
-  expect(view.notices.filter(n=>n.message.startsWith('Registration approved.'))).toHaveLength(1);
+  expect(view.notices.filter(n=>n.message === 'Registration approved. Your assigned number is active.')).toHaveLength(1);
+  const sender = () => run(sole, 'sms.status');
+  expect(await sender()).toMatchObject({companies:[{registration:'approved',numberState:'active',canSend:false,sendingHold:'texting_setting_required'}]});
+  for (const [key, value] of Object.entries(settings)) {
+    await texting.operator('platform.textingSetSetting', {workspaceId:sole.workspaceId,operationKey:randomUUID(),key,value,expectedRevision:0,
+      reason:'Synthetic workspace sending-readiness exercise.'},operator);
+    if (key === 'monthly_segment_allowance') expect(await sender()).toMatchObject({companies:[{canSend:false,sendingHold:'probation_settings_required'}]});
+  }
+  expect(await sender()).toMatchObject({companies:[{canSend:true,sendingHold:null}]});
   expect(await db.read(sole.workspaceId,sql=>sql.query("SELECT id FROM sms_audit WHERE action='onboarding.checkout_capture'").then(r=>r.rowCount))).toBe(1);
 });
 
