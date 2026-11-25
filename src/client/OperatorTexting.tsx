@@ -5,8 +5,8 @@ import type { PlatformApi } from './platform-api.js';
 // FL-SMS-004/013: operator texting controls. Same commands as /api/operator/v1 and the operator MCP.
 type Setting = { key: string; kind: string; min?: number; max?: number; required: string; description: string; platform: { value: unknown; revision: number } | null; workspace: { value: unknown; revision: number } | null };
 type CohortCount = { first: boolean; state: string; reason: string | null; texts: number; attempts: number };
-type Registration = { mode: string; settingsNeeded?: string[]; registrations: { id: string; company_id: string; legal_name: string; state: string; revision: number; rejection_reason: string | null; carrier_brand_id: string;
-  onboardingRevision?: number | null; onboardingReview?: string | null; probationState?: string | null; firstBroadcast?: CohortCount[];
+type Registration = { mode: string; settingsNeeded?: string[]; reviewQueue?: {id:string;company:string;reason:string;since:string}[]; registrations: { id: string; company_id: string; legal_name: string; state: string; revision: number; rejection_reason: string | null; carrier_brand_id: string;
+  onboardingRevision?: number | null; onboardingReview?: string | null; evidenceDocument?:string | null; probationState?: string | null; firstBroadcast?: CohortCount[];
   steps: { step: string; state: string; attempts: number; operationKey: string; reason: string | null }[] }[]; numbers: { e164: string; state: string }[] };
 
 export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformApi; workspaceId: string; onError: (message: string) => void }) {
@@ -44,11 +44,12 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
       <button className="btn secondary" onClick={() => void api.call<unknown[]>('platform.textingSettingHistory', workspaceId ? { workspaceId } : {}).then(setHistory).catch(e => onError(e.message))}>Show change history</button>
       {history && <pre className="token-output">{JSON.stringify(history, null, 2)}</pre>}
     </section>
+    {workspaceId && !!reg?.reviewQueue?.length && <section className="card"><h2>Texting review queue</h2><ul>{reg.reviewQueue.map(item=><li key={item.id}><a href={'#texting-case-'+item.id}>{item.company}</a> · {item.reason.replaceAll('_',' ')}</li>)}</ul></section>}
     {workspaceId && reg && <section className="card"><h2>Carrier registration · {workspaceId}</h2>
       <p className="badge">Twilio client: {reg.mode}{reg.mode === 'live' ? ' · each brand, campaign and number step needs a separate approval' : ' · simulated, nothing is filed with carriers'}</p>
       {!!reg.settingsNeeded?.length && <p className="badge">A step is waiting to be checked again. Set {reg.settingsNeeded.join(', ')} above so it can be retried.</p>}
       {reg.registrations.length === 0 && <p>No carrier brand yet. Create one with platform.textingCarrierBrand through the operator API or MCP.</p>}
-      {reg.registrations.map(r => <article key={r.id} className="connection-row"><div>
+      {reg.registrations.map(r => <article id={'texting-case-'+r.id} key={r.id} className="connection-row"><div>
         <strong>{r.legal_name}</strong> · {r.state.replaceAll('_', ' ')} · revision {r.revision}{r.rejection_reason ? ' · ' + r.rejection_reason : ''}
         {r.onboardingReview && <p>Enrollment review required · {r.onboardingReview.replaceAll('_', ' ')}</p>}
         {r.probationState && <p>Probation · {r.probationState}</p>}
@@ -62,10 +63,16 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
         <ul>{r.steps.map(s => <li key={s.step}>{s.step.replaceAll('_', ' ')}: {s.state}{s.attempts ? ` (${s.attempts} call${s.attempts > 1 ? 's' : ''})` : ''}{s.reason ? ' · ' + s.reason : ''} <code>{s.operationKey}</code></li>)}</ul>
         <div className="button-row">
           {!r.onboardingRevision && ['draft', 'rejected'].includes(r.state) && <button className="btn" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingSubmit', { operationKey: operationKey(), workspaceId, registrationId: r.id, reason }))}>Submit registration</button>}
+          {r.evidenceDocument && r.onboardingRevision && ['hosted_ownership','payer_mismatch'].includes(r.onboardingReview ?? '') && <>
+            <p>Practice evidence · {r.evidenceDocument} · enrollment revision {r.onboardingRevision}</p>
+            <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={()=>void run(()=>api.call('platform.textingOnboardingReview',{
+              operationKey:operationKey(),workspaceId,companyId:r.company_id,expectedRevision:r.onboardingRevision,action:'accept_evidence',reason}))}>Accept practice ownership evidence</button></>}
+          {r.onboardingRevision && r.probationState === 'suspended' && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={()=>void run(()=>api.call('platform.textingOnboardingReview',{
+            operationKey:operationKey(),workspaceId,companyId:r.company_id,expectedRevision:r.onboardingRevision,action:'lift_suspension',reason}))}>Lift suspension and restart probation</button>}
           {r.onboardingRevision && r.onboardingReview && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingOnboardingReview', {
             operationKey: operationKey(), workspaceId, companyId: r.company_id, expectedRevision: r.onboardingRevision, action: 'request_correction', reason,
           }))}>Return enrollment for correction</button>}
-          {r.onboardingRevision && r.state === 'approved' && r.probationState !== 'complete' && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingOnboardingReview', {
+          {r.onboardingRevision && r.state === 'approved' && r.probationState !== 'complete' && r.probationState !== 'suspended' && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingOnboardingReview', {
             operationKey: operationKey(), workspaceId, companyId: r.company_id, expectedRevision: r.onboardingRevision, action: 'complete_probation', reason,
           }))}>End practice probation</button>}
           {reg.mode === 'live' && (['brand', 'campaign', 'number'] as const).map(step => <button key={step} className="btn secondary" disabled={busy || reason.trim().length < 12}

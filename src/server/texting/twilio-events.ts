@@ -50,9 +50,14 @@ export async function receiveCarrierEvents(db: Database, registration: TextingRe
     requireCondition(account?.accountSid === sid && verifyTwilioSignature(url, {}, signature, account.authToken),
       403, 'signature_rejected', 'The Twilio event signature is invalid.');
     for (const event of supported) {
+      const key = 'twilio-stream:' + event.id, digest = requestHash(event);
       const marked = await sql.query(`INSERT INTO sms_provider_events(workspace_id,event_key,digest) VALUES($1,$2,$3)
-        ON CONFLICT DO NOTHING`, [workspace, 'twilio-stream:' + event.id, requestHash(event)]);
+        ON CONFLICT DO NOTHING`, [workspace, key, digest]);
       if (marked.rowCount) await applyEvent(sql, registration, workspace, sid, event);
+      else {
+        const prior = (await sql.query<{ digest: string }>('SELECT digest FROM sms_provider_events WHERE event_key=$1', [key])).rows[0];
+        requireCondition(prior?.digest === digest, 409, 'event_conflict', 'This carrier event identifier has different content.');
+      }
     }
   });
   return workspace;
@@ -79,7 +84,7 @@ async function applyEvent(sql: Sql, registration: TextingRegistration, workspace
     SELECT n.id number_id,n.state number_state,r.id registration_id,r.state registration_state,s.operation_key,s.facts->>'numberEventAt' last_event
     FROM sms_numbers n JOIN sms_registrations r ON r.carrier_brand_id=n.carrier_brand_id
     JOIN sms_registration_steps s ON s.registration_id=r.id AND s.revision=r.revision AND s.step='number' AND s.provider_sid=n.provider_sid
-    WHERE r.account_sid=$1 AND n.messaging_service_sid=$2 AND n.provider_sid=$3 AND n.state<>'released'`,
+    WHERE r.account_sid=$1 AND r.messaging_service_sid=$2 AND n.messaging_service_sid=$2 AND n.provider_sid=$3 AND n.state<>'released'`,
   [account, messagingservicesid, phonenumbersid])).rows[0];
   const time = updateddate ?? Date.parse(event.time);
   if (!row || (row.last_event && (Number(row.last_event) > time ||

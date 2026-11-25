@@ -211,3 +211,7 @@ The owner asked for a newsletter and text-alert pop-up on his own short-term-ren
 ## D-065 · Self-service texting staging implementation (November 25, 2026)
 
 The owner authorized implementing the Twilio onboarding plan and verifying it in staging. The first staging cohort exercises the EIN-based US business path in synthetic workspaces, with captured identity and carrier responses and either captured payment or an explicitly configured Stripe test account. Live self-service registration and customer activation retain their separate phase 3 approval and provider evidence requirements. [Staging runbook](implementation/TEXTING_ONBOARDING_STAGING.md)
+
+## D-066 · Automated texting onboarding on staging (November 25, 2026)
+
+The owner extended D-065 to build and verify the remaining self-service texting enrollment on staging with synthetic businesses. The scope includes automated page checks, simulated identity and carrier decisions, a mock texting plan, exception review, number activation and probation recovery. Any fee, real carrier submission or production rollout is paused. Actual provider acceptance, identity-document handling and customer launch require separate evidence and authorization. [Staging runbook](implementation/TEXTING_ONBOARDING_STAGING.md)

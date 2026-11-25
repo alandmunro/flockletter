@@ -50,7 +50,7 @@ export const textingPlatformCommands = {
   'platform.textingRegistration': define('Read registration state, every step with its operation key, and numbers for one workspace.', false, { workspaceId }),
   'platform.textingOnboardingReview': define('Return a practice enrollment for correction or end its probation with an audit reason.', true, {
     operationKey, workspaceId, companyId: z.uuid(), expectedRevision: z.number().int().positive(),
-    action: z.enum(['request_correction', 'complete_probation']), reason,
+    action: z.enum(['request_correction', 'complete_probation', 'accept_evidence', 'lift_suspension']), reason,
   }),
   'platform.textingProcess': define('Run one texting worker pass for a workspace now.', true, { operationKey, workspaceId }),
   'platform.textingMock': define('Staging mock only: script provider faults, decide brand or campaign status, deliver queued callbacks, or receive a text from a phone.', true, {

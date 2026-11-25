@@ -1,24 +1,34 @@
 import { z } from 'zod';
+import { textPlanId } from './texting-commercial.js';
 import { twilioBusinessTypes, twilioIndustries } from './texting-business.js';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const https = z.url({ protocol: /^https$/ }).max(300).refine(value => {
+  if (!URL.canParse(value)) return false;
   const url = new URL(value);
   return !url.username && !url.password && !url.port && url.hostname.includes('.');
 }, 'Use a public HTTPS address.');
 const companyId = z.uuid();
 const revision = z.number().int().min(1);
-const channel = z.enum(['email', 'phone']);
+export const verificationChannel = z.enum(['email', 'phone', 'carrier']);
+export type VerificationChannel = z.infer<typeof verificationChannel>;
+const channel = verificationChannel;
 const mutation = { operationKey: z.uuid(), companyId, expectedRevision: revision };
 
 export const onboardingBusiness = z.strictObject({
   legalName: text(120),
-  ein: z.string().trim().regex(/^\d{2}-?\d{7}$/),
+  ein: z.union([z.string().trim().regex(/^\d{2}-?\d{7}$/), z.literal('')]),
+  registrationType: z.enum(['ein', 'sole_proprietor']).optional(),
+  dbaName: text(120).optional(),
+  plan: textPlanId.optional(),
+  hostedPages: z.boolean().optional(),
+  publicContact: z.email().max(120).optional(),
+  description: text(300).optional(),
   businessType: z.enum(twilioBusinessTypes),
   vertical: z.enum(twilioIndustries),
-  website: https,
-  privacyPolicyUrl: https,
-  smsTermsUrl: https,
+  website: z.union([https, z.literal('')]),
+  privacyPolicyUrl: z.union([https, z.literal('')]),
+  smsTermsUrl: z.union([https, z.literal('')]),
   street: text(120),
   city: text(60),
   region: z.string().trim().regex(/^[A-Z]{2}$/),
@@ -28,6 +38,16 @@ export const onboardingBusiness = z.strictObject({
   title: text(60),
   email: z.email().max(254),
   phone: z.string().trim().regex(/^\+1[2-9]\d{2}[2-9]\d{6}$/),
+}).superRefine((value, ctx) => {
+  const issue = (field: string, message: string) => ctx.addIssue({ code: 'custom', path: [field], message });
+  if (value.registrationType === 'sole_proprietor') {
+    if (value.ein || value.dbaName || value.plan === 'text_2500') issue('registrationType', 'Use the EIN registration for DBAs and Standard plans.');
+  } else if (!value.ein) issue('ein', 'Enter the EIN on the business registration.');
+  if (value.hostedPages) {
+    if (!value.publicContact || !value.description) issue('publicContact', 'Supply a public contact and business description to publish practice pages.');
+  } else {
+    for (const field of ['website', 'privacyPolicyUrl', 'smsTermsUrl'] as const) if (!value[field]) issue(field, 'Enter a public HTTPS URL.');
+  }
 });
 export type OnboardingBusiness = z.infer<typeof onboardingBusiness>;
 
@@ -44,9 +64,13 @@ export const textingOnboardingCommands = {
   'sms.onboardingVerify': define('Check the code for the current business verification challenge.', true, {
     ...mutation, channel, code: z.string().regex(/^\d{6}$/),
   }),
+  'sms.onboardingScan': define('Check the business website, signup and policy pages for this revision.', true, mutation),
+  'sms.onboardingEvidence': define('Attach a synthetic ownership letter to a practice review.', true, { ...mutation, document: z.enum(['CP575', '147C']) }),
+  'sms.onboardingResume': define('Resume a paused practice sender after reviewing the cause.', true, { ...mutation, reason: text(300).min(12) }),
   'sms.onboardingPay': define('Exercise the setup payment in the isolated mock checkout.', true, {
     ...mutation, result: z.enum(['paid', 'declined', 'payer_mismatch']).default('paid'),
   }),
+  'sms.onboardingFinish': define('Confirm a practice setup fee and submit the verified enrollment in one transaction.', true, { ...mutation, acceptedFee: z.number().int().positive(), currency: z.literal('USD') }),
   'sms.onboardingSubmit': define('Submit the paid, verified enrollment to carrier registration.', true, mutation),
 } as const;
 export type TextingOnboardingCommand = keyof typeof textingOnboardingCommands;
@@ -63,4 +87,13 @@ export type OnboardingView = {
   state: string;
   message: string | null;
   samples: string[];
+  requiredChannels: VerificationChannel[];
+  carrierVerified: boolean;
+  pageCheck: { checkedAt: string; signupUrl?: string | null; issues: { page: string; message: string }[] } | null;
+  review: string | null;
+  evidence: { document: 'CP575' | '147C'; attachedAt: string } | null;
+  publicPages: { website: string; privacyPolicyUrl: string; smsTermsUrl: string } | null;
+  progress: { stage: string; stalled: boolean; since: string } | null;
+  probation: string | null;
+  notices: { at: string; message: string }[];
 };

@@ -19,6 +19,7 @@ import { subscriberRoutes } from './subscribers/routes.js';
 import { marketingUnsubscribeRoutes } from './subscribers/marketing-routes.js';
 import { customerAudienceRoutes } from './customer-audience/routes.js';
 import { platformRoutes } from './platform/routes.js';
+import { hostedPolicyRoutes } from './texting/hosted-policy-routes.js';
 import type { PlatformService } from './platform/service.js';
 
 export function createApp(config: Config, service?: CommandService, auth?: Authenticator, platform?:PlatformService) {
@@ -92,6 +93,8 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   });
   subscriberRoutes(app, config, service?.intake, auth);
   marketingUnsubscribeRoutes(app,config,service?.db);
+  app.use('/business', hostedPolicyRoutes(config.environment !== 'production' && service?.customer?.texting?.onboarding
+    ? service.customer.audience : undefined));
   if(service?.customer)app.use(['/signup','/newsletter'],customerAudienceRoutes(service.customer.audience));
   app.post('/api/v1/customer-audience/confirmation-events',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.raw({type:'application/json',limit:'16kb'}),async(req,res)=>{
     const feedback=service?.customer?.audience.options.feedback;
@@ -152,7 +155,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
     const name = String(req.params.name);
     if (!isCommand(name)) throw new AppError(404, 'unknown_command', 'This command is unavailable. Check the command name and your workspace access.');
     authorize(actor, name);
-    if (name.startsWith('sms.onboarding')) res.set('Cache-Control', 'no-store');
+    if (name.startsWith('sms.')) res.set('Cache-Control', 'no-store');
     if (name === 'asset.uploadBatch') {
       if (activeUploads >= 2) throw new AppError(429, 'upload_busy', 'Two image batches are already being processed. Retry this batch shortly with the same keys.');
       activeUploads++;

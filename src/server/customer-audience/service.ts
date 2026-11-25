@@ -2,6 +2,7 @@ import { confirmationContent } from './verification-email.js';
 import type { CustomerConfirmationFeedback } from './feedback.js';
 import {lockWorkspace} from '../workspace-lock.js';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import type { HostedPolicySnapshot } from '../../shared/texting-policy-pages.js';
 import type { Database, Sql } from '../db.js';
 import type { Actor } from '../service.js';
 import { AppError, requireCondition } from '../errors.js';
@@ -846,6 +847,32 @@ export class CustomerAudience {
     const token = (await this.db.pool.query<{token:string|null}>('SELECT public.flockletter_signup_token($1) token',[slug])).rows[0]?.token;
     if (!token) throw invalidLink();
     return token;
+  }
+  /** Public projection of policy copy explicitly accepted for this company's signup page. */
+  async publicTextingPolicy(slug: string, revision?: number, workspaceShortName?: string): Promise<HostedPolicySnapshot> {
+    const unavailable = () => new AppError(404, 'business_page_unavailable', 'This business page is unavailable.');
+    const form = await this.resolveSignupSlug(slug);
+    const { workspace, brand } = parseForm(form);
+    return this.db.brand(workspace, brand, async sql => {
+      const row = await settings(sql);
+      if (!row?.enabled || row.form_token !== form || !row.signup_slug) throw unavailable();
+      const ownSignup = new URL('/signup/' + row.signup_slug, this.options.origin).href;
+      const record = (await sql.query<{ id: string; policy: HostedPolicySnapshot | null }>(
+        `SELECT carrier.id, carrier.profile->'hostedPolicy' policy
+           FROM company_brands b JOIN sms_carrier_brands carrier ON carrier.company_id=b.company_id
+           WHERE b.brand_id=$1 AND carrier.privacy_policy_confirmed_at IS NOT NULL
+             AND carrier.sms_terms_confirmed_at IS NOT NULL
+             AND ($2::text IS NULL OR EXISTS (SELECT FROM sms_workspace_profile WHERE short_name=$2))`,
+        [brand, workspaceShortName ?? null])).rows[0];
+      if (record?.policy?.signupUrl !== ownSignup) throw unavailable();
+      if (revision === undefined || revision === record.policy.revision) return record.policy;
+      const older = (await sql.query<{ policy: HostedPolicySnapshot }>(
+        `SELECT new_value policy FROM sms_audit WHERE action='onboarding.policy_published'
+           AND target=$1 AND new_value->>'revision'=$2 AND new_value->>'signupUrl'=$3 LIMIT 1`,
+        [record.id, String(revision), ownSignup])).rows[0];
+      if (!older) throw unavailable();
+      return older.policy;
+    });
   }
   async publicForm(form: string, options: { smsPreview?: boolean } = {}) {
     const { workspace, brand } = parseForm(form);

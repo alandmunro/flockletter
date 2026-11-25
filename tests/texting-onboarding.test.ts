@@ -16,11 +16,19 @@ const owner = (workspaceId: string): Actor => ({
   workspaceId, userId: 'user_' + workspaceId, actorId: 'user:' + workspaceId, kind: 'session', owner: true, scopes: ['read'], brandIds: null,
 });
 const a = owner('org_onboarding_a'), b = owner('org_onboarding_b'), c = owner('org_onboarding_stripe');
+const sole = owner('org_onboarding_sole'), hosted = owner('org_onboarding_hosted');
 const business = {
   legalName: 'Robin’s Garden LLC', ein: '00-0072321', businessType: 'Limited Liability Corporation', vertical: 'RETAIL',
   website: 'https://garden.example.test', privacyPolicyUrl: 'https://garden.example.test/privacy', smsTermsUrl: 'https://garden.example.test/terms',
   street: '1 Example Street', city: 'New York', region: 'NY', postalCode: '10001',
   firstName: 'Sample', lastName: 'Owner', title: 'Owner', email: 'owner@garden.example.test', phone: '+12125550120',
+};
+// The mock carrier never needs to fetch an unrelated business site. The preflight still parses all four fixture pages.
+const readEnrollmentPage = async (url: string) => {
+  const canonical = new URL(url);
+  const page = canonical.origin + canonical.pathname.replace('/signup/', '/business/');
+  const links = `<a href="${business.privacyPolicyUrl}">Privacy</a><a href="${business.smsTermsUrl}">Terms</a><a href="${page}/privacy">Hosted privacy</a><a href="${page}/sms-terms">Hosted terms</a>`;
+  return `<p>Business news. We do not share mobile opt-in data for marketing. Frequency varies. Msg and data rates may apply. Reply STOP to opt out and HELP for help.</p><input type="checkbox" name="smsConsent">${links}`;
 };
 const operator = { userId: 'operator', via: 'operator_api' } as const;
 let fixture: Awaited<ReturnType<typeof startDatabase>>, db: Database, service: CommandService, texting: Texting;
@@ -45,11 +53,11 @@ beforeAll(async () => {
   db = new Database(fixture.url);
   clock = Date.now() + 60_000;
   const checkOwner = async (user: string, workspace: string) => user === 'user_' + workspace;
-  texting = Texting.mock(db, { origin, linkOrigin: origin + '/l', isOwner: checkOwner, onboardingCapture: true, now: () => new Date(clock) });
+  texting = Texting.mock(db, { origin, linkOrigin: origin + '/l', isOwner: checkOwner, onboardingCapture: true, readEnrollmentPage, now: () => new Date(clock) });
   service = new CommandService(db, undefined, checkOwner);
   Object.assign(service, { customer: { texting, owns: () => false } });
   const audience = new CustomerAudience(db, { origin, mode: 'exercise', checkOwner, contactLimit: async () => 250, texting });
-  for (const actor of [a, b, c]) {
+  for (const actor of [a, b, c, sole, hosted]) {
     await run(actor, 'workspace.initialize', { operationKey: randomUUID(), name: 'Synthetic workspace', brandName: 'Garden' });
     const context = await db.read(actor.workspaceId, async sql => ({
       company: (await sql.query<{ id: string }>('SELECT id FROM companies')).rows[0]!.id,
@@ -71,15 +79,15 @@ it('opens one Stripe test checkout intent and accepts only a matching signed pai
   const secret = 'whsec_synthetic_fixture';
   const stripe = new Stripe('sk_test_synthetic');
   const payment = new StripeTestSetupPayment('sk_test_synthetic', secret, 'acct_synthetic', origin);
-  const testService = Texting.mock(db, { origin, linkOrigin: origin + '/l', isOwner: async () => true, onboardingCapture: true, onboardingStripe: payment });
+  const testService = Texting.mock(db, { origin, linkOrigin: origin + '/l', isOwner: async () => true, onboardingCapture: true, readEnrollmentPage, onboardingStripe: payment });
   const companyId = ids.get(c.workspaceId)!;
   const open = vi.spyOn(payment, 'open').mockResolvedValue({ id: 'cs_test_synthetic', url: 'https://checkout.stripe.com/test' });
   const cmd = (name: Parameters<Texting['execute']>[0], input: Record<string, unknown> = {}) =>
     testService.execute(name, { operationKey: randomUUID(), companyId, expectedRevision: 1, ...input }, c, 'api');
   await cmd('sms.onboardingSave', { business: { ...business, ein: '00-0072322' }, accepted: true, expectedRevision: null });
   for (const channel of ['email', 'phone']) {
-    await cmd('sms.onboardingChallenge', { channel });
-    await cmd('sms.onboardingVerify', { channel, code: '123456' });
+    const { captureCode } = await cmd('sms.onboardingChallenge', { channel }) as { captureCode:string };
+    await cmd('sms.onboardingVerify', { channel, code:captureCode });
   }
   await cmd('sms.onboardingPay');
   await cmd('sms.onboardingPay');
@@ -87,8 +95,8 @@ it('opens one Stripe test checkout intent and accepts only a matching signed pai
   expect(open.mock.calls[0]).toEqual(open.mock.calls[1]);
   await expect(cmd('sms.onboardingSubmit')).rejects.toMatchObject({ code: 'setup_payment_required' });
   const target = open.mock.calls[0]![0];
-  const send = (session: Record<string, unknown> = {}, signed = true) => {
-    const payload = JSON.stringify({ id: 'evt_synthetic', type: 'checkout.session.completed', livemode: false, account: 'acct_synthetic', data: { object: {
+  const send = (session: Record<string, unknown> = {}, signed = true, type = 'checkout.session.completed', eventId = 'evt_synthetic') => {
+    const payload = JSON.stringify({ id: eventId, type, livemode: false, account: 'acct_synthetic', data: { object: {
       id: 'cs_test_synthetic', livemode: false, mode: 'payment', payment_status: 'paid', amount_total: 4900, currency: 'usd',
       client_reference_id: target.registration, metadata: { ...target, revision: String(target.revision), purpose: 'flockletter_texting_setup' },
       customer_details: { business_name: business.legalName, address: { line1: business.street, state: business.region, postal_code: business.postalCode, country: 'US' } },
@@ -102,7 +110,19 @@ it('opens one Stripe test checkout intent and accepts only a matching signed pai
   await expect(send({ id: 'cs_test_other' })).rejects.toMatchObject({ code: 'checkout_mismatch' });
   await send({ payment_status: 'unpaid' });
   await expect(cmd('sms.onboardingSubmit')).rejects.toMatchObject({ code: 'setup_payment_required' });
-  await Promise.all([send(), send()]);
+  await send({ payment_status:'unpaid', status:'expired' }, true, 'checkout.session.expired', 'evt_expired');
+  expect((await testService.execute('sms.onboardingStatus', {companyId}, c, 'api') as OnboardingView).checkout).toBe('declined');
+  open.mockResolvedValue({id:'cs_test_second',url:'https://checkout.stripe.com/test2'});
+  await Promise.all([cmd('sms.onboardingPay'), cmd('sms.onboardingPay')]);
+  expect(open.mock.calls.at(-1)![2]).not.toBe(open.mock.calls[0]![2]);
+  expect(open.mock.calls.at(-1)).toEqual(open.mock.calls.at(-2));
+  await send(); // A delayed signed event for the superseded attempt cannot unlock the new one.
+  await expect(cmd('sms.onboardingSubmit')).rejects.toMatchObject({code:'setup_payment_required'});
+  const metadata = { ...target, revision:String(target.revision), attempt:'2',purpose:'flockletter_texting_setup' };
+  await expect(send({id:'cs_test_second',metadata:{...metadata,plan:'text_1000'}},true,'checkout.session.completed','evt_wrong_plan')).rejects.toMatchObject({code:'checkout_mismatch'});
+  const latest = {id:'cs_test_second',metadata};
+  await Promise.all([send(latest, true, 'checkout.session.completed','evt_new'), send(latest, true, 'checkout.session.completed','evt_new')]);
+  await send({...latest, payment_status:'unpaid'}, true,'checkout.session.async_payment_failed','evt_stale_failure');
   await expect(cmd('sms.onboardingSubmit')).resolves.toEqual({ submitted: true });
   const verified = await db.read(c.workspaceId, sql => sql.query("SELECT 1 FROM sms_audit WHERE action='onboarding.checkout_verified'"));
   expect(verified.rowCount).toBe(1);
@@ -115,9 +135,11 @@ it('resumes the verified and paid owner flow, isolates EIN claims and holds a fa
     expect(await status(actor)).toMatchObject({ revision: 1, state: 'draft', business: { legalName: business.legalName } });
     await expect(mutation(actor, 'sms.onboardingPay')).rejects.toMatchObject({ code: 'identity_unverified' });
     for (const channel of ['email', 'phone']) {
-      expect(await mutation(actor, 'sms.onboardingChallenge', { channel })).toMatchObject({ captureCode: '123456' });
-      expect(await mutation(actor, 'sms.onboardingVerify', { channel, code: '999999' })).toMatchObject({ verified: false });
-      expect(await mutation(actor, 'sms.onboardingVerify', { channel, code: '123456' })).toMatchObject({ verified: true });
+      const { captureCode } = await mutation(actor, 'sms.onboardingChallenge', { channel }) as { captureCode:string };
+      expect(captureCode).toMatch(/^\d{6}$/);
+      const wrong = captureCode === '999999' ? '888888' : '999999';
+      expect(await mutation(actor, 'sms.onboardingVerify', { channel, code:wrong })).toMatchObject({ verified: false });
+      expect(await mutation(actor, 'sms.onboardingVerify', { channel, code:captureCode })).toMatchObject({ verified: true });
     }
     await expect(mutation(actor, 'sms.onboardingSubmit')).rejects.toMatchObject({ code: 'setup_payment_required' });
   }
@@ -195,4 +217,54 @@ it('resumes the verified and paid owner flow, isolates EIN claims and holds a fa
     { first: false, state: 'pending', reason: 'probation_paused', texts: 2, attempts: 0 },
   ] }] });
   expect(await registration(b.workspaceId)).toMatchObject({ registrations: [{ firstBroadcast: [] }] });
+  expect((await status(a)).notices.some(n => n.message.startsWith('Sending paused.'))).toBe(true);
+  const resume = () => mutation(a,'sms.onboardingResume',{ reason:'Reviewed the synthetic recipient failure and prepared a new cohort.' });
+  expect(await resume()).toEqual({resumed:true});
+  await expect(resume()).rejects.toMatchObject({ code:'probation_state_changed' });
+  await tick(a);
+  expect(await status(a)).toMatchObject({probation:'awaiting_canary'});
+  expect(await db.read(a.workspaceId,sql=>sql.query(`SELECT state,attempts FROM sms_messages WHERE send_id=$1 AND state='cancelled'`,[draft.id]).then(r=>r.rows)))
+    .toEqual([{state:'cancelled',attempts:0},{state:'cancelled',attempts:0}]);
+});
+
+
+async function practiceVerify(actor: Actor, channel: string) {
+  const { captureCode } = await mutation(actor, 'sms.onboardingChallenge', {channel}) as {captureCode: string};
+  expect(await mutation(actor,'sms.onboardingVerify',{channel,code:captureCode})).toEqual({verified:true});
+}
+
+it('completes an authorized setup once and requires a separate carrier verification for the practice sole proprietor', async () => {
+  await mutation(sole,'sms.onboardingSave',{expectedRevision:null,accepted:true,business:{...business,
+    registrationType:'sole_proprietor',legalName:'Robin Garden',ein:'',plan:'text_300',phone:'+12125550140'}});
+  await practiceVerify(sole,'email');
+  await practiceVerify(sole,'phone');
+  const finish = (amount=4900) => mutation(sole,'sms.onboardingFinish',{acceptedFee:amount,currency:'USD'});
+  await expect(finish()).rejects.toMatchObject({code:'identity_unverified'});
+  await practiceVerify(sole,'carrier');
+  await expect(finish(9900)).rejects.toMatchObject({code:'setup_agreement_changed'});
+  expect(await Promise.all([finish(),finish()])).toEqual([{submitted:true},{submitted:true}]);
+  for(let pass=0;pass<7;pass++) await tick(sole);
+  const view=await status(sole);
+  expect(view).toMatchObject({state:'approved',checkout:'paid',requiredChannels:['email','phone','carrier']});
+  expect(view.notices.filter(n=>n.message.startsWith('Registration approved.'))).toHaveLength(1);
+  expect(await db.read(sole.workspaceId,sql=>sql.query("SELECT id FROM sms_audit WHERE action='onboarding.checkout_capture'").then(r=>r.rowCount))).toBe(1);
+});
+
+it('keeps domainless practice ownership in review until a bound synthetic letter is accepted',async()=>{
+  await mutation(hosted,'sms.onboardingSave',{expectedRevision:null,accepted:true,business:{...business,ein:'00-9400041',
+    hostedPages:true,description:'Fictional gardening updates.',publicContact:'help@example.test',website:'',smsTermsUrl:'',privacyPolicyUrl:''}});
+  expect(await status(hosted)).toMatchObject({state:'review',review:'hosted_ownership',pageCheck:{issues:[]}});
+  const review=()=>texting.operator('platform.textingOnboardingReview',{operationKey:randomUUID(),workspaceId:hosted.workspaceId,
+    companyId:ids.get(hosted.workspaceId),expectedRevision:1,action:'accept_evidence',reason:'Reviewed the attached synthetic ownership evidence.'},operator);
+  await expect(review()).rejects.toMatchObject({code:'evidence_unavailable'});
+  await expect(mutation(sole,'sms.onboardingEvidence',{companyId:ids.get(hosted.workspaceId),document:'CP575'})).rejects.toMatchObject({code:'not_found'});
+  await mutation(hosted,'sms.onboardingEvidence',{document:'CP575'});
+  await practiceVerify(hosted,'phone'); await practiceVerify(hosted,'email');
+  const finish=()=>mutation(hosted,'sms.onboardingFinish',{acceptedFee:4900,currency:'USD'});
+  await expect(finish()).rejects.toMatchObject({code:'onboarding_review'});
+  expect(await texting.operator('platform.textingRegistration',{workspaceId:hosted.workspaceId},operator)).toMatchObject({reviewQueue:[{reason:'hosted_ownership'}]});
+  await review();
+  expect(await finish()).toMatchObject({submitted:true});
+  for(let pass=0;pass<7;pass++) await tick(hosted);
+  expect(await status(hosted)).toMatchObject({state:'approved',publicPages:{website:expect.stringContaining('/business/')}});
 });

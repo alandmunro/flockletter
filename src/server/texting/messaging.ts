@@ -1,3 +1,4 @@
+import { practicePlanLimits } from './commercial.js';
 // Consent (FL-SMS-005/006), delivery controls (FL-SMS-009/011/012) and inbound handling (FL-SMS-015).
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
@@ -9,13 +10,13 @@ import { probationHold } from './probation.js';
 
 export type MessageRow = { date_brand_id?:string|null; id: string; send_id: string | null; company_id: string; contact_id: string | null; purpose: 'broadcast' | 'test' | 'confirmation' | 'help' | 'verification';
   to_e164: string; rendered_body: string; body_digest: string; encoding: string; segments: number; state: string; reason: string | null; provider_sid: string | null;
-  send_day: string | null; next_check_at: Date; attempts: number; submitted_at: Date | null; reserved_segments: number };
+  send_day: string | null; next_check_at: Date; attempts: number; submitted_at: Date | null; created_at: Date; reserved_segments: number };
 type ContactRow = { id: string; phone_e164: string; name: string | null; time_zone: string | null; textable: boolean; consecutive_temp_failures: number };
 export type Forward = (message: {
   id: string; to: string; subject: string; text: string;
 }) => Promise<'forwarded' | 'captured' | 'failed' | 'uncertain'>;
 export type DispatchAuthority = (sql: Sql, workspace: string, companyId: string, actorId: string) => Promise<boolean>;
-export type MessagingOptions = { annualClaim?:(sql:Sql,w:string,brand:string,id:string,now:Date,company:string)=>Promise<string|null>; db: Database; port: TwilioMessagingPort; seal: CredentialSeal; origin: string; forward?: Forward; canDispatch?: DispatchAuthority; now?: () => Date };
+export type MessagingOptions = { practiceBilling?: boolean; annualClaim?:(sql:Sql,w:string,brand:string,id:string,now:Date,company:string)=>Promise<string|null>; db: Database; port: TwilioMessagingPort; seal: CredentialSeal; origin: string; forward?: Forward; canDispatch?: DispatchAuthority; now?: () => Date };
 
 const permanentStatusCodes = new Set(['30005', '30006', '21211', '21614', '21612']);
 const purposeNeedsWindow = new Set(['broadcast', 'confirmation']);
@@ -128,8 +129,18 @@ export class TextingMessaging {
       if (!authorized) return skip('send_authority_revoked');
     }
     const settings = await readSettings(sql, workspace);
+    if (this.options.practiceBilling) {
+      const plan = await practicePlanLimits(sql, workspace, now, settings.monthly_segment_allowance, row.created_at);
+      if (plan.hold === 'texting_plan_cancelled') return skip(plan.hold);
+      if (plan.hold) return defer(new Date(+now + 60_000), plan.hold);
+      settings.monthly_segment_allowance = plan.allowance;
+    }
     let required: ReturnType<typeof requireSettings<(typeof sendingSettings)[number]>>;
     try { required = requireSettings(settings, sendingSettings); } catch { return defer(new Date(now.getTime() + 15 * 60000), 'texting_setting_required'); }
+    if (row.purpose !== 'broadcast' && (await sql.query(`SELECT 1 FROM sms_carrier_brands WHERE company_id=$1
+      AND profile#>>'{onboarding,probation,state}'='suspended'`, [row.company_id])).rowCount) {
+      return defer(new Date(now.getTime() + 15 * 60_000), 'probation_suspended');
+    }
     // 1. Registration approved and number active.
     if (!await sendingNumber(sql, row.company_id)) return defer(new Date(now.getTime() + 15 * 60000), 'registration_not_approved');
     // 2. Consent and textable.
