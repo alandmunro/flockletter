@@ -700,9 +700,19 @@ export class Texting {
             FROM sms_registrations r JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id ORDER BY r.created_at`)).rows;
           const steps = (await sql.query<StepRow>('SELECT * FROM sms_registration_steps ORDER BY created_at')).rows;
           const numbers = (await sql.query('SELECT id,carrier_brand_id AS "carrierBrandId",e164,state FROM sms_numbers')).rows;
+          const firstBroadcast = this.mock ? (await sql.query<{
+            company_id: string; first: boolean; state: string; reason: string | null; texts: number; attempts: number;
+          }>(`SELECT b.company_id, (b.profile#>'{onboarding,probation,members}') ? m.id::text AS first,
+              m.state, m.reason, count(*)::int AS texts, sum(m.attempts)::int AS attempts
+            FROM sms_carrier_brands b JOIN sms_messages m ON m.workspace_id=b.workspace_id AND m.company_id=b.company_id
+              AND m.send_id=(b.profile#>>'{onboarding,probation,sendId}')::uuid
+            WHERE b.workspace_id=$1 AND m.purpose='broadcast'
+            GROUP BY b.company_id, first, m.state, m.reason ORDER BY first DESC, m.state, m.reason`, [w])).rows : [];
           // An uncertain step is only retried after the settle time; without it the step waits for the operator (fail closed).
           const settingsNeeded = steps.some(s => s.state === 'uncertain' && regs.some(r => r.id === s.registration_id && r.revision === s.revision)) && (await readSettings(sql, w)).reconcile_settle_minutes === undefined ? ['reconcile_settle_minutes'] : [];
-          return { mode: this.options.mode, settingsNeeded, registrations: regs.map(r => ({ ...r, steps: steps.filter(s => s.registration_id === r.id && s.revision === r.revision)
+          return { mode: this.options.mode, settingsNeeded, registrations: regs.map(r => ({ ...r,
+            ...(this.mock && { firstBroadcast: firstBroadcast.filter(group => group.company_id === r.company_id) }),
+            steps: steps.filter(s => s.registration_id === r.id && s.revision === r.revision)
             .map(s => ({ step: s.step, state: s.state, attempts: s.attempts, operationKey: s.operation_key, reason: (s as unknown as { reason: string | null }).reason, nextCheckAt: s.next_check_at })) })), numbers };
         });
       }
