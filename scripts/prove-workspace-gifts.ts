@@ -342,6 +342,18 @@ try {
   await button('Create funded offers').click();
   await page.getByRole('heading', { name: 'November thanks' }).waitFor();
   assert.equal(new Set(mutations.filter((m) => m.name === 'gifts.launch').map((m) => m.key)).size, 1);
+  await page.getByText('Recipient results (2)', { exact: true }).click();
+  const resultTable = page.getByRole('table').filter({ has: page.getByRole('columnheader', {name:'Claimed at'}) });
+  assert.equal(await resultTable.getByRole('row').count(), 3);
+  const [csv] = await Promise.all([page.waitForEvent('download'), button('Export recipient CSV').click()]);
+  assert.equal(csv.suggestedFilename(), 'gift-results-' + campaign + '.csv');
+  const file = await csv.path();
+  assert(file);
+  const content = await readFile(file, 'utf8');
+  assert.equal(content.split('\r\n').length, 3);
+  for(const p of [people[0]!,people[20]!]) assert(content.includes(p.id));
+  assert(content.includes('Claimed at (UTC)') && content.includes('Expires (UTC)') && content.includes('offered'));
+  console.log('Recipient report, sandboxed CSV download and both recipient rows verified.');
   await page.getByLabel('Gift campaign', { exact: true }).selectOption(campaign);
   await page.getByLabel('Gift recipient', { exact: true }).selectOption(people[0]!.id);
   await button('Get recipient link').click();

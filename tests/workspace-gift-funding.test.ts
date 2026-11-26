@@ -226,6 +226,31 @@ describe("sandbox gift funding", () => {
     platform.giftFunding = service;
   });
 
+  it("binds a probation decision and a dispute release to a current operator case and the affected brand", async () => {
+    const workspace='org_'+randomUUID(), brand=randomUUID(), other=randomUUID(), incident='dp_reviewed';
+    const reason='Reviewed the verified workspace and original dispute.';
+    await db.tenant(workspace,async sql=>{
+      await sql.query('INSERT INTO workspaces(workspace_id,name) VALUES($1,$2)',[workspace,'Review test']);
+      for(const id of [brand,other])await sql.query('INSERT INTO brands(workspace_id,id,name) VALUES($1,$2,$3)',[workspace,id,id===brand?'Review subject':'Other brand']);
+      await put(sql,workspace,'lot','paid',{id:'paid',brand,account:'test',face:1000,fee:100,total:1100,
+        state:'funded',created:new Date().toISOString(),reserved:0,spent:0,returned:0,disputed:0,lost:100,
+        disputes:{[incident]:{amount:100,state:'lost',opened:new Date().toISOString()}}});
+      await put(sql,workspace,'signal','probation_loss',{kind:'review_required',ref:incident,at:new Date().toISOString()});
+    });
+    const open=async(resourceId:string)=>(await platform.execute('platform.openCase',{workspaceId:workspace,
+      operationKey:randomUUID(),kind:'abuse',resourceId,reason},actor) as {id:string}).id;
+    const caseId=await open(brand),wrong=await open(other);
+    const decide={caseId,operationKey:randomUUID(),decision:'complete',reason,expectedRevision:null};
+    await platform.execute('platform.reviewGiftEligibility',decide,actor);
+    await platform.execute('platform.reviewGiftEligibility',decide,actor);
+    await expect(platform.execute('platform.reviewGiftEligibility',{...decide,operationKey:randomUUID()},actor))
+      .rejects.toMatchObject({code:'gift_review_changed'});
+    await expect(platform.execute('platform.giftReview',{caseId},actor)).resolves.toMatchObject({decision:'complete',incident});
+    const release={caseId,operationKey:randomUUID(),expectedIncident:incident,reason};
+    await expect(platform.execute('platform.releaseGiftHold',{...release,caseId:wrong},actor)).rejects.toMatchObject({code:'gift_review_changed'});
+    await platform.execute('platform.releaseGiftHold',release,actor);
+    await expect(platform.execute('platform.giftReview',{caseId},actor)).resolves.toMatchObject({incident:null});
+  });
   it("counts latest reservations across real workspaces, excludes fixtures and pending funding, and alerts once per shortfall", async () => {
     expect((await service.monitor()).coverage).toEqual({
       currency: "USD",
@@ -479,6 +504,20 @@ describe("sandbox gift funding", () => {
     } finally {await admin.query('DELETE FROM flockletter_retention_control.restore_quarantines WHERE workspace_id=$1',[orgs[0]]);}
   });
 
+  it('keeps a single automatic draw through concurrent ticks, uncertain settlement and reversal',async()=>{
+    const automatic=GiftFunding.configured(platform,{...env,FLOCKLETTER_GIFT_FUNDING_MODE:'sandbox_automatic',
+      FLOCKLETTER_GIFT_TOPUP_LIMIT_CENTS:'1500'},vendor.fetch)!;
+    vendor.pending=0;
+    vendor.lostResponse=true;
+    await Promise.all([automatic.replenish(),automatic.replenish()]);
+    expect(vendor.attempts).toBe(1);
+    vendor.topups[0]!.status='partially_credited';
+    expect((await automatic.replenish()).topup?.state).toBe('partially_credited');
+    vendor.topups[0]!.status='reversed';
+    expect((await automatic.replenish()).topup?.state).toBe('reversed');
+    await automatic.replenish();
+    expect(vendor.attempts).toBe(1);
+  });
   it("uses only production balance GET in approved live read-only mode even with sandbox approval settings", async () => {
     const livePlatform = new PlatformService(db, platform.store, {
       ...platform.options,

@@ -99,6 +99,12 @@ export function workspaceGiftRoutes(app: Express, config: Config, customer?: Cus
         await customer.wake(d.workspace);
         await gifts.markProcessed(d.workspace, e.id);
       }
+    } else if (e.type === 'charge.refunded' || e.type === 'refund.created' || e.type === 'refund.updated' || e.type === 'refund.failed') {
+      const charge = e.type === 'charge.refunded' ? e.data.object.id : e.data.object.charge;
+      if (typeof charge === 'string') {
+        const binding = await gateway.refundBinding(charge);
+        if (binding) await gifts.externalRefund(binding, e.id, lot => gateway.refundSnapshot(binding.workspace,lot));
+      }
     } else if(e.type==='payment_intent.payment_failed'||e.type==='checkout.session.async_payment_failed'){
       const d=binding.safeParse(e.data.object.metadata).data;
       if(d&&!await gifts.processed(d.workspace,e.id)){

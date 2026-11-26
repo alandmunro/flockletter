@@ -6,6 +6,198 @@
     "description": "Campaign authoring, rehearsals, audience workflows, and separately gated subscriber intake and sandbox billing. Generated from canonical schemas."
   },
   "paths": {
+    "/api/operator/v1/commands/platform.giftReview": {
+      "post": {
+        "operationId": "platform_giftReview",
+        "summary": "Read gifting decisions for the brand in this case.",
+        "security": [
+          {
+            "operatorSession": []
+          }
+        ],
+        "x-operator-mfa-required": true,
+        "x-mutates": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "caseId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "caseId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Exact case-scoped operator result."
+          },
+          "403": {
+            "description": "Separate operator organization, named membership, recent two-factor verification and exact case required."
+          },
+          "409": {
+            "description": "Changed action, version, review or protected evidence."
+          },
+          "503": {
+            "description": "Required protected operator configuration is missing."
+          }
+        }
+      }
+    },
+    "/api/operator/v1/commands/platform.reviewGiftEligibility": {
+      "post": {
+        "operationId": "platform_reviewGiftEligibility",
+        "summary": "Record a brand gifting decision in an audited case.",
+        "security": [
+          {
+            "operatorSession": []
+          }
+        ],
+        "x-operator-mfa-required": true,
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "caseId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "operationKey": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "expectedRevision": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "paused",
+                      "probation",
+                      "complete"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 12,
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "caseId",
+                  "operationKey",
+                  "expectedRevision",
+                  "decision",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Exact case-scoped operator result."
+          },
+          "403": {
+            "description": "Separate operator organization, named membership, recent two-factor verification and exact case required."
+          },
+          "409": {
+            "description": "Changed action, version, review or protected evidence."
+          },
+          "503": {
+            "description": "Required protected operator configuration is missing."
+          }
+        }
+      }
+    },
+    "/api/operator/v1/commands/platform.releaseGiftHold": {
+      "post": {
+        "operationId": "platform_releaseGiftHold",
+        "summary": "Resolve a reviewed probation dispute after the debt is cleared.",
+        "security": [
+          {
+            "operatorSession": []
+          }
+        ],
+        "x-operator-mfa-required": true,
+        "x-mutates": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "caseId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "operationKey": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "expectedIncident": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 12,
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "caseId",
+                  "operationKey",
+                  "expectedIncident",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Exact case-scoped operator result."
+          },
+          "403": {
+            "description": "Separate operator organization, named membership, recent two-factor verification and exact case required."
+          },
+          "409": {
+            "description": "Changed action, version, review or protected evidence."
+          },
+          "503": {
+            "description": "Required protected operator configuration is missing."
+          }
+        }
+      }
+    },
     "/api/operator/v1/commands/platform.giftFundingStatus": {
       "post": {
         "operationId": "platform_giftFundingStatus",
@@ -5065,6 +5257,50 @@
                         "format": "uuid",
                         "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                       },
+                      "gift": {
+                        "type": "object",
+                        "properties": {
+                          "face": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10000000
+                          },
+                          "days": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "const": 15
+                              },
+                              {
+                                "type": "number",
+                                "const": 30
+                              },
+                              {
+                                "type": "number",
+                                "const": 60
+                              }
+                            ]
+                          },
+                          "products": {
+                            "maxItems": 10,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^[A-Z0-9]{4,20}$"
+                            }
+                          },
+                          "brokerConfirmed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "face",
+                          "days",
+                          "products",
+                          "brokerConfirmed"
+                        ],
+                        "additionalProperties": false
+                      },
                       "sms": {
                         "type": "string",
                         "minLength": 1,
@@ -5374,6 +5610,50 @@
                         "type": "string",
                         "format": "uuid",
                         "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "gift": {
+                        "type": "object",
+                        "properties": {
+                          "face": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10000000
+                          },
+                          "days": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "const": 15
+                              },
+                              {
+                                "type": "number",
+                                "const": 30
+                              },
+                              {
+                                "type": "number",
+                                "const": 60
+                              }
+                            ]
+                          },
+                          "products": {
+                            "maxItems": 10,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^[A-Z0-9]{4,20}$"
+                            }
+                          },
+                          "brokerConfirmed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "face",
+                          "days",
+                          "products",
+                          "brokerConfirmed"
+                        ],
+                        "additionalProperties": false
                       },
                       "sms": {
                         "type": "string",

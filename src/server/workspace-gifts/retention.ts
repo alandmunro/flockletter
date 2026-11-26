@@ -22,7 +22,7 @@ const eventKinds = new Set([
   'reserved',
   'claimed',
   'expired',
-  'refunded',
+  'refunded','canceled','external_refund','refund_reversed','refund_hold_changed',
   ...disputeStates.map((state) => 'dispute_' + state),
 ]);
 type AccountingRow = { day: string; kind: string; face: number; fee: number };
@@ -68,6 +68,8 @@ function checkLot(lot: Lot) {
     hold,
   );
   requireRetention(lot.reserved === 0 && lot.disputed === 0 && lot.disputes, hold);
+  requireRetention(!lot.externalRefundHeld && integer(lot.externalRefundGross??0) &&
+    (lot.externalRefundGross??0)<=lot.total && (lot.externalRefundFace??0)===Math.round((lot.externalRefundGross??0)*lot.face/lot.total),hold);
   const disputes = Object.values(lot.disputes);
   requireRetention(
     disputes.every((d) => integer(d.amount) && ['won', 'lost', 'warning_closed'].includes(d.state)),
@@ -102,7 +104,7 @@ function checkLot(lot: Lot) {
         integer(face) &&
         face > 0 &&
         face <= lot.face - lot.spent &&
-        lot.returned === face + Math.round((lot.fee * face) / lot.face),
+        lot.returned === Math.min(lot.total-(lot.externalRefundGross??0),face + Math.round((lot.fee * face) / lot.face)),
       hold,
     );
   }
@@ -153,10 +155,15 @@ export async function giftRetentionArchive(sql: Sql, workspace: string, now: Dat
   const byOffer = new Map(offers.map((o) => [o.id, o]));
   const tx = new Map<string, Entry>();
   const lossEntries = new Map<string, number>();
+  const externalRefunds = new Map<string, number>();
+  const closureRefunds = new Map<string, number>();
   for (const e of entries) {
     requireRetention(eventKinds.has(e.kind) && integer(e.amount) && Number.isFinite(Date.parse(e.at)), hold);
     if (e.kind === 'dispute_lost') lossEntries.set(e.ref, (lossEntries.get(e.ref) ?? 0) + e.amount);
-    if (!e.kind.startsWith('dispute_')) {
+    if(e.kind==='refunded')closureRefunds.set(e.ref,(closureRefunds.get(e.ref)??0)+e.amount);
+    if(e.kind==='external_refund'||e.kind==='refund_reversed')
+      externalRefunds.set(e.ref,(externalRefunds.get(e.ref)??0)+(e.kind==='refund_reversed'?-e.amount:e.amount));
+    if (!e.kind.startsWith('dispute_') && !['refunded','external_refund','refund_reversed','refund_hold_changed'].includes(e.kind)) {
       const key = e.kind + '/' + e.ref;
       requireRetention(!tx.has(key), hold);
       tx.set(key, e);
@@ -170,7 +177,7 @@ export async function giftRetentionArchive(sql: Sql, workspace: string, now: Dat
     reserved = new Map<string, number>();
   for (const o of offers) {
     requireRetention(
-      (o.state === 'expired' || (o.state === 'claimed' && o.order && o.reward)) &&
+      (o.state === 'expired' || (o.state==='canceled' && o.order) || (o.state === 'claimed' && o.order && o.reward)) &&
         integer(o.face) &&
         o.face > 0 &&
         hasEntry(o.state, o.id, o.brand, o.face),
@@ -189,14 +196,15 @@ export async function giftRetentionArchive(sql: Sql, workspace: string, now: Dat
   let outstanding = 0;
   for (const l of lots) {
     checkLot(l);
+    requireRetention((externalRefunds.get(l.id)??0)===(l.externalRefundGross??0),hold);
     requireRetention(Math.min(l.face, lossEntries.get(l.id) ?? 0) === l.lost, hold);
     if (l.state !== 'expired') {
       const refundedFace = l.state === 'refunded' ? (l.refundFace ?? l.face - l.spent) : 0;
-      outstanding += l.face - l.spent - l.lost - refundedFace;
+      outstanding += l.face - l.spent - l.lost - refundedFace - (l.externalRefundFace??0);
     }
     requireRetention(l.spent === (consumed.get(l.id) ?? 0), hold);
     if (l.state !== 'expired') requireRetention(hasEntry('purchased', l.id, l.brand, l.face), hold);
-    if (l.state === 'refunded') requireRetention(hasEntry('refunded', l.id, l.brand, l.returned), hold);
+    if (l.state === 'refunded') requireRetention(closureRefunds.get(l.id)===l.returned, hold);
   }
 
   // A settled loss can consume credit from another lot. Only the verified funded,
@@ -209,16 +217,22 @@ export async function giftRetentionArchive(sql: Sql, workspace: string, now: Dat
     const lot = byLot.get(e.ref);
     let face = e.amount,
       fee = 0;
+    if(e.kind==='refund_hold_changed')continue;
     if (e.kind === 'purchased') {
       requireRetention(lot && lot.state !== 'expired' && lot.brand === e.brand, hold);
       fee = lot.fee;
     } else if (e.kind === 'refunded') {
       requireRetention(lot?.state === 'refunded' && lot.brand === e.brand, hold);
-      face = lot.refundFace ?? lot.face - lot.spent;
+      face = e.faceMinor ?? lot.refundFace ?? lot.face - lot.spent;
       fee = e.amount - face;
+    } else if(e.kind==='external_refund'||e.kind==='refund_reversed'){
+      requireRetention(lot && lot.brand===e.brand,hold);
+      face=e.faceMinor ?? Math.round(e.amount*lot.face/lot.total); fee=e.amount-face;
     } else if (e.kind === 'reserved') requireRetention(reserved.get(e.ref) === e.amount, hold);
-    else if (e.kind === 'claimed' || e.kind === 'expired')
-      requireRetention(byOffer.get(e.ref)?.state === e.kind, hold);
+    else if (e.kind === 'claimed' || e.kind === 'expired' || e.kind==='canceled'){
+      const offer=byOffer.get(e.ref);
+      requireRetention(offer && (offer.state===e.kind || (e.kind==='claimed' && offer.state==='canceled' && offer.claimedAt)),hold);
+    }
     else requireRetention(lot && lot.brand === e.brand, hold);
     const day = new Date(e.at).toISOString().slice(0, 10),
       until = expiry(day);

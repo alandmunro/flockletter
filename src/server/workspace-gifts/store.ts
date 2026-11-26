@@ -20,8 +20,13 @@ export type Lot = {
   spent: number;
   returned: number;
   refundId?: string;
+  externalRefundGross?: number;
+  externalRefundHeld?: number;
+  externalRefundFace?: number;
+  live?: boolean;
   refundStarted?: string;
   refundFace?: number;
+  settledRefundFace?: number;
   nextCheck?: string;
   disputed: number;
   lost: number;
@@ -37,6 +42,8 @@ export type GiftCampaign = {
   created: string;
   expires: string;
   hash: string;
+  live?: boolean;
+  account?: string;
   brokerConfirmed: boolean;
 };
 export type GiftOffer = {
@@ -46,7 +53,7 @@ export type GiftOffer = {
   person: string;
   face: number;
   expires: string;
-  state: 'offered' | 'pending' | 'claimed' | 'expired';
+  state: 'offered' | 'pending' | 'claimed' | 'expired' | 'canceled';
   alloc: { id: string; amount: number }[];
   secret: string;
   order?: string;
@@ -55,7 +62,7 @@ export type GiftOffer = {
   reason?: string;
   retryAt?: string;
 };
-export type Entry = { kind: string; amount: number; at: string; brand: string; ref: string };
+export type Entry = { faceMinor?:number; kind: string; amount: number; at: string; brand: string; ref: string };
 export type Closure = { at: string; brand: string };
 interface Records {
   notice: GiftNoticeRecord;
@@ -128,5 +135,5 @@ export function available(lot: Lot) {
   if (lot.state === 'checkout' || lot.state === 'expired') return 0;
   const withheld =
     lot.state === 'refunded' || lot.state === 'refunding' ? (lot.refundFace ?? unused(lot)) : 0;
-  return unused(lot) - withheld - lot.disputed - lot.lost;
+  return unused(lot) - withheld - (lot.externalRefundFace ?? 0) - lot.disputed - lot.lost;
 }

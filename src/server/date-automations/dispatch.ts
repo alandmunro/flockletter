@@ -21,7 +21,7 @@ type Occurrence = {id:string;activated_at:Date;date_id:string;kind:DateKind;annu
 const joinOccurrence=`SELECT o.*,o.local_date::text,a.enabled,a.activated_at,a.revision active_revision,a.issuer,a.actor,a.mode,r.settings,r.mailing_id
  FROM date_occurrences o JOIN date_automations a USING(workspace_id,brand_id,kind)
  JOIN date_automation_revisions r ON (r.workspace_id,r.brand_id,r.kind,r.revision)=(o.workspace_id,o.brand_id,o.kind,o.revision)`;
-type Ports={giftDelivery?:GiftDeliveryPolicy|undefined;texting?:Texting|undefined;delivery:CustomerDelivery;mode:AutomationMode;isOwner:(user:string,workspace:string)=>Promise<boolean>};
+type Ports={gifts?:Pick<import('../workspace-gifts/service.js').WorkspaceGifts,'reserveOccurrence'>|null;giftDelivery?:GiftDeliveryPolicy|undefined;texting?:Texting|undefined;delivery:CustomerDelivery;mode:AutomationMode;isOwner:(user:string,workspace:string)=>Promise<boolean>};
 
 async function inspect(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Date) {
   requireCondition(o.enabled&&o.revision===o.active_revision&&o.mode===ports.mode&&ports.mode!=='off',409,'definition_changed','Automation approval changed.');
@@ -34,7 +34,7 @@ async function inspect(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Da
     const account=await ports.delivery.options.eligibilitySql(sql,w);
     requireCondition(account.eligible,409,'subscription_ineligible','The workspace cannot send marketing messages.');
   }
-  requireCondition(!o.settings.giftCampaignId || giftDeliveryAllowed(ports.giftDelivery,ports.mode,b),
+  requireCondition(!(o.settings.gift || o.settings.giftCampaignId) || giftDeliveryAllowed(ports.giftDelivery,ports.mode,b),
     409,'gifting_off','Gift delivery is unavailable for this brand.');
   const source=(await dateSources(sql,b,o.kind,monthsOfYear,null,1,o.date_id))[0];
   requireCondition(source,409,'date_changed','Date removed or changed.');
@@ -69,8 +69,8 @@ export async function annualClaim(sql:Sql,workspace:string,brand:string,channel:
   if (!o||o.state!=='queued') return 'occurrence_cancelled';
   try {
     const {source,when,signature}=await inspect(sql,workspace,brand,o,ports,now);
-    if(o.settings.giftCampaignId){
-      const gift=await inspectGift(sql,workspace,brand,o.settings.giftCampaignId,source,channel,ports.delivery.options.origin,ports.giftDelivery!);
+    if(o.settings.giftCampaignId || o.settings.gift){
+      const gift=await inspectGift(sql,workspace,brand,o.settings.giftCampaignId ?? o.id,source,channel,ports.delivery.options.origin,ports.giftDelivery!);
       // Preserve date replanning for a changed source with the same offer. An offer
       // substitution has its own terminal reason and cannot replan to a new gift.
       const [sourceDigest,offerDigest]=o.source_digest?.split('/')??[];
@@ -101,8 +101,15 @@ async function handoff(sql:Sql,w:string,b:string,o:Occurrence,ports:Ports,now:Da
       LIMIT 1`,[source.contact_id,o.kind,o.annual_year,source.subscriber_id,channel]);
     requireCondition(!prior.rowCount,409,'shared_annual_destination','This person or phone already has an annual greeting.');
   }
-  const gift=o.settings.giftCampaignId
-    ? await inspectGift(sql,w,b,o.settings.giftCampaignId,source,channel,ports.delivery.options.origin,ports.giftDelivery!)
+  if(o.settings.gift) {
+    requireCondition(ports.gifts && ports.giftDelivery,409,'gifting_off','Gift delivery is unavailable.');
+    const eligible=await eligibleGiftRecipients(sql,w,b,ports.giftDelivery.mode==='live'?'live':'exercise');
+    const person=dateGiftPerson(new Map(eligible.map(p=>[p.id,p])),source,channel);
+    requireCondition(person,409,'gift_recipient_ineligible','This recipient is unavailable for gifting.');
+    await ports.gifts.reserveOccurrence(sql,w,b,o.id,o.kind,person,o.settings.gift,now);
+  }
+  const gift=o.settings.giftCampaignId || o.settings.gift
+    ? await inspectGift(sql,w,b,o.settings.giftCampaignId ?? o.id,source,channel,ports.delivery.options.origin,ports.giftDelivery!)
     : null;
   let id:string;
   if(route){

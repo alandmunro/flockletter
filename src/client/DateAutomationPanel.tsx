@@ -1,5 +1,7 @@
 import { useEffect,useRef,useState } from 'react';
 import { dateSettings, giftGreetingBody, giftGreetingSubject, renderGreeting,type DateDefinition,type DateKind,type DateOccurrence,type DateSettings } from '../shared/date-automations.js';
+import {AnnualGiftEditor} from './AnnualGiftEditor.js';
+import {GiftCampaignPicker} from './GiftCampaignPicker.js';
 import { operationKey,type Api } from './api.js';
 
 type Props={api:Api;brandId:string};
@@ -41,6 +43,7 @@ function Editor({api,brandId,kind,def,mode,giftDeliveryEnabled,changed}:Props&{k
   const [settings,setSettings]=useState<DateSettings>(def?.settings??defaults(kind)),[busy,setBusy]=useState(false),[error,setError]=useState(''),
     [review,setReview]=useState(false),[preview,setPreview]=useState<Preview>();
   const retry=useRef<{signature:string;key:string}|null>(null);
+  const hasGift=!!(settings.gift || settings.giftCampaignId);
   const dirty=JSON.stringify(settings)!==JSON.stringify(def?.settings);
   const edit=(v:Partial<DateSettings>)=>{setSettings(s=>({...s,...v}));setPreview(undefined);setReview(false);setError('');};
   async function action(name:'save'|'activate'|'pause'|'preview',cursor:string|null=null) {
@@ -54,7 +57,7 @@ function Editor({api,brandId,kind,def,mode,giftDeliveryEnabled,changed}:Props&{k
         const page=await api.call<Preview>('dateAutomation.preview',{brandId,kind,settings,cursor});
         setPreview(old=>cursor&&old?{rows:[...old.rows,...page.rows],next:page.next}:page);
       }else{
-        const payload={brandId,kind,expectedRevision:def?.revision??0,...(name==='save'?{settings}:{}),...(name==='activate'?{confirmRecurring:true,...(settings.giftCampaignId?{giftMode:mode}:{})}:{})};
+        const payload={brandId,kind,expectedRevision:def?.revision??0,...(name==='save'?{settings}:{}),...(name==='activate'?{confirmRecurring:true,...(hasGift?{giftMode:mode}:{})}:{})};
         const signature=JSON.stringify([name,payload]);
         if(retry.current?.signature!==signature)retry.current={signature,key:operationKey()};
         await api.call(`dateAutomation.${name}`,{...payload,operationKey:retry.current.key});
@@ -64,19 +67,23 @@ function Editor({api,brandId,kind,def,mode,giftDeliveryEnabled,changed}:Props&{k
     }catch(e){setError(explain(e));}finally{setBusy(false);}
   }
   return <fieldset disabled={busy}><legend>{title(kind)} greeting · {def?.enabled?'Active':def?'Paused':'Draft'}</legend>
-    {(giftDeliveryEnabled||settings.giftCampaignId)&&<label>Funded gift campaign ID (optional)<input value={settings.giftCampaignId??''} onChange={e=>edit({giftCampaignId:e.target.value.trim()||undefined})}/></label>}
+    {(giftDeliveryEnabled || hasGift)&&<>
+      <label><input type="checkbox" checked={!!settings.gift} onChange={e=>edit({giftCampaignId:undefined,gift:e.target.checked?{face:500,days:30,products:[],brokerConfirmed:false}:undefined})}/>Reserve a fresh gift for each annual greeting</label>
+      {settings.gift?<AnnualGiftEditor api={api} brandId={brandId} gift={settings.gift} change={gift=>edit({gift})}/>:
+        <GiftCampaignPicker api={api} brandId={brandId} value={settings.giftCampaignId??''} onChange={id=>edit({giftCampaignId:id||undefined})}/>}
+    </>}
     {settings.giftCampaignId&&<p>Each eligible recipient must already have a reserved offer in this campaign. The greeting reads “{giftGreetingBody}” followed by their personal link.</p>}
-    {!settings.giftCampaignId&&<><label>SMS greeting<textarea maxLength={1000} value={settings.sms} onChange={e=>edit({sms:e.target.value})}/></label>
+    {!hasGift&&<><label>SMS greeting<textarea maxLength={1000} value={settings.sms} onChange={e=>edit({sms:e.target.value})}/></label>
     <p>Use {'{{firstName}}'} or {'{{label}}'}. For known anniversary years, use {'{{#years}}{{years}} years!{{/years}}'}.</p></>}
     <label>Local send time<input type="time" value={settings.time} onChange={e=>edit({time:e.target.value})}/></label>
     <label>Fallback time zone<input value={settings.zone} onChange={e=>edit({zone:e.target.value})}/></label>
     <label>Window opens at hour<input type="number" min={9} max={19} value={settings.startHour} onChange={e=>edit({startHour:e.target.valueAsNumber})}/></label>
     <label>Window closes at hour<input type="number" min={10} max={20} value={settings.endHour} onChange={e=>edit({endHour:e.target.valueAsNumber})}/></label>
     <label><input type="checkbox" checked={!!settings.email} onChange={e=>edit({email:e.target.checked?{subject:title(kind)+' greeting',body:settings.sms}:null})}/>Use email when the recipient is ineligible for SMS</label>
-    {settings.email&&!settings.giftCampaignId&&<><label>Email subject<input value={settings.email.subject} onChange={e=>edit({email:{...settings.email!,subject:e.target.value}})}/></label>
+    {settings.email&&!hasGift&&<><label>Email subject<input value={settings.email.subject} onChange={e=>edit({email:{...settings.email!,subject:e.target.value}})}/></label>
       <label>Email greeting<textarea value={settings.email.body} onChange={e=>edit({email:{...settings.email!,body:e.target.value}})}/></label><p>Each fallback uses one email and one campaign slot.</p></>}
-    {settings.email&&settings.giftCampaignId&&<p>Email subject: {giftGreetingSubject}. Each fallback uses one email and one campaign slot.</p>}
-    {!settings.giftCampaignId&&<><p><strong>Example with a name</strong> {renderGreeting(settings.sms,'Taylor',title(kind),kind==='anniversary'?3:null)}</p>
+    {settings.email&&hasGift&&<p>Email subject: {giftGreetingSubject}. Each fallback uses one email and one campaign slot.</p>}
+    {!hasGift&&<><p><strong>Example with a name</strong> {renderGreeting(settings.sms,'Taylor',title(kind),kind==='anniversary'?3:null)}</p>
     <p><strong>Example without a name or year</strong> {renderGreeting(settings.sms,null,title(kind),null)}</p></>}
     <button type="button" onClick={()=>void action('preview')}>Preview next 30 days</button>
     {preview&&<div role="status">{!preview.rows.length&&<p>No upcoming dates on this page.</p>}
@@ -84,10 +91,10 @@ function Editor({api,brandId,kind,def,mode,giftDeliveryEnabled,changed}:Props&{k
       {preview.next&&<button onClick={()=>void action('preview',preview.next)}>Preview more contacts</button>}</div>}
     <button type="button" disabled={!dirty} onClick={()=>void action('save')}>{def?.enabled?'Save and pause':'Save draft'}</button>
     {def?.enabled?<button type="button" onClick={()=>void action('pause')}>Pause greeting</button>:
-      def&&!dirty&&mode!=='off'&&(!settings.giftCampaignId||giftDeliveryEnabled)&&<button type="button" onClick={()=>setReview(true)}>Review activation</button>}
+      def&&!dirty&&mode!=='off'&&(!hasGift||giftDeliveryEnabled)&&<button type="button" onClick={()=>setReview(true)}>Review activation</button>}
     {mode==='off'&&<p>Recurring delivery is disabled in this environment. Drafts and previews are available.</p>}
-    {settings.giftCampaignId&&!giftDeliveryEnabled&&<p>Gift delivery is unavailable for this brand.</p>}
-    {review&&<div>{settings.giftCampaignId&&<p>Use reserved offers from campaign {settings.giftCampaignId}.</p>}<p>Activate revision {def?.revision} every year at {settings.time} recipient local time. Channel: SMS{settings.email?' with eligible email fallback':''}. Mode: {mode}.</p>
+    {hasGift&&!giftDeliveryEnabled&&<p>Gift delivery is unavailable for this brand.</p>}
+    {review&&<div>{settings.gift&&<p>Reserve ${(settings.gift.face/100).toFixed(2)} for each eligible greeting with {settings.gift.days} days to claim.</p>}{settings.giftCampaignId&&<p>Use reserved offers from campaign {settings.giftCampaignId}.</p>}<p>Activate revision {def?.revision} every year at {settings.time} recipient local time. Channel: SMS{settings.email?' with eligible email fallback':''}. Mode: {mode}.</p>
       <button onClick={()=>void action('activate')}>Confirm annual greeting</button></div>}
     {error&&<p role="alert">{error}</p>}
   </fieldset>;

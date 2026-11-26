@@ -1,3 +1,6 @@
+import {all as giftRecords,available as giftAvailable,one as giftRecord,put as putGiftRecord} from '../workspace-gifts/store.js';
+import {lockWorkspace} from '../workspace-lock.js';
+import {once} from '../texting/storage.js';
 import { randomUUID } from 'node:crypto';
 import { platformCommands,type PlatformCommand,type PlatformCase,type PlatformOverview,type PlatformHealth,type PlatformAlert } from '../../shared/platform.js';
 import type { Config } from '../config.js';
@@ -86,7 +89,7 @@ export class PlatformService {
   if(this.options.mode!=='live')return;
   await this.store.cleanup();
   if(this.giftFunding){
-   try { await this.giftFunding.monitor(); await this.giftFunding.processEvents(); }
+   try { await this.giftFunding.processEvents(); await this.giftFunding.replenish(); }
    catch { console.error('Gift funding monitoring requires review.'); }
   }
   const heartbeat=await this.heartbeat();
@@ -146,6 +149,35 @@ export class PlatformService {
   }
   const p=input as {caseId:string};const review=await this.case(actor,p.caseId);
   if(name==='platform.case')return review;
+  if(name==='platform.giftReview'||name==='platform.reviewGiftEligibility'||name==='platform.releaseGiftHold'){
+    requireCondition(review.kind==='abuse'&&review.resourceId&&!actor.exercise&&actor.authentication==='required',403,'gift_case_required','Open a brand-specific abuse review with current MFA.');
+    const w=review.workspaceId,b=review.resourceId;
+    return this.db.brand(w,b,async sql=>{
+      await lockWorkspace(sql,w);
+      await this.current(actor);
+      requireCondition(Date.parse(review.expiresAt)>this.now().getTime()&&(await sql.query('SELECT FROM brands WHERE id=$1',[b])).rowCount,403,'gift_case_required','Reopen the exact brand review.');
+      const decision=await giftRecord(sql,'signal','eligibility:'+b),hold=await giftRecord(sql,'signal','probation_loss');
+      const lots=await giftRecords(sql,'lot');
+      const balance=lots.reduce((sum,l)=>sum+giftAvailable(l),0);
+      const belongs=(incident:string)=>lots.some(l=>l.brand===b && (l.id===incident||l.disputes[incident]?.state==='lost'));
+      const outstanding=(await giftRecords(sql,'signal')).filter(s=>s.kind==='probation_dispute_unreviewed');
+      const incident=outstanding.find(s=>belongs(s.ref))?.ref ?? (hold?.kind==='review_required' && belongs(hold.ref)?hold.ref:null);
+      if(name==='platform.giftReview')return {decision:decision?.kind??null,revision:decision?.ref??null,incident,balance};
+      const p=platformCommands[name].schema.parse(raw);
+      return once(sql,w,actor.userId,p.operationKey,[name,p],async()=>{
+        if('decision' in p){
+          requireCondition((decision?.ref??null)===p.expectedRevision,409,'gift_review_changed','Reload the current decision.');
+          await putGiftRecord(sql,w,'signal','eligibility:'+b,{kind:p.decision,ref:p.operationKey,at:this.now().toISOString()});
+        }else{
+          requireCondition(incident===p.expectedIncident && lots.every(l=>!l.disputed) && hold?.kind==='review_required'&&balance>=0,409,'gift_review_changed','Resolve the outstanding balance and review the current incident.');
+          await putGiftRecord(sql,w,'signal','probation-incident:'+incident,{kind:'resolved',ref:incident,at:this.now().toISOString()});
+          const next=outstanding.find(s=>s.ref!==incident);
+          await putGiftRecord(sql,w,'signal','probation_loss',{kind:next?'review_required':'resolved',ref:next?.ref??incident,at:this.now().toISOString()});
+        }
+        return {caseId:review.id,brand:b,operator:actor.userId,action:name,reason:p.reason,reviewedAt:this.now().toISOString()};
+      });
+    });
+  }
   if(name==='platform.sendingTrust'||name==='platform.reviewSendingTrust'){
    requireCondition(['abuse','delivery'].includes(review.kind),403,'case_scope_mismatch','Open a delivery or abuse review case.');
    requireCondition(this.options.sendingSafeguards,503,'sending_policy_unconfigured','Configure the sending safeguards.');

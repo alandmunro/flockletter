@@ -15,7 +15,7 @@ const metadata = z.object({
 });
 export type SetupTarget = { workspace: string; registration: string; revision: number; plan?: TextPlan; attempt?: number };
 export type SetupPayer = { name: string | null; street: string | null; region: string | null; postalCode: string | null; country: string | null };
-export type SetupReceipt = { target: SetupTarget; outcome: 'paid' | 'declined'; amount: number; eventId: string; sessionId: string; payer: SetupPayer };
+export type SetupReceipt = { paidAt?:string; target: SetupTarget; outcome: 'paid' | 'declined'; amount: number; eventId: string; sessionId: string; payer: SetupPayer };
 
 export class StripeTestSetupPayment {
   private readonly stripe: Stripe;
@@ -72,6 +72,7 @@ export class StripeTestSetupPayment {
     return {
       target: { workspace: bind.data.workspace, registration: bind.data.registration, revision: Number(bind.data.revision), ...(bind.data.plan ? { plan: bind.data.plan } : {}), ...(bind.data.attempt && { attempt: Number(bind.data.attempt) }) },
       outcome: declined ? 'declined' : 'paid', amount: session.amount_total,
+      ...(Number.isSafeInteger(event.created) && event.created>0 ? {paidAt:new Date(event.created*1000).toISOString()} : {}),
       eventId: event.id, sessionId: session.id,
       payer: { name: details?.business_name ?? details?.name ?? null, street: address?.line1 ?? null,
         region: address?.state ?? null, postalCode: address?.postal_code ?? null, country: address?.country ?? null },

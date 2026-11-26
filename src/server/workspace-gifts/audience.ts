@@ -85,7 +85,7 @@ export async function eligibleGiftRecipients(
   return [...groups.values()];
 }
 
-type ProbationState = 'canary' | 'active' | 'paused' | 'complete';
+type ProbationState = 'canary' | 'active' | 'paused' | 'suspended' | 'complete';
 export type GiftWorkspaceOnboardingFacts = {
   companyId: string | null;
   registrationState: RegistrationState | null;
@@ -126,7 +126,7 @@ export async function giftWorkspaceOnboardingFacts(
   );
   const probation = row?.probation;
   const probationState =
-    probation === 'complete' || probation === 'canary' || probation === 'active' || probation === 'paused'
+    probation === 'complete' || probation === 'canary' || probation === 'active' || probation === 'paused' || probation === 'suspended'
       ? probation
       : null;
   const onboardingSource = row?.fixture ? 'staging_fixture' : 'wa05_mock_onboarding';

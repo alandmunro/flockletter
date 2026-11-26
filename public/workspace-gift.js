@@ -68,6 +68,9 @@
         check.hidden = Boolean(href);
         break;
       }
+      case 'canceled':
+        status.textContent = 'The rewards provider could not fulfill this gift. Contact the sender.';
+        break;
       case 'expired':
         status.textContent = 'This gift offer has expired.';
         break;

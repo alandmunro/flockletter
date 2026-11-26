@@ -7,6 +7,9 @@ const workspaceId=z.string().regex(/^org_[A-Za-z0-9_-]{1,120}$/);
 const define=<T extends z.ZodRawShape>(description:string,mutation:boolean,shape:T)=>({description,mutation,schema:z.object(shape).strict()});
 /** A separate command surface. Customer connection scopes never grant these commands. */
 export const platformCommands={
+  'platform.giftReview':define('Read gifting decisions for the brand in this case.',false,{caseId}),
+  'platform.reviewGiftEligibility':define('Record a brand gifting decision in an audited case.',true,{caseId,operationKey,expectedRevision:z.string().nullable(),decision:z.enum(['paused','probation','complete']),reason}),
+  'platform.releaseGiftHold':define('Resolve a reviewed probation dispute after the debt is cleared.',true,{caseId,operationKey,expectedIncident:z.string().min(1),reason}),
   'platform.giftFundingStatus':define('Inspect current platform gift funding coverage in USD cents.',false,{}),
   'platform.approveGiftTopup':define('Approve the reviewed sandbox gift funding shortfall.',true,{operationKey,expectedShortfallCents:z.number().int().positive()}),
   'platform.overview':define('Inspect platform health metadata and configuration gaps.',false,{}),
