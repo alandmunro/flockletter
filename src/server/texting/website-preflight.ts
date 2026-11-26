@@ -3,7 +3,7 @@ import { hostedBusinessUrls } from '../../shared/texting-policy-pages.js';
 import { enrollmentPageReader } from './public-page-reader.js';
 
 export type EnrollmentPages = { website: string; privacyPolicyUrl: string; smsTermsUrl: string; signupUrl: string; hostedPages?: boolean };
-export type PageIssue = { page: 'website' | 'privacy' | 'terms' | 'signup'; message: string };
+export type PageIssue = { page: 'website' | 'privacy' | 'terms' | 'signup'; message: string; retryable?: true };
 export type EnrollmentPageReader = (url: string) => Promise<string>;
 
 const names = { website: 'business website', privacy: 'privacy policy', terms: 'SMS terms', signup: 'hosted SMS opt-in preview' };
@@ -69,7 +69,7 @@ export async function scanEnrollmentPages(input: EnrollmentPages, readPage?: Enr
   const urls = { website: input.website, privacy: input.privacyPolicyUrl, terms: input.smsTermsUrl, signup: signup.href };
   const domain = new URL(input.website).hostname.toLowerCase().replace(/^www\./, '');
   if (activeScans >= 3 || (activeDomains.get(domain) ?? 0) >= 2)
-    return { issues: [{ page: 'website', message: 'Website checks are busy. Check the pages again shortly.' }] };
+    return { issues: [{ page: 'website', message: 'Website checks are busy.', retryable: true }] };
   activeScans++;
   activeDomains.set(domain, (activeDomains.get(domain) ?? 0) + 1);
   try {
@@ -79,7 +79,7 @@ export async function scanEnrollmentPages(input: EnrollmentPages, readPage?: Enr
         const html = await read(url);
         return disclosures(page, html, url, input).map(message => ({ page, message }));
       } catch {
-        return [{ page, message: 'Could not read the ' + names[page] + '. Check that it opens publicly as an HTML page and retry.' }];
+        return [{ page, message: 'Could not read the ' + names[page] + '. Check that it opens publicly as an HTML page and retry.', retryable: true as const }];
       }
     }));
     return { issues: issues.flat() };

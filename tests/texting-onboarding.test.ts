@@ -17,6 +17,7 @@ const owner = (workspaceId: string): Actor => ({
 });
 const a = owner('org_onboarding_a'), b = owner('org_onboarding_b'), c = owner('org_onboarding_stripe');
 const sole = owner('org_onboarding_sole'), hosted = owner('org_onboarding_hosted'), secondHosted = owner('org_onboarding_hosted_other');
+const retryOrg = owner('org_retrying_enrollment'), draftOrg = owner('org_private_draft'), racing = owner('org_check_lease');
 const business = {
   legalName: 'Robin’s Garden LLC', ein: '00-0072321', businessType: 'Limited Liability Corporation', vertical: 'RETAIL',
   website: 'https://garden.example.test', privacyPolicyUrl: 'https://garden.example.test/privacy', smsTermsUrl: 'https://garden.example.test/terms',
@@ -57,7 +58,7 @@ beforeAll(async () => {
   service = new CommandService(db, undefined, checkOwner);
   Object.assign(service, { customer: { texting, owns: () => false } });
   const audience = new CustomerAudience(db, { origin, mode: 'exercise', checkOwner, contactLimit: async () => 250, texting });
-  for (const actor of [a, b, c, sole, hosted, secondHosted]) {
+  for (const actor of [a, b, c, sole, hosted, secondHosted, retryOrg, draftOrg, racing]) {
     await run(actor, 'workspace.initialize', { operationKey: randomUUID(), name: 'Synthetic workspace', brandName: 'Garden' });
     const context = await db.read(actor.workspaceId, async sql => ({
       company: (await sql.query<{ id: string }>('SELECT id FROM companies')).rows[0]!.id,
@@ -153,6 +154,15 @@ it('resumes the verified and paid owner flow, isolates EIN claims and holds a fa
   expect(await mutation(b, 'sms.onboardingPay')).toEqual({ paid: false });
   expect(await status(b)).toMatchObject({ state: 'review', checkout: 'unpaid' });
   await expect(mutation(b, 'sms.onboardingSubmit')).rejects.toMatchObject({ code: 'onboarding_review' });
+
+  await texting.operator('platform.textingOnboardingReview', {operationKey:randomUUID(),workspaceId:b.workspaceId,
+    companyId:ids.get(b.workspaceId),expectedRevision:1,action:'request_correction',reason:'Private operator investigation note.'},operator);
+  const correction = await status(b);
+  expect(correction).toMatchObject({state:'correction_required',message:expect.stringContaining('EIN')});
+  expect(JSON.stringify(correction)).not.toContain('Private operator investigation note');
+  await expect(mutation(b,'sms.onboardingChallenge',{channel:'email'})).rejects.toMatchObject({code:'enrollment_correction_required'});
+  await mutation(b,'sms.onboardingSave',{accepted:true,business:{...business,ein:'00-0900812'}});
+  expect(await status(b)).toMatchObject({state:'draft',revision:2,message:null,verified:{email:false,phone:false}});
 
   const submit = () => mutation(a, 'sms.onboardingSubmit');
   expect(await Promise.all([submit(), submit()])).toEqual([{ submitted: true }, { submitted: true }]);
@@ -290,4 +300,103 @@ it('keeps domainless practice ownership in review until a bound synthetic letter
   expect(await finish()).toMatchObject({submitted:true});
   for(let pass=0;pass<7;pass++) await tick(hosted);
   expect(await status(hosted)).toMatchObject({state:'approved',publicPages:{website:expect.stringContaining('/business/')}});
+});
+
+
+it('binds browser draft access to the authenticated owner, company and editable revision', async () => {
+  const cmd = (user: Actor, companyId: string, revision: number | null) => texting.execute('sms.onboardingDraftAccess',
+    { companyId, expectedRevision:revision, operationKey:randomUUID() }, user, 'ui') as Promise<{id:string;key:string}>;
+  const company = ids.get(draftOrg.workspaceId)!;
+  const [one, two] = await Promise.all([cmd(draftOrg,company,null),cmd(draftOrg,company,null)]);
+  expect(one).toEqual(two);
+  expect((await status(draftOrg)).draftId).toBe(one.id);
+  expect(Buffer.from(one.key,'base64')).toHaveLength(32);
+  expect(JSON.stringify(await status(draftOrg))).not.toContain(one.key);
+  await expect(cmd(retryOrg,company,null)).rejects.toMatchObject({code:'not_found'});
+  await expect(cmd({...draftOrg,owner:false},company,null)).rejects.toMatchObject({code:'owner_required'});
+  const sibling = randomUUID();
+  await db.tenant(draftOrg.workspaceId,sql=>sql.query('INSERT INTO companies(workspace_id,id,name) VALUES($1,$2,$3)',[draftOrg.workspaceId,sibling,'Private draft sibling']));
+  expect((await cmd(draftOrg,sibling,null)).key).not.toBe(one.key);
+  const other = {...draftOrg,userId:'another-owner',actorId:'user:another-owner'};
+  const multiOwner = Texting.mock(db, {origin,linkOrigin:origin+'/l',isOwner:async()=>true,onboardingCapture:true,readEnrollmentPage});
+  const otherAccess = await multiOwner.execute('sms.onboardingDraftAccess',{companyId:company,expectedRevision:null,operationKey:randomUUID()},other,'ui');
+  expect(otherAccess).not.toEqual(one);
+  await mutation(draftOrg,'sms.onboardingSave',{expectedRevision:null,accepted:true,business});
+  await expect(cmd(draftOrg,company,null)).rejects.toMatchObject({code:'revision_conflict'});
+  expect((await cmd(draftOrg,company,1)).key).not.toBe(one.key);
+  await expect(multiOwner.execute('sms.onboardingDraftAccess',{companyId:company,expectedRevision:1,operationKey:randomUUID()},other,'ui'))
+    .rejects.toMatchObject({code:'enrollment_unavailable'});
+});
+
+it('retries temporary page failures without a browser, recovers a lost lease and stops after the retry budget', async () => {
+  let offline = true;
+  const read = vi.fn(async (url: string) => {
+    if (offline && url === business.website) throw Error('Temporary site outage');
+    return readEnrollmentPage(url);
+  });
+  const service = Texting.mock(db,{origin,linkOrigin:origin+'/l',onboardingCapture:true,isOwner:async()=>true,now:()=>new Date(clock),readEnrollmentPage:read});
+  const companyId = ids.get(retryOrg.workspaceId)!;
+  const save = (revision: number | null) => service.execute('sms.onboardingSave',{companyId,expectedRevision:revision,operationKey:randomUUID(),business,accepted:true},retryOrg,'ui');
+  const readView = () => service.execute('sms.onboardingStatus',{companyId},retryOrg,'ui') as Promise<OnboardingView>;
+  const worker = () => service.tick(retryOrg.workspaceId);
+  await save(null);
+  expect((await readView()).pageCheck).toMatchObject({attempts:1,retryAt:expect.any(String)});
+  await worker();
+  expect(read).toHaveBeenCalledTimes(4);
+  offline = false;
+  clock += 60_001;
+  await Promise.all([worker(),worker()]);
+  expect(read).toHaveBeenCalledTimes(8);
+  expect((await readView()).pageCheck).toMatchObject({attempts:2,issues:[]});
+  offline = true;
+  await save(1);
+  for (const delay of [60_001,300_001,900_001]) { clock += delay; await worker(); }
+  const exhausted = (await readView()).pageCheck!;
+  expect(exhausted.attempts).toBe(4);
+  expect(exhausted.retryAt).toBeUndefined();
+  const calls = read.mock.calls.length;
+  clock += 3_600_000;
+  await worker();
+  expect(read).toHaveBeenCalledTimes(calls);
+  await db.tenant(retryOrg.workspaceId,sql=>sql.query(`UPDATE sms_carrier_brands SET profile=jsonb_set(profile,'{onboarding,pendingScan}',$1::jsonb)
+    WHERE company_id=$2`,[JSON.stringify({id:randomUUID(),at:clock-61_000,attempt:1}),companyId]));
+  offline = false;
+  await worker();
+  expect((await readView()).pageCheck).toMatchObject({attempts:2,issues:[]});
+  expect((await readView()).state).toBe('draft');
+});
+
+it('waits for the current page check before submission and ignores a late response from a previous lease', async () => {
+  let visit = 0;
+  let started!: () => void, release!: (html: string) => void;
+  const reading = new Promise<void>(resolve => { started = resolve; });
+  const delayed = new Promise<string>(resolve => { release = resolve; });
+  const test = Texting.mock(db,{origin,linkOrigin:origin+'/l',onboardingCapture:true,isOwner:async()=>true,
+    now:()=>new Date(clock),readEnrollmentPage:async url => {
+      if (url === business.website) {
+        visit++;
+        if (visit === 2) { started(); return delayed; }
+        if (visit === 3) return '';
+      }
+      return readEnrollmentPage(url);
+    }});
+  const companyId = ids.get(racing.workspaceId)!;
+  const ctx = { companyId, expectedRevision:1, operationKey:randomUUID() };
+  await test.execute('sms.onboardingSave',{...ctx,expectedRevision:null,accepted:true,business},racing,'ui');
+  for (const channel of ['email','phone']) {
+    const response = await test.execute('sms.onboardingChallenge',{...ctx,operationKey:randomUUID(),channel},racing,'ui') as {captureCode:string};
+    await test.execute('sms.onboardingVerify',{...ctx,operationKey:randomUUID(),channel,code:response.captureCode},racing,'ui');
+  }
+  clock += 6_000;
+  const first = test.execute('sms.onboardingScan',ctx,racing,'ui');
+  await reading;
+  try {
+    await expect(test.execute('sms.onboardingFinish',{...ctx,operationKey:randomUUID(),acceptedFee:4900,currency:'USD'},racing,'ui'))
+      .rejects.toMatchObject({code:'website_check_required'});
+    clock += 61_000;
+    await test.execute('sms.onboardingScan',ctx,racing,'ui');
+  } finally { release('<p>Late successful response</p>'); await first; }
+  const current = await test.execute('sms.onboardingStatus',{companyId},racing,'ui') as OnboardingView;
+  expect(current.pageCheck?.issues).toEqual([{page:'website',message:'Publish a readable business website page.'}]);
+  expect(current.checkout).toBe('unpaid');
 });
