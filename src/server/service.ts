@@ -212,7 +212,10 @@ export class CommandService {
         const disablingIntake = name === 'intake.configure' && 'enabled' in input && input.enabled === false;
         if (name !== 'connection.revoke' && name !== 'team.revoke' && name !== 'rehearsal.cancel' && name !== 'audience.updateContact' && name !== 'audience.stopTexts' && !disablingIntake && !optOut) {
           const count = (await sql.query<{ count: string }>("SELECT count(*) FROM operations WHERE actor_id NOT LIKE 'workspace-gifts:%'")).rows[0];
-          requireCondition(Number(count?.count) < limits.preparationOperations, 422, 'preparation_limit', 'This foundation workspace has reached its preparation operation limit. Contact the operator; connection revocation remains available.');
+          if (Number(count?.count) >= limits.preparationOperations) {
+            const eligible = this.customer ? (await customerEligibility(sql, actor.workspaceId, this.customer.billing.options)).eligible : false;
+            requireCondition(eligible, 422, 'preparation_limit', 'This foundation workspace has reached its preparation operation limit. Contact the operator; connection revocation remains available.');
+          }
         }
       }
       const result = await this.perform(name, raw, actor, sql);

@@ -356,12 +356,29 @@ export async function retentionServiceEndSql(
   };
 }
 export class CustomerBilling {
+  private readonly webhookQueue = new Map<string, Promise<void>>();
   constructor(
     readonly db: Database,
     readonly options: BillingOptions,
   ) {
     if (options.environment === 'production' && options.exerciseEnabled)
       throw Error('Production cannot enable captured billing.');
+  }
+  private async serializeWebhook<T>(workspace: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.webhookQueue.get(workspace);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chain = (previous ?? Promise.resolve()).then(() => gate);
+    this.webhookQueue.set(workspace, chain);
+    if (previous) await previous;
+    try {
+      return await action();
+    } finally {
+      release();
+      if (this.webhookQueue.get(workspace) === chain) this.webhookQueue.delete(workspace);
+    }
   }
   private clock() {
     return this.options.now?.() ?? new Date();
@@ -1266,7 +1283,7 @@ export class CustomerBilling {
   async recoverGiftEligibility(workspace: string, live: boolean) {
     const gateway = this.options.eventGateway ?? this.options.gateway;
     if (!gateway || gateway.live !== live) return;
-    await this.locked(workspace, async (sql) => {
+    const prior = await this.db.read(workspace, async (sql) => {
       const { rows } = await sql.query<{ event_id: string; provider_subscription: string }>(
         `SELECT e.event_id,e.provider_subscription
         FROM customer_billing_events e WHERE e.workspace_id=$1 AND e.source='stripe' AND e.provider_account=$2
@@ -1275,13 +1292,22 @@ export class CustomerBilling {
         ORDER BY e.received_at,e.event_id LIMIT 1`,
         [workspace, gateway.account],
       );
-      const prior = rows[0];
-      if (!prior) return;
-      const observed = await gateway.resolve(
-        { id: prior.event_id, kind: 'invoice.paid', checkout: null, subscription: null, risk: false },
-        true,
-      );
-      if (observed.subscription && observed.subscription.id !== prior.provider_subscription) return;
+      return rows[0];
+    });
+    if (!prior) return;
+    const observed = await gateway.resolve(
+      { id: prior.event_id, kind: 'invoice.paid', checkout: null, subscription: null, risk: false },
+      true,
+    );
+    if (observed.subscription && observed.subscription.id !== prior.provider_subscription) return;
+    await this.locked(workspace, async (sql) => {
+      const already = (
+        await sql.query(
+          "SELECT 1 FROM operations WHERE workspace_id=$1 AND actor_id='billing:gift-invoice-reviewed' AND operation_key=$2",
+          [workspace, prior.event_id],
+        )
+      ).rowCount;
+      if (already) return;
       if (observed.clearedPayment && observed.subscription)
         await recordWorkspacePayment(
           sql,
@@ -1312,12 +1338,13 @@ export class CustomerBilling {
     // Checkout intent establish the binding before a provider fact can affect eligibility.
     const workspace = routed.workspace ?? routed.subscription.workspaceHint;
     if (!workspace || !/^org_[A-Za-z0-9_-]{1,120}$/.test(workspace)) return;
-    return this.locked(workspace, async (sql) => {
-      // Serialize retrieval with application: concurrent older event handlers must not
-      // overwrite a newer snapshot fetched by another handler while waiting for this lock.
-      const resolved = await gateway.resolve(notice),
-        snapshot = resolved.subscription;
+    return this.serializeWebhook(workspace, async () => {
+      // Serialize retrieval with application outside the DB lock so Stripe HTTP calls
+      // never hold PostgreSQL pool slots while concurrent webhooks cannot apply stale state.
+      const resolved = await gateway.resolve(notice);
+      const snapshot = resolved.subscription;
       if (!snapshot || (resolved.workspace ?? snapshot.workspaceHint) !== workspace) return;
+      return this.locked(workspace, async (sql) => {
       const current = await row(sql, true);
       const retired = (
         await sql.query(
@@ -1558,6 +1585,7 @@ export class CustomerBilling {
         "UPDATE customer_billing_events SET finished=true WHERE source='stripe' AND event_id=$1",
         [notice.id],
       );
+      });
     });
   }
   async reserve(

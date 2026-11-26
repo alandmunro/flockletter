@@ -10,15 +10,25 @@ import { AppError, requireCondition } from '../errors.js';
 import { suppress } from '../subscribers/intake.js';
 import type { DeliveryEnvelope,DeliveryOutcome } from '../campaign/delivery-provider.js';
 import { locked,deliveryRow,originalEnvelope } from './storage.js';
-import type { DeliveryOptions,DeliveryRow,PersonRow } from './types.js';
+import type { DeliveryOptions,DeliveryRow,PersonRow,CustomerProvider } from './types.js';
 import { senderProfile,senderEligible,profileFingerprint } from './sender.js';
 import {deliveryPurposeAllowed} from './policy.js';
 
 type Work={id:string;deliveryId:string;brand:string;kind:'render'|'submit'|'reconcile';claim:string|null};
 type Wait={retryAt:string};
 type StoredEnvelope=Pick<DeliveryEnvelope,'to'|'subject'|'html'|'text'|'unsubscribe'>;
+type ExternalForward=
+  | {kind:'reconcile';provider:CustomerProvider;recipientId:string;messageId:string|null}
+  | {kind:'submit';provider:CustomerProvider;envelope:DeliveryEnvelope};
 function messageDigest(message:StoredEnvelope) {
   return digest(JSON.stringify([message.to,message.subject,message.html,message.text,message.unsubscribe?.url??null]));
+}
+export function uncertainRetryDelayMs(kind:'submit'|'reconcile',ageMs:number):number {
+  if(kind==='submit'||ageMs<5*60_000)return 30_000;
+  if(ageMs<30*60_000)return 5*60_000;
+  if(ageMs<6*3_600_000)return 15*60_000;
+  if(ageMs<24*3_600_000)return 3_600_000;
+  return 6*3_600_000;
 }
 
 export class CustomerDeliveryWorker {
@@ -208,66 +218,105 @@ export class CustomerDeliveryWorker {
       await sql.query("UPDATE customer_delivery_recipients SET state='prepared',render_received_at=now(),reason=NULL,next_check_at=NULL WHERE id=$1",[p.id]);
     });
   }
+  private async recordForwardOutcome(
+    sql:Sql,workspace:string,row:DeliveryRow,p:PersonRow,kind:'submit'|'reconcile',
+    outcome:DeliveryOutcome,messageId?:string,retryAfterSeconds?:number,
+  ) {
+    if(outcome==='accepted'&&this.options.safeguards)await this.options.safeguards.outcome(sql,workspace,p.id,'accepted');
+    if(outcome==='accepted')await sql.query("UPDATE customer_delivery_recipients SET state='accepted',message_id=coalesce($2,message_id),reason=NULL,next_check_at=NULL WHERE id=$1",[p.id,messageId??null]);
+    else if(outcome==='rejected')await sql.query("UPDATE customer_delivery_recipients SET state='rejected',reason='provider_rejected',next_check_at=NULL WHERE id=$1",[p.id]);
+    else if(outcome==='not_submitted'&&retryAfterSeconds!==undefined&&row.mode==='resend'){
+      const seconds=Math.min(86400,Math.max(1,Math.ceil(retryAfterSeconds)));
+      await this.options.safeguards?.cooldown(sql,workspace,p.id,seconds);
+      // This POST was definitively refused. Retain its admission, frozen payload and stable ID.
+      await sql.query("UPDATE customer_delivery_recipients SET state='prepared',attempts=attempts-1,reason='sending_provider_backoff',next_check_at=$2 WHERE id=$1",[p.id,new Date(this.now().getTime()+seconds*1000)]);
+    }else if(outcome==='not_submitted')await sql.query("UPDATE customer_delivery_recipients SET state=$2,reason='verified_not_submitted',next_check_at=NULL WHERE id=$1",
+      [p.id,['queued','paused'].includes(row.state)&&p.attempts<3&&await sameTestDay(sql,row)?'prepared':'cancelled']);
+    else {
+      const since=p.render_received_at??row.due_at??row.created_at??this.now();
+      const delayMs=uncertainRetryDelayMs(kind,Math.max(0,this.now().getTime()-since.getTime()));
+      await sql.query("UPDATE customer_delivery_recipients SET state='uncertain',reason='provider_unknown',next_check_at=$2 WHERE id=$1",[p.id,new Date(this.now().getTime()+delayMs)]);
+    }
+    if(outcome==='accepted'&&row.mode==='capture')await this.feedback(sql,row,p.id,'delivered','capture-'+p.id);
+    await this.settle(sql,row);
+  }
   private async forward(workspace:string,work:Work) {
+    const kind=work.kind==='reconcile'?'reconcile':'submit';
+    // Phase 1: validate gates and read the frozen payload inside a short workspace transaction,
+    // releasing the DB connection and advisory lock before calling external email providers.
+    const plan=await this.scoped(workspace,work.brand,async(sql):Promise<ExternalForward|null>=>{
+      const row=await deliveryRow(sql,work.deliveryId,work.brand),p=(await sql.query<PersonRow>('SELECT * FROM customer_delivery_recipients WHERE id=$1 FOR UPDATE',[work.id])).rows[0]!;
+      if(!['submitting','uncertain'].includes(p.state))return null;
+      const capture=(await sql.query<{message_digest:string}>('SELECT message_digest FROM customer_delivery_captures WHERE recipient_id=$1',[p.id])).rows[0];
+      const provider=externalDelivery(row.mode)?this.options.provider?.(workspace,row.brand_id,row.mode):undefined;
+      if(kind==='reconcile') {
+        if(row.mode==='capture'){
+          await this.recordForwardOutcome(sql,workspace,row,p,kind,capture?'accepted':'not_submitted');
+          return null;
+        }
+        if(provider&&provider.fingerprint===row.provider_binding.split(':')[0]) {
+          return {kind:'reconcile',provider,recipientId:p.id,messageId:p.message_id};
+        }
+        await this.recordForwardOutcome(sql,workspace,row,p,kind,'unknown');
+        return null;
+      }
+      let blocked=await this.block(sql,row);
+      if(!blocked && row.content.giftCampaignId){
+        try{await reviewedCampaignGift(sql,row,p,this.options.origin,this.options.giftDelivery!);}
+        catch(error){if(!(error instanceof AppError))throw error;blocked=error.code;}
+      }
+      if(row.content.giftCampaignId && (blocked==='gift_offer_unavailable'||blocked==='gift_recipient_ineligible')){
+        await sql.query("UPDATE customer_delivery_recipients SET state='excluded',reason=$2,attempts=attempts-1 WHERE id=$1",[p.id,blocked]);
+        await this.settle(sql,row);return null;
+      }
+      if(blocked==='authority_verification_unavailable'||blocked==='outside_window'){
+        // This exact claim has not reached submit. Retrying it must recheck all gates.
+        await sql.query("UPDATE customer_delivery_recipients SET state='prepared',attempts=attempts-1,reason=$2,next_check_at=$3 WHERE id=$1",[p.id,blocked,new Date(this.now().getTime()+15000)]);
+        return null;
+      }
+      if(blocked){
+        const paused=row.state==='paused'||['provider_unavailable','sender_ineligible','renderer_unavailable','sending_reputation_hold'].includes(blocked);
+        await sql.query("UPDATE customer_delivery_recipients SET state=$2,reason=$3,attempts=attempts-1,next_check_at=NULL WHERE id=$1",[p.id,paused?'prepared':'cancelled',blocked]);
+        await this.stop(sql,row,blocked);return null;
+      }
+      const email=await this.eligible(sql,row,p);
+      if(!email){await sql.query("UPDATE customer_delivery_recipients SET state='excluded',reason='consent_changed',attempts=attempts-1 WHERE id=$1",[p.id]);await this.settle(sql,row);return null;}
+      const original=await originalEnvelope(sql,row,p,email);
+      const payload=(await sql.query<{envelope:StoredEnvelope;message_digest:string}>('SELECT envelope,message_digest FROM customer_delivery_payloads WHERE recipient_id=$1',[p.id])).rows[0];
+      if(!original||!payload||payload.envelope.to!==email||messageDigest(payload.envelope)!==payload.message_digest){
+        await sql.query("UPDATE customer_delivery_recipients SET state='rejected',reason='payload_unavailable',attempts=attempts-1 WHERE id=$1",[p.id]);await this.stop(sql,row,'payload_unavailable');return null;
+      }
+      if(row.mode==='capture') {
+        await sql.query('INSERT INTO customer_delivery_captures(workspace_id,brand_id,delivery_id,recipient_id,payload,message_digest) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING',
+          [workspace,row.brand_id,row.id,p.id,JSON.stringify({...payload.envelope,mode:'capture'}),payload.message_digest]);
+        await this.recordForwardOutcome(sql,workspace,row,p,kind,'accepted','capture-'+p.id);
+        return null;
+      }
+      if(provider) return {kind:'submit',provider,envelope:{...original,...payload.envelope}};
+      await this.recordForwardOutcome(sql,workspace,row,p,kind,'unknown');
+      return null;
+    });
+    if(!plan)return;
+    // Phase 2: perform external provider I/O outside any PostgreSQL transaction or advisory lock.
+    let outcome:DeliveryOutcome='unknown',messageId:string|undefined,retryAfterSeconds:number|undefined;
+    try {
+      if(plan.kind==='reconcile'){
+        const result=await plan.provider.lookup(plan.recipientId,plan.messageId);
+        outcome=result.outcome;messageId=result.messageId;
+      } else {
+        const result=await plan.provider.submit(plan.envelope);
+        outcome=result.outcome;messageId=result.messageId;retryAfterSeconds=result.retryAfterSeconds;
+      }
+    } catch { /* Keep the committed intent uncertain when the provider call throws ambiguously. */ }
+    // Phase 3: persist the provider outcome in a short transaction, respecting any webhook that already settled the recipient.
     await this.scoped(workspace,work.brand,async sql=>{
       const row=await deliveryRow(sql,work.deliveryId,work.brand),p=(await sql.query<PersonRow>('SELECT * FROM customer_delivery_recipients WHERE id=$1 FOR UPDATE',[work.id])).rows[0]!;
-      if(!['submitting','uncertain'].includes(p.state))return;
-      const capture=(await sql.query<{message_digest:string}>('SELECT message_digest FROM customer_delivery_captures WHERE recipient_id=$1',[p.id])).rows[0];
-      let outcome:DeliveryOutcome='unknown',messageId:string|undefined,retryAfterSeconds:number|undefined;
-      const provider=externalDelivery(row.mode)?this.options.provider?.(workspace,row.brand_id,row.mode):undefined;
-      if(work.kind==='reconcile') {
-        if(row.mode==='capture')outcome=capture?'accepted':'not_submitted';
-        else if(provider&&provider.fingerprint===row.provider_binding.split(':')[0]) {
-          try {const result=await provider.lookup(p.id,p.message_id);outcome=result.outcome;messageId=result.messageId;}catch{/* Keep the original uncertainty. */}
-        }
-      } else {
-        let blocked=await this.block(sql,row);
-        if(!blocked && row.content.giftCampaignId){
-          try{await reviewedCampaignGift(sql,row,p,this.options.origin,this.options.giftDelivery!);}
-          catch(error){if(!(error instanceof AppError))throw error;blocked=error.code;}
-        }
-        if(row.content.giftCampaignId && (blocked==='gift_offer_unavailable'||blocked==='gift_recipient_ineligible')){
-          await sql.query("UPDATE customer_delivery_recipients SET state='excluded',reason=$2,attempts=attempts-1 WHERE id=$1",[p.id,blocked]);
-          await this.settle(sql,row);return;
-        }
-        if(blocked==='authority_verification_unavailable'||blocked==='outside_window'){
-          // This exact claim has not reached submit. Retrying it must recheck all gates.
-          await sql.query("UPDATE customer_delivery_recipients SET state='prepared',attempts=attempts-1,reason=$2,next_check_at=$3 WHERE id=$1",[p.id,blocked,new Date(this.now().getTime()+15000)]);
-          return;
-        }
-        if(blocked){
-          const paused=row.state==='paused'||['provider_unavailable','sender_ineligible','renderer_unavailable','sending_reputation_hold'].includes(blocked);
-          await sql.query("UPDATE customer_delivery_recipients SET state=$2,reason=$3,attempts=attempts-1,next_check_at=NULL WHERE id=$1",[p.id,paused?'prepared':'cancelled',blocked]);
-          await this.stop(sql,row,blocked);return;
-        }
-        const email=await this.eligible(sql,row,p);
-        if(!email){await sql.query("UPDATE customer_delivery_recipients SET state='excluded',reason='consent_changed',attempts=attempts-1 WHERE id=$1",[p.id]);await this.settle(sql,row);return;}
-        const original=await originalEnvelope(sql,row,p,email);
-        const payload=(await sql.query<{envelope:StoredEnvelope;message_digest:string}>('SELECT envelope,message_digest FROM customer_delivery_payloads WHERE recipient_id=$1',[p.id])).rows[0];
-        if(!original||!payload||payload.envelope.to!==email||messageDigest(payload.envelope)!==payload.message_digest){
-          await sql.query("UPDATE customer_delivery_recipients SET state='rejected',reason='payload_unavailable',attempts=attempts-1 WHERE id=$1",[p.id]);await this.stop(sql,row,'payload_unavailable');return;
-        }
-        if(row.mode==='capture') {
-          await sql.query('INSERT INTO customer_delivery_captures(workspace_id,brand_id,delivery_id,recipient_id,payload,message_digest) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING',
-            [workspace,row.brand_id,row.id,p.id,JSON.stringify({...payload.envelope,mode:'capture'}),payload.message_digest]);
-          outcome='accepted';messageId='capture-'+p.id;
-        } else if(provider) {
-          try{const result=await provider.submit({...original,...payload.envelope});outcome=result.outcome;messageId=result.messageId;retryAfterSeconds=result.retryAfterSeconds;}catch{/* The committed intent could already have reached the provider. */}
-        }
+      if(!['submitting','uncertain'].includes(p.state)){
+        if(p.state==='accepted'&&messageId&&!p.message_id)
+          await sql.query('UPDATE customer_delivery_recipients SET message_id=coalesce(message_id,$2) WHERE id=$1',[p.id,messageId]);
+        return;
       }
-      if(outcome==='accepted'&&this.options.safeguards)await this.options.safeguards.outcome(sql,workspace,p.id,'accepted');
-      if(outcome==='accepted')await sql.query("UPDATE customer_delivery_recipients SET state='accepted',message_id=coalesce($2,message_id),reason=NULL,next_check_at=NULL WHERE id=$1",[p.id,messageId??null]);
-      else if(outcome==='rejected')await sql.query("UPDATE customer_delivery_recipients SET state='rejected',reason='provider_rejected',next_check_at=NULL WHERE id=$1",[p.id]);
-      else if(outcome==='not_submitted'&&retryAfterSeconds!==undefined&&row.mode==='resend'){
-        const seconds=Math.min(86400,Math.max(1,Math.ceil(retryAfterSeconds)));
-        await this.options.safeguards?.cooldown(sql,workspace,p.id,seconds);
-        // This POST was definitively refused. Retain its admission, frozen payload and stable ID.
-        await sql.query("UPDATE customer_delivery_recipients SET state='prepared',attempts=attempts-1,reason='sending_provider_backoff',next_check_at=$2 WHERE id=$1",[p.id,new Date(this.now().getTime()+seconds*1000)]);
-      }else if(outcome==='not_submitted')await sql.query("UPDATE customer_delivery_recipients SET state=$2,reason='verified_not_submitted',next_check_at=NULL WHERE id=$1",
-        [p.id,['queued','paused'].includes(row.state)&&p.attempts<3&&await sameTestDay(sql,row)?'prepared':'cancelled']);
-      else await sql.query("UPDATE customer_delivery_recipients SET state='uncertain',reason='provider_unknown',next_check_at=$2 WHERE id=$1",[p.id,new Date(this.now().getTime()+30000)]);
-      if(outcome==='accepted'&&row.mode==='capture')await this.feedback(sql,row,p.id,'delivered','capture-'+p.id);
-      await this.settle(sql,row);
+      await this.recordForwardOutcome(sql,workspace,row,p,plan.kind,outcome,messageId,retryAfterSeconds);
     });
   }
   async settle(sql:Sql,row:DeliveryRow) {
