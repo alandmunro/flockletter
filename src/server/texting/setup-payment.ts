@@ -72,7 +72,8 @@ export class StripeTestSetupPayment {
     return {
       target: { workspace: bind.data.workspace, registration: bind.data.registration, revision: Number(bind.data.revision), ...(bind.data.plan ? { plan: bind.data.plan } : {}), ...(bind.data.attempt && { attempt: Number(bind.data.attempt) }) },
       outcome: declined ? 'declined' : 'paid', amount: session.amount_total,
-      paidAt:new Date(event.created*1000).toISOString(), eventId: event.id, sessionId: session.id,
+      ...(Number.isSafeInteger(event.created) && event.created>0 ? {paidAt:new Date(event.created*1000).toISOString()} : {}),
+      eventId: event.id, sessionId: session.id,
       payer: { name: details?.business_name ?? details?.name ?? null, street: address?.line1 ?? null,
         region: address?.state ?? null, postalCode: address?.postal_code ?? null, country: address?.country ?? null },
     };

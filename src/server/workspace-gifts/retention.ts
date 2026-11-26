@@ -156,12 +156,14 @@ export async function giftRetentionArchive(sql: Sql, workspace: string, now: Dat
   const tx = new Map<string, Entry>();
   const lossEntries = new Map<string, number>();
   const externalRefunds = new Map<string, number>();
+  const closureRefunds = new Map<string, number>();
   for (const e of entries) {
     requireRetention(eventKinds.has(e.kind) && integer(e.amount) && Number.isFinite(Date.parse(e.at)), hold);
     if (e.kind === 'dispute_lost') lossEntries.set(e.ref, (lossEntries.get(e.ref) ?? 0) + e.amount);
+    if(e.kind==='refunded')closureRefunds.set(e.ref,(closureRefunds.get(e.ref)??0)+e.amount);
     if(e.kind==='external_refund'||e.kind==='refund_reversed')
       externalRefunds.set(e.ref,(externalRefunds.get(e.ref)??0)+(e.kind==='refund_reversed'?-e.amount:e.amount));
-    if (!e.kind.startsWith('dispute_') && !['external_refund','refund_reversed','refund_hold_changed'].includes(e.kind)) {
+    if (!e.kind.startsWith('dispute_') && !['refunded','external_refund','refund_reversed','refund_hold_changed'].includes(e.kind)) {
       const key = e.kind + '/' + e.ref;
       requireRetention(!tx.has(key), hold);
       tx.set(key, e);
@@ -202,7 +204,7 @@ export async function giftRetentionArchive(sql: Sql, workspace: string, now: Dat
     }
     requireRetention(l.spent === (consumed.get(l.id) ?? 0), hold);
     if (l.state !== 'expired') requireRetention(hasEntry('purchased', l.id, l.brand, l.face), hold);
-    if (l.state === 'refunded') requireRetention(hasEntry('refunded', l.id, l.brand, l.returned), hold);
+    if (l.state === 'refunded') requireRetention(closureRefunds.get(l.id)===l.returned, hold);
   }
 
   // A settled loss can consume credit from another lot. Only the verified funded,
@@ -221,7 +223,7 @@ export async function giftRetentionArchive(sql: Sql, workspace: string, now: Dat
       fee = lot.fee;
     } else if (e.kind === 'refunded') {
       requireRetention(lot?.state === 'refunded' && lot.brand === e.brand, hold);
-      face = lot.refundFace ?? lot.face - lot.spent;
+      face = e.faceMinor ?? lot.refundFace ?? lot.face - lot.spent;
       fee = e.amount - face;
     } else if(e.kind==='external_refund'||e.kind==='refund_reversed'){
       requireRetention(lot && lot.brand===e.brand,hold);

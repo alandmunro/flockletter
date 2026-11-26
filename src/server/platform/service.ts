@@ -157,18 +157,22 @@ export class PlatformService {
       await this.current(actor);
       requireCondition(Date.parse(review.expiresAt)>this.now().getTime()&&(await sql.query('SELECT FROM brands WHERE id=$1',[b])).rowCount,403,'gift_case_required','Reopen the exact brand review.');
       const decision=await giftRecord(sql,'signal','eligibility:'+b),hold=await giftRecord(sql,'signal','probation_loss');
-      const balance=(await giftRecords(sql,'lot')).reduce((sum,l)=>sum+giftAvailable(l),0);
-      if(name==='platform.giftReview')return {decision:decision?.kind??null,revision:decision?.ref??null,incident:hold?.kind==='review_required'?hold.ref:null,balance};
+      const lots=await giftRecords(sql,'lot');
+      const balance=lots.reduce((sum,l)=>sum+giftAvailable(l),0);
+      const belongs=(incident:string)=>lots.some(l=>l.brand===b && (l.id===incident||l.disputes[incident]?.state==='lost'));
+      const outstanding=(await giftRecords(sql,'signal')).filter(s=>s.kind==='probation_dispute_unreviewed');
+      const incident=outstanding.find(s=>belongs(s.ref))?.ref ?? (hold?.kind==='review_required' && belongs(hold.ref)?hold.ref:null);
+      if(name==='platform.giftReview')return {decision:decision?.kind??null,revision:decision?.ref??null,incident,balance};
       const p=platformCommands[name].schema.parse(raw);
       return once(sql,w,actor.userId,p.operationKey,[name,p],async()=>{
         if('decision' in p){
           requireCondition((decision?.ref??null)===p.expectedRevision,409,'gift_review_changed','Reload the current decision.');
           await putGiftRecord(sql,w,'signal','eligibility:'+b,{kind:p.decision,ref:p.operationKey,at:this.now().toISOString()});
         }else{
-          const lots=await giftRecords(sql,'lot');
-          const affected=lots.some(l=>l.brand===b && (l.id===hold?.ref || (hold && l.disputes[hold.ref]?.state==='lost')));
-          requireCondition(affected && lots.every(l=>!l.disputed) && hold?.kind==='review_required'&&hold.ref===p.expectedIncident&&balance>=0,409,'gift_review_changed','Resolve the outstanding balance and review the current incident.');
-          await putGiftRecord(sql,w,'signal','probation_loss',{kind:'resolved',ref:hold.ref,at:this.now().toISOString()});
+          requireCondition(incident===p.expectedIncident && lots.every(l=>!l.disputed) && hold?.kind==='review_required'&&balance>=0,409,'gift_review_changed','Resolve the outstanding balance and review the current incident.');
+          await putGiftRecord(sql,w,'signal','probation-incident:'+incident,{kind:'resolved',ref:incident,at:this.now().toISOString()});
+          const next=outstanding.find(s=>s.ref!==incident);
+          await putGiftRecord(sql,w,'signal','probation_loss',{kind:next?'review_required':'resolved',ref:next?.ref??incident,at:this.now().toISOString()});
         }
         return {caseId:review.id,brand:b,operator:actor.userId,action:name,reason:p.reason,reviewedAt:this.now().toISOString()};
       });

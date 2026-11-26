@@ -1263,23 +1263,38 @@ export class CustomerBilling {
     await this.requireOwner(actor);
     return { url };
   }
-  async recoverGiftEligibility(workspace:string,live:boolean) {
-    const gateway=this.options.eventGateway??this.options.gateway;
-    if (!gateway || gateway.live!==live)return;
-    await this.locked(workspace,async sql=>{
-      const {rows}=await sql.query<{event_id:string;provider_subscription:string}>(`SELECT e.event_id,e.provider_subscription
+  async recoverGiftEligibility(workspace: string, live: boolean) {
+    const gateway = this.options.eventGateway ?? this.options.gateway;
+    if (!gateway || gateway.live !== live) return;
+    await this.locked(workspace, async (sql) => {
+      const { rows } = await sql.query<{ event_id: string; provider_subscription: string }>(
+        `SELECT e.event_id,e.provider_subscription
         FROM customer_billing_events e WHERE e.workspace_id=$1 AND e.source='stripe' AND e.provider_account=$2
         AND e.event_kind='invoice.paid' AND e.finished AND NOT EXISTS (SELECT FROM operations o
           WHERE o.workspace_id=e.workspace_id AND o.actor_id='billing:gift-invoice-reviewed' AND o.operation_key=e.event_id)
-        ORDER BY e.received_at,e.event_id LIMIT 1`,[workspace,gateway.account]);
-      const prior=rows[0];
-      if(!prior)return;
-      const observed=await gateway.resolve({id:prior.event_id,kind:'invoice.paid',checkout:null,subscription:null,risk:false},true);
-      if(observed.subscription && observed.subscription.id!==prior.provider_subscription)return;
-      if(observed.clearedPayment && observed.subscription)
-        await recordWorkspacePayment(sql,workspace,live,observed.clearedPayment.reference,observed.clearedPayment.at);
-      await sql.query(`INSERT INTO operations(workspace_id,actor_id,operation_key,request_hash,result)
-        VALUES($1,'billing:gift-invoice-reviewed',$2,$2,'{}') ON CONFLICT DO NOTHING`,[workspace,prior.event_id]);
+        ORDER BY e.received_at,e.event_id LIMIT 1`,
+        [workspace, gateway.account],
+      );
+      const prior = rows[0];
+      if (!prior) return;
+      const observed = await gateway.resolve(
+        { id: prior.event_id, kind: 'invoice.paid', checkout: null, subscription: null, risk: false },
+        true,
+      );
+      if (observed.subscription && observed.subscription.id !== prior.provider_subscription) return;
+      if (observed.clearedPayment && observed.subscription)
+        await recordWorkspacePayment(
+          sql,
+          workspace,
+          live,
+          observed.clearedPayment.reference,
+          observed.clearedPayment.at,
+        );
+      await sql.query(
+        `INSERT INTO operations(workspace_id,actor_id,operation_key,request_hash,result)
+        VALUES($1,'billing:gift-invoice-reviewed',$2,$2,'{}') ON CONFLICT DO NOTHING`,
+        [workspace, prior.event_id],
+      );
     });
   }
   async webhook(raw: Buffer, signature: string) {

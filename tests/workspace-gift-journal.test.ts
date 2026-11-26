@@ -92,22 +92,57 @@ it('reconciles unused credit on multiple lots after a partial loss without refun
   expect(amounts.ledger.filter((e) => e.kind === 'refunded').map((e) => e.amount)).toEqual([1100]);
 });
 
-it('reconciles duplicated, reversed and out-of-order external refunds against the bound purchase', async()=>{
-  const w='org_'+randomUUID(), brand=randomUUID(), lotId=randomUUID(),at=new Date().toISOString();
-  const l:Lot={id:lotId,brand,account:'acct_test',face:1000,fee:100,total:1100,created:at,paidAt:at,state:'funded',
-    payment:'pi_fixture',charge:'ch_fixture',spent:500,reserved:0,returned:0,lost:0,disputed:0,disputes:{}};
-  await db.tenant(w,async sql=>{await lockWorkspace(sql,w);await put(sql,w,'lot',lotId,l);});
-  const binding={workspace:w,brand,lot:lotId,payment:l.payment!,charge:l.charge!};
-  const gifts=new WorkspaceGifts(db,{account:l.account} as GiftGateway,{live:false,waitMs:0,monthlyCap:1000});
-  const snapshot=async()=>({settled:825,held:0});
-  await Promise.all([gifts.externalRefund(binding,'e1',snapshot),gifts.externalRefund(binding,'e1',snapshot)]);
-  await gifts.externalRefund(binding,'older',snapshot);
-  expect(await db.read(w,async sql=>available((await one(sql,'lot',lotId))!))).toBe(-250);
-  expect(await db.read(w,sql=>one(sql,'signal','access'))).toMatchObject({kind:'paused'});
-  await gifts.externalRefund(binding,'reversed',async()=>({settled:0,held:0}));
-  expect(await db.read(w,sql=>one(sql,'signal','access'))).toMatchObject({kind:'clear'});
-  expect((await db.read(w,sql=>all(sql,'entry'))).map(e=>e.kind)).toEqual(['external_refund','refund_reversed']);
-  await expect(gifts.externalRefund({...binding,workspace:'org_other'},'unrelated',snapshot)).rejects.toThrow();
+it('reconciles duplicated, reversed and out-of-order external refunds against the bound purchase', async () => {
+  const w = 'org_' + randomUUID(),
+    brand = randomUUID(),
+    lotId = randomUUID(),
+    at = new Date().toISOString();
+  const l: Lot = {
+    id: lotId,
+    brand,
+    account: 'acct_test',
+    face: 1000,
+    fee: 100,
+    total: 1100,
+    created: at,
+    paidAt: at,
+    state: 'funded',
+    payment: 'pi_fixture',
+    charge: 'ch_fixture',
+    spent: 500,
+    reserved: 0,
+    returned: 0,
+    lost: 0,
+    disputed: 0,
+    disputes: {},
+  };
+  await db.tenant(w, async (sql) => {
+    await lockWorkspace(sql, w);
+    await put(sql, w, 'lot', lotId, l);
+  });
+  const binding = { workspace: w, brand, lot: lotId, payment: l.payment!, charge: l.charge! };
+  const gifts = new WorkspaceGifts(db, { account: l.account } as GiftGateway, {
+    live: false,
+    waitMs: 0,
+    monthlyCap: 1000,
+  });
+  const snapshot = async () => ({ settled: 825, held: 0 });
+  await Promise.all([
+    gifts.externalRefund(binding, 'e1', snapshot),
+    gifts.externalRefund(binding, 'e1', snapshot),
+  ]);
+  await gifts.externalRefund(binding, 'older', snapshot);
+  expect(await db.read(w, async (sql) => available((await one(sql, 'lot', lotId))!))).toBe(-250);
+  expect(await db.read(w, (sql) => one(sql, 'signal', 'access'))).toMatchObject({ kind: 'paused' });
+  await gifts.externalRefund(binding, 'reversed', async () => ({ settled: 0, held: 0 }));
+  expect(await db.read(w, (sql) => one(sql, 'signal', 'access'))).toMatchObject({ kind: 'clear' });
+  expect((await db.read(w, (sql) => all(sql, 'entry'))).map((e) => e.kind)).toEqual([
+    'external_refund',
+    'refund_reversed',
+  ]);
+  await expect(
+    gifts.externalRefund({ ...binding, workspace: 'org_other' }, 'unrelated', snapshot),
+  ).rejects.toThrow();
 });
 
 it('keeps only one provider event receipt after simultaneous delivery and binds it to the workspace', async () => {
@@ -119,49 +154,163 @@ it('keeps only one provider event receipt after simultaneous delivery and binds 
   expect(await db.read(w, (sql) => one(sql, 'event', 'evt_local'))).toHaveProperty('at');
 });
 
-it('reserves a fresh annual offer once and recovers pending claims after a worker restart',async()=>{
-  vi.stubEnv('APP_ENV','test');
+it('reserves a fresh annual offer once and recovers pending claims after a worker restart', async () => {
+  vi.stubEnv('APP_ENV', 'test');
   try {
-    const {workspaceId:w,brandId:b}=await seedStagingGiftAudience(db,'orchard');
-    const account='acct_yearly',id=randomUUID(),now=new Date(),at=now.toISOString();
-    const lot:Lot={id,brand:b,account,face:1500,fee:150,total:1650,state:'funded',paidAt:at,created:at,
-      reserved:0,spent:0,lost:0,returned:0,disputed:0,disputes:{},charge:'ch_annual',payment:'pi_annual'};
-    const person=await db.brand(w,b,async sql=>{
-      await lockWorkspace(sql,w);
-      await put(sql,w,'lot',id,lot);
-      return (await eligibleGiftRecipients(sql,w,b,'exercise'))[0]!.id;
+    const { workspaceId: w, brandId: b } = await seedStagingGiftAudience(db, 'orchard');
+    const account = 'acct_yearly',
+      id = randomUUID(),
+      now = new Date(),
+      at = now.toISOString();
+    const lot: Lot = {
+      id,
+      brand: b,
+      account,
+      face: 1500,
+      fee: 150,
+      total: 1650,
+      state: 'funded',
+      paidAt: at,
+      created: at,
+      reserved: 0,
+      spent: 0,
+      lost: 0,
+      returned: 0,
+      disputed: 0,
+      disputes: {},
+      charge: 'ch_annual',
+      payment: 'pi_annual',
+    };
+    const person = await db.brand(w, b, async (sql) => {
+      await lockWorkspace(sql, w);
+      await put(sql, w, 'lot', id, lot);
+      return (await eligibleGiftRecipients(sql, w, b, 'exercise'))[0]!.id;
     });
-    const opts={live:false,monthlyCap:1500,waitMs:86400000,clock:()=>now};
-    let mode:'offline'|'cancel'|'executed'='offline';
-    const unexpected=async()=>{throw Error('Unexpected provider call');};
-    const provider:GiftGateway={account,checkout:unexpected,payment:unexpected,refund:unexpected,products:async()=>[{id:'CARD01',name:'Coffee'}],order:async()=>{
-      if(mode==='offline')throw Error('Lost order response');
-      if(mode==='cancel')throw new TerminalGiftOrder('ORDER001','CANCELED');
-      return {order:'ORDER002',reward:'REWARD002'};
-    },link:async()=>'https://example.invalid/reward'};
-    const gifts=new WorkspaceGifts(db,provider,opts);
-    const terms={face:500,products:['CARD01'],days:30 as const,brokerConfirmed:true};
-    const occurrence=randomUUID();
-    const reserve=(key:string)=>db.brand(w,b,async sql=>{
-      await lockWorkspace(sql,w);await gifts.reserveOccurrence(sql,w,b,key,'birthday',person,terms,now);
+    const opts = { live: false, monthlyCap: 1500, waitMs: 86400000, clock: () => now };
+    let mode: 'offline' | 'cancel' | 'executed' = 'offline';
+    const unexpected = async () => {
+      throw Error('Unexpected provider call');
+    };
+    const provider: GiftGateway = {
+      account,
+      checkout: unexpected,
+      payment: unexpected,
+      refund: unexpected,
+      products: async () => [{ id: 'CARD01', name: 'Coffee' }],
+      order: async () => {
+        if (mode === 'offline') throw Error('Lost order response');
+        if (mode === 'cancel') throw new TerminalGiftOrder('ORDER001', 'CANCELED');
+        return { order: 'ORDER002', reward: 'REWARD002' };
+      },
+      link: async () => 'https://example.invalid/reward',
+    };
+    const gifts = new WorkspaceGifts(db, provider, opts);
+    const terms = { face: 500, products: ['CARD01'], days: 30 as const, brokerConfirmed: true };
+    const occurrence = randomUUID();
+    const reserve = (key: string) =>
+      db.brand(w, b, async (sql) => {
+        await lockWorkspace(sql, w);
+        await gifts.reserveOccurrence(sql, w, b, key, 'birthday', person, terms, now);
+      });
+    await expect(reserve(occurrence)).rejects.toMatchObject({ code: 'gift_ineligible' });
+    await db.tenant(w, (sql) =>
+      recordWorkspacePayment(sql, w, false, 'pi_plan', new Date(now.getTime() - 2 * 86400000).toISOString()),
+    );
+    await Promise.all([reserve(occurrence), reserve(occurrence)]);
+    const [offer] = await db.read(w, (sql) => all(sql, 'offer'));
+    expect(offer).toMatchObject({ face: 500, person });
+    expect(await gifts.recipient(w, offer!.id, offer!.secret, true)).toMatchObject({ state: 'pending' });
+    const restart = new WorkspaceGifts(db, provider, {
+      ...opts,
+      fixture: true,
+      clock: () => new Date(now.getTime() + 120000),
     });
-    await expect(reserve(occurrence)).rejects.toMatchObject({code:'gift_ineligible'});
-    await db.tenant(w,sql=>recordWorkspacePayment(sql,w,false,'pi_plan',new Date(now.getTime()-2*86400000).toISOString()));
-    await Promise.all([reserve(occurrence),reserve(occurrence)]);
-    const [offer]=await db.read(w,sql=>all(sql,'offer'));
-    expect(offer).toMatchObject({face:500,person});
-    expect(await gifts.recipient(w,offer!.id,offer!.secret,true)).toMatchObject({state:'pending'});
-    const restart=new WorkspaceGifts(db,provider,{...opts,fixture:true,clock:()=>new Date(now.getTime()+120000)});
-    mode='cancel';
-    await restart.tick(w);await restart.tick(w);
-    expect(await db.read(w,sql=>one(sql,'lot',id))).toMatchObject({spent:0,reserved:0});
-    expect(await restart.recipient(w,offer!.id,offer!.secret,true)).toMatchObject({state:'canceled'});
+    mode = 'cancel';
+    await restart.tick(w);
+    await restart.tick(w);
+    expect(await db.read(w, (sql) => one(sql, 'lot', id))).toMatchObject({ spent: 0, reserved: 0 });
+    expect(await restart.recipient(w, offer!.id, offer!.secret, true)).toMatchObject({ state: 'canceled' });
     await reserve(randomUUID());
-    mode='executed';
-    const next=(await db.read(w,sql=>all(sql,'offer'))).find(o=>o.state==='offered')!;
-    expect(await restart.recipient(w,next.id,next.secret,true)).toMatchObject({state:'claimed'});
-    expect(await db.read(w,sql=>one(sql,'lot',id))).toMatchObject({spent:500,reserved:0});
-  }finally{vi.unstubAllEnvs();}
+    mode = 'executed';
+    const next = (await db.read(w, (sql) => all(sql, 'offer'))).find((o) => o.state === 'offered')!;
+    expect(await restart.recipient(w, next.id, next.secret, true)).toMatchObject({ state: 'claimed' });
+    expect(await db.read(w, (sql) => one(sql, 'lot', id))).toMatchObject({ spent: 500, reserved: 0 });
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it('refunds credit released by a verified provider cancellation after workspace closure', async () => {
+  const w = 'org_' + randomUUID(),
+    b = randomUUID(),
+    id = randomUUID(),
+    o = randomUUID(),
+    at = new Date().toISOString();
+  const l: Lot = {
+    id,
+    brand: b,
+    account: 'acct_old',
+    face: 1000,
+    fee: 100,
+    total: 1100,
+    state: 'refunded',
+    paidAt: at,
+    created: at,
+    refundFace: 500,
+    refundId: 're_first',
+    returned: 550,
+    reserved: 0,
+    spent: 500,
+    lost: 0,
+    disputed: 0,
+    disputes: {},
+    charge: 'ch_old',
+    payment: 'pi_old',
+  };
+  await db.tenant(w, async (sql) => {
+    await lockWorkspace(sql, w);
+    await put(sql, w, 'lot', id, l);
+    await put(sql, w, 'closure', 'closed', { at, brand: b });
+    await put(sql, w, 'offer', o, {
+      id: o,
+      campaign: randomUUID(),
+      brand: b,
+      person: randomUUID(),
+      face: 500,
+      expires: at,
+      state: 'claimed',
+      alloc: [{ id, amount: 500 }],
+      secret: '00'.repeat(32),
+      order: 'ORDER' + o,
+      reward: 'REWARD' + o,
+      claimedAt: at,
+    });
+  });
+  const inbox = 'system:workspace-gifts:provider-events';
+  const eventId = randomUUID();
+  await db.tenant(inbox, (sql) =>
+    sql.query(
+      `INSERT INTO operations(workspace_id,actor_id,operation_key,request_hash,result)
+    VALUES($1,'workspace-gifts:vendor-event',$2,$2,$3)`,
+      [inbox, eventId, { kind: 'ORDERS.CANCELED', resource: 'ORDER' + o }],
+    ),
+  );
+  const refund = vi.fn(async (_w: string, _l: Lot, amount: number) => ({ id: 're_second', amount }));
+  const service = new WorkspaceGifts(
+    db,
+    { account: l.account, canceledReceipt: async () => true, refund } as unknown as GiftGateway,
+    { live: false, monthlyCap: null, waitMs: null },
+  );
+  await service.tick(w);
+  await service.tick(w);
+  expect(refund).toHaveBeenCalledTimes(1);
+  expect(refund.mock.calls[0]![2]).toBe(550);
+  expect(await db.read(w, (sql) => one(sql, 'lot', id))).toMatchObject({
+    spent: 0,
+    reserved: 0,
+    returned: 1100,
+    refundFace: 1000,
+  });
 });
 
 it('accepts the Tremendous raw-body HMAC and rejects a signed body whose bytes have changed', () => {

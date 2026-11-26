@@ -287,24 +287,40 @@ export class GiftFunding {
    * retain their original key and cannot open another automatic draw. */
   async replenish() {
     if (!this.autoLimit || !this.source) return this.monitor();
-    const source=this.source;
-    const key=await this.platform.store.transaction(this.scope,async records=>{
-      const currentKeyValue=await records.get<string>('ack',currentKey);
-      const previous=currentKeyValue ? await records.get<Intent>('ack',operation(currentKeyValue)) : null;
-      if(currentKeyValue && (!previous || previous.state!=='fully_credited')) return currentKeyValue;
-      const {id,value}=await this.coverage(records);
-      if(!value.shortfall || value.pending || value.shortfall>this.autoLimit) return undefined;
-      if(previous && previous.availableAtApproval===value.available && previous.liabilityAtApproval===value.liability) return currentKeyValue ?? undefined;
+    const source = this.source;
+    const key = await this.platform.store.transaction(this.scope, async (records) => {
+      const currentKeyValue = await records.get<string>("ack", currentKey);
+      if (await records.get<boolean>("ack", "gift-funding:automatic-paused"))
+        return currentKeyValue ?? undefined;
+      const previous = currentKeyValue ? await records.get<Intent>("ack", operation(currentKeyValue)) : null;
+      if (currentKeyValue && (!previous || previous.state !== "fully_credited")) return currentKeyValue;
+      const { id, value } = await this.coverage(records);
+      if (!value.shortfall || value.pending || value.shortfall > this.autoLimit) return undefined;
+      if (
+        previous &&
+        previous.availableAtApproval === value.available &&
+        previous.liabilityAtApproval === value.liability
+      )
+        return currentKeyValue ?? undefined;
       await this.sourceEligible(source);
-      const key=randomUUID();
-      const intent:Intent={key,source,balanceId:id,amount:value.shortfall,operator:'automatic',approvedAt:new Date().toISOString(),
-        availableAtApproval:value.available,liabilityAtApproval:value.liability,state:'unknown'};
-      await records.put('ack',operation(key)+':approved',intent,true);
-      await records.put('ack',operation(key),intent,true);
-      await records.put('ack',currentKey,key);
+      const key = randomUUID();
+      const intent: Intent = {
+        key,
+        source,
+        balanceId: id,
+        amount: value.shortfall,
+        operator: "automatic",
+        approvedAt: new Date().toISOString(),
+        availableAtApproval: value.available,
+        liabilityAtApproval: value.liability,
+        state: "unknown",
+      };
+      await records.put("ack", operation(key) + ":approved", intent, true);
+      await records.put("ack", operation(key), intent, true);
+      await records.put("ack", currentKey, key);
       return key;
     });
-    return this.sync(key??undefined,undefined,undefined,true);
+    return this.sync(key ?? undefined, undefined, undefined, true);
   }
 
   /** Inspect coverage and reconcile the current (or an earlier) receipt. Never submits a top-up. */
@@ -381,11 +397,7 @@ export class GiftFunding {
   }
 
   /** Input is limited to the reviewed amount and operation key. Account, source and liability come from the server. */
-  async approve(
-    actor: OperatorSession,
-    operationKey: string,
-    expectedShortfall: number,
-  ) {
+  async approve(actor: OperatorSession, operationKey: string, expectedShortfall: number) {
     requireCondition(
       !this.live || this.autoLimit > 0,
       403,
@@ -395,12 +407,7 @@ export class GiftFunding {
     await this.operator(actor);
     const key = z.uuid().parse(operationKey);
     const amount = cents.positive().parse(expectedShortfall);
-    requireCondition(
-      this.source,
-      403,
-      "gift_topup_disabled",
-      "An approved funding source is required.",
-    );
+    requireCondition(this.source, 403, "gift_topup_disabled", "An approved funding source is required.");
     const source = this.source;
     // Commit the original approval before any external write, including after a lost response or restart.
     await this.platform.store.transaction(this.scope, async (records) => {
@@ -445,125 +452,95 @@ export class GiftFunding {
       await records.put("ack", operation(key) + ":approved", intent, true);
       await records.put("ack", operation(key), intent, true);
       await records.put("ack", currentKey, key);
+      await records.put("ack", "gift-funding:automatic-paused", false);
     });
     return this.sync(key, actor);
   }
 
-  private async sync(
-    key?: string,
-    actor?: OperatorSession,
-    eventResource?: string,
-    automatic = false,
-  ) {
+  private async sync(key?: string, actor?: OperatorSession, eventResource?: string, automatic = false) {
     verified(!this.live || this.autoLimit > 0 || (!key && !actor && !eventResource));
-    const result = await this.platform.store.transaction(
-      this.scope,
-      async (records) => {
-        let coverage: Coverage | null = null;
-        const selected = this.live && !this.autoLimit
-          ? null
-          : (key ?? (await records.get<string>("ack", currentKey)));
-        const intent = selected
-          ? await records.get<Intent>("ack", operation(selected))
-          : null;
-        requireCondition(
-          !selected || intent,
-          404,
-          "gift_topup_missing",
-          "No matching funding intent.",
-        );
-        let observed: z.infer<typeof receipt> | null = null;
-        let uncertain = false;
-        try {
-          const snapshot = await this.coverage(records);
-          coverage = snapshot.value;
-          if (intent) {
-            verified(snapshot.id === intent.balanceId);
+    const result = await this.platform.store.transaction(this.scope, async (records) => {
+      let coverage: Coverage | null = null;
+      const selected =
+        this.live && !this.autoLimit ? null : (key ?? (await records.get<string>("ack", currentKey)));
+      const intent = selected ? await records.get<Intent>("ack", operation(selected)) : null;
+      requireCondition(!selected || intent, 404, "gift_topup_missing", "No matching funding intent.");
+      let observed: z.infer<typeof receipt> | null = null;
+      let uncertain = false;
+      try {
+        const snapshot = await this.coverage(records);
+        coverage = snapshot.value;
+        if (intent) {
+          verified(snapshot.id === intent.balanceId);
+          verified(!eventResource || !intent.providerId || intent.providerId === eventResource);
+          observed = await this.lookup(eventResource ? { ...intent, providerId: eventResource } : intent);
+          if (
+            !observed &&
+            (actor ||
+              (automatic &&
+                this.autoLimit &&
+                intent.operator === "automatic" &&
+                !(await records.get<boolean>("ack", "gift-funding:automatic-paused")))) &&
+            !intent.providerId &&
+            !complete(intent.state)
+          ) {
             verified(
-              !eventResource ||
-                !intent.providerId ||
-                intent.providerId === eventResource,
+              intent.source === this.source &&
+                intent.amount === coverage.shortfall &&
+                Math.round((intent.amount / 100) * 100) === intent.amount,
             );
-            observed = await this.lookup(
-              eventResource ? { ...intent, providerId: eventResource } : intent,
-            );
-            if (
-              !observed &&
-              (actor || (automatic && this.autoLimit && intent.operator === "automatic")) &&
-              !intent.providerId &&
-              !complete(intent.state)
-            ) {
-              verified(
-                intent.source === this.source &&
-                  intent.amount === coverage.shortfall &&
-                  Math.round((intent.amount / 100) * 100) === intent.amount,
-              );
-              await this.sourceEligible(intent.source);
-              if (actor) await this.operator(actor);
-              else verified(intent.amount <= this.autoLimit && !coverage.pending);
-              const data = await this.api("/topups", {
-                funding_source_id: intent.source,
-                idempotency_key: operation(intent.key),
-                amount: intent.amount / 100,
-              });
-              observed =
-                data === null
-                  ? await this.lookup(intent)
-                  : z.object({ topup: receipt }).parse(data).topup;
-            }
-            verified(
-              observed &&
-                observed.funding_source_id === intent.source &&
-                observed.currency_code === "USD" &&
-                observed.amount === intent.amount / 100 &&
-                observed.idempotency_key === operation(intent.key),
-            );
-            verified(
-              !complete(intent.state) ||
-                observed.status === intent.state ||
-                (intent.state === "fully_credited" &&
-                  observed.status === "reversed"),
-            );
+            await this.sourceEligible(intent.source);
+            if (actor) await this.operator(actor);
+            else verified(intent.amount <= this.autoLimit && !coverage.pending);
+            const data = await this.api("/topups", {
+              funding_source_id: intent.source,
+              idempotency_key: operation(intent.key),
+              amount: intent.amount / 100,
+            });
+            observed =
+              data === null ? await this.lookup(intent) : z.object({ topup: receipt }).parse(data).topup;
           }
-        } catch (error) {
-          if (error instanceof AppError && error.code === "operator_required")
-            throw error;
-          observed = null;
-          uncertain = true;
-        }
-        if (observed && intent) {
-          intent.state = observed.status;
-          intent.providerId = observed.id;
-          await records.put(
-            "ack",
-            operation(intent.key) + ":" + intent.state,
-            { ...intent, observedAt: new Date().toISOString() },
-            true,
+          verified(
+            observed &&
+              observed.funding_source_id === intent.source &&
+              observed.currency_code === "USD" &&
+              observed.amount === intent.amount / 100 &&
+              observed.idempotency_key === operation(intent.key),
           );
-          await records.put("ack", operation(intent.key), intent);
-          if (intent.state === "rejected" || intent.state === "reversed")
-            await alert(
-              records,
-              this.scope,
-              "gift_topup_" + intent.state,
-              true,
-            );
-        }
-        if (coverage)
-          await alert(
-            records,
-            this.scope,
-            "gift_funding_shortfall",
-            coverage.shortfall > 0,
+          verified(
+            !complete(intent.state) ||
+              observed.status === intent.state ||
+              (intent.state === "fully_credited" && observed.status === "reversed"),
           );
-        await alert(records, this.scope, "gift_funding_unverified", uncertain);
-        return {
-          coverage,
-          verified: !uncertain,
-          topup: intent ? publicIntent(intent) : null,
-        };
-      },
-    );
+        }
+      } catch (error) {
+        if (error instanceof AppError && error.code === "operator_required") throw error;
+        observed = null;
+        uncertain = true;
+      }
+      if (observed && intent) {
+        intent.state = observed.status;
+        intent.providerId = observed.id;
+        await records.put(
+          "ack",
+          operation(intent.key) + ":" + intent.state,
+          { ...intent, observedAt: new Date().toISOString() },
+          true,
+        );
+        await records.put("ack", operation(intent.key), intent);
+        if (intent.state === "rejected" || intent.state === "reversed") {
+          await records.put("ack", "gift-funding:automatic-paused", true);
+          await alert(records, this.scope, "gift_topup_" + intent.state, true);
+        }
+      }
+      if (coverage) await alert(records, this.scope, "gift_funding_shortfall", coverage.shortfall > 0);
+      await alert(records, this.scope, "gift_funding_unverified", uncertain);
+      return {
+        coverage,
+        verified: !uncertain,
+        topup: intent ? publicIntent(intent) : null,
+      };
+    });
     // Durable, edge-triggered operator outbox. Staging uses the platform's existing capture/transport policy.
     await this.platform.notifications(this.scope);
     return result;

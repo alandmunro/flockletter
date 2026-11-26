@@ -109,22 +109,50 @@ export class WorkspaceGifts {
       brokerRequired: f.industry === 'REAL_ESTATE' || (!f.industry && !fixture),
     };
   }
-  async reserveOccurrence(sql:Sql,w:string,b:string,id:string,kind:string,person:string,
-    gift:import('../../shared/date-automations.js').RecurringGift,now:Date) {
-    const terms={...gift,brandId:b,operationKey:id,title:kind==='birthday'?'Birthday gift':'Anniversary gift',personIds:[person]};
-    const prior=await one(sql,'campaign',id);
-    if(prior) {
-      requireCondition(prior.hash===inputHash(terms),409,'gift_terms_changed','The annual gift terms have changed.');
+  async reserveOccurrence(
+    sql: Sql,
+    w: string,
+    b: string,
+    id: string,
+    kind: string,
+    person: string,
+    gift: import('../../shared/date-automations.js').RecurringGift,
+    now: Date,
+  ) {
+    const terms = {
+      ...gift,
+      brandId: b,
+      operationKey: id,
+      title: kind === 'birthday' ? 'Birthday gift' : 'Anniversary gift',
+      personIds: [person],
+    };
+    const prior = await one(sql, 'campaign', id);
+    if (prior) {
+      requireCondition(
+        prior.hash === inputHash(terms),
+        409,
+        'gift_terms_changed',
+        'The annual gift terms have changed.',
+      );
       return;
     }
-    const recipients=await eligibleGiftRecipients(sql,w,b,this.opts.live?'live':'exercise');
-    const target=recipients.find(candidate=>candidate.id===person);
-    const eligibility=await this.eligibility(sql,w,b,await all(sql,'lot'),gift.face);
-    requireCondition(target && eligibility.eligible && (!eligibility.brokerRequired || gift.brokerConfirmed),
-      409,'gift_ineligible','Review the annual gift eligibility.');
-    const catalog=await this.provider.products(gift.face);
-    requireCondition(gift.products.every(id=>catalog.some(p=>p.id===id)),409,'gift_product_unavailable','Review the annual gift choices.');
-    await reserve(sql,w,terms,[target],now,{live:this.opts.live,account:this.provider.account});
+    const recipients = await eligibleGiftRecipients(sql, w, b, this.opts.live ? 'live' : 'exercise');
+    const target = recipients.find((candidate) => candidate.id === person);
+    const eligibility = await this.eligibility(sql, w, b, await all(sql, 'lot'), gift.face);
+    requireCondition(
+      target && eligibility.eligible && (!eligibility.brokerRequired || gift.brokerConfirmed),
+      409,
+      'gift_ineligible',
+      'Review the annual gift eligibility.',
+    );
+    const catalog = await this.provider.products(gift.face);
+    requireCondition(
+      gift.products.every((id) => catalog.some((p) => p.id === id)),
+      409,
+      'gift_product_unavailable',
+      'Review the annual gift choices.',
+    );
+    await reserve(sql, w, terms, [target], now, { live: this.opts.live, account: this.provider.account });
   }
   async execute(name: WorkspaceGiftCommand, raw: unknown, actor: Actor) {
     const input = cmds[name].schema.parse(raw),
@@ -374,28 +402,54 @@ export class WorkspaceGifts {
     });
     return { id, url: checkout.url, state: checkout.expired ? 'expired' : 'checkout' };
   }
-  async externalRefund(binding: {workspace:string; brand:string; lot:string; charge:string; payment:string}, eventId:string,
-    snapshot: (lot:Lot)=>Promise<{settled:number; held:number}>) {
+  async externalRefund(
+    binding: { workspace: string; brand: string; lot: string; charge: string; payment: string },
+    eventId: string,
+    snapshot: (lot: Lot) => Promise<{ settled: number; held: number }>,
+  ) {
     const w = binding.workspace;
-    await this.tx(w, async sql => {
-      if (await one(sql,'event',eventId)) return;
-      const l = await one(sql,'lot',binding.lot);
-      requireCondition(l && l.brand===binding.brand && l.payment===binding.payment && l.charge===binding.charge &&
-        l.account===this.provider.account,409,'gift_refund_review','The original funded purchase needs reconciliation.');
-      const {settled,held} = await snapshot(l);
-      requireCondition([settled,held].every(value=>Number.isSafeInteger(value)&&value>=0)&&settled+held<=l.total,409,'gift_refund_review','Review the refund amounts.');
+    await this.tx(w, async (sql) => {
+      if (await one(sql, 'event', eventId)) return;
+      const l = await one(sql, 'lot', binding.lot);
+      requireCondition(
+        l &&
+          l.brand === binding.brand &&
+          l.payment === binding.payment &&
+          l.charge === binding.charge &&
+          l.account === this.provider.account,
+        409,
+        'gift_refund_review',
+        'The original funded purchase needs reconciliation.',
+      );
+      const { settled, held } = await snapshot(l);
+      requireCondition(
+        [settled, held].every((value) => Number.isSafeInteger(value) && value >= 0) &&
+          settled + held <= l.total,
+        409,
+        'gift_refund_review',
+        'Review the refund amounts.',
+      );
       const delta = settled - (l.externalRefundGross ?? 0);
       if (delta || held !== (l.externalRefundHeld ?? 0)) {
-        const faceMinor=Math.abs(Math.round(settled*l.face/l.total)-Math.round((l.externalRefundGross??0)*l.face/l.total));
-        l.externalRefundGross=settled;
-        l.externalRefundHeld=held;
-        l.externalRefundFace=Math.round((settled+held)*l.face/l.total);
-        await put(sql,w,'lot',l.id,l);
-        await entry(sql,w,'external-refund:'+eventId,{kind:delta < 0 ? 'refund_reversed' : delta > 0 ? 'external_refund' : 'refund_hold_changed',
-          faceMinor,amount:Math.abs(delta),ref:l.id,brand:l.brand,at:this.now().toISOString()});
-        await this.recheckHold(sql,w);
+        const faceMinor = Math.abs(
+          Math.round((settled * l.face) / l.total) -
+            Math.round(((l.externalRefundGross ?? 0) * l.face) / l.total),
+        );
+        l.externalRefundGross = settled;
+        l.externalRefundHeld = held;
+        l.externalRefundFace = Math.round(((settled + held) * l.face) / l.total);
+        await put(sql, w, 'lot', l.id, l);
+        await entry(sql, w, 'external-refund:' + eventId, {
+          kind: delta < 0 ? 'refund_reversed' : delta > 0 ? 'external_refund' : 'refund_hold_changed',
+          faceMinor,
+          amount: Math.abs(delta),
+          ref: l.id,
+          brand: l.brand,
+          at: this.now().toISOString(),
+        });
+        await this.recheckHold(sql, w);
       }
-      await put(sql,w,'event',eventId,{at:this.now().toISOString()});
+      await put(sql, w, 'event', eventId, { at: this.now().toISOString() });
     });
   }
   async paymentFailure(w:string,b:string,id:string,eventId:string){
@@ -546,34 +600,71 @@ export class WorkspaceGifts {
       await transition(sql, w, latest, 'claimed', this.now(), receipt);
     });
   }
-  private async reconcileOrderEvents(w:string) {
+  private async reconcileOrderEvents(w: string) {
     if (!this.provider.canceledReceipt) return;
-    const offers=(await this.db.read(w,sql=>all(sql,'offer'))).filter(o=>o.state==='claimed'&&o.order);
-    const resources=new Map(offers.flatMap(o=>[o.order!,o.reward!].map(id=>[id,o] as const)));
-    if(!resources.size)return;
-    const inbox='system:workspace-gifts:provider-events';
-    const events=await this.db.read(inbox,async sql=>(await sql.query<{id:string;resource:string}>(
-      `SELECT operation_key id,result->>'resource' resource FROM operations WHERE workspace_id=$1
+    const offers = (await this.db.read(w, (sql) => all(sql, 'offer'))).filter(
+      (o) => o.state === 'claimed' && o.order,
+    );
+    const resources = new Map(offers.flatMap((o) => [o.order!, o.reward!].map((id) => [id, o] as const)));
+    if (!resources.size) return;
+    const inbox = 'system:workspace-gifts:provider-events';
+    const events = await this.db.read(
+      inbox,
+      async (sql) =>
+        (
+          await sql.query<{ id: string; resource: string }>(
+            `SELECT operation_key id,result->>'resource' resource FROM operations WHERE workspace_id=$1
        AND actor_id='workspace-gifts:vendor-event' AND result->>'kind' IN ('ORDERS.CANCELED','REWARDS.CANCELED')
-       AND result->>'resource'=ANY($2::text[])`,[inbox,[...resources.keys()]])).rows);
-    for(const event of events){
-      const offer=resources.get(event.resource)!;
-      const key='tremendous:'+event.id;
-      if(await this.processed(w,key))continue;
-      if(!await this.provider.canceledReceipt(offer))continue;
-      await this.tx(w,async sql=>{
-        const current=await one(sql,'offer',offer.id);
-        if(current?.state!=='claimed')return;
-        for(const allocation of current.alloc){
-          const lot=await one(sql,'lot',allocation.id);
-          requireCondition(lot&&lot.spent>=allocation.amount,409,'gift_order_conflict','Review the canceled order allocation.');
-          lot.spent-=allocation.amount;
-          await put(sql,w,'lot',lot.id,lot);
+       AND result->>'resource'=ANY($2::text[])`,
+            [inbox, [...resources.keys()]],
+          )
+        ).rows,
+    );
+    for (const event of events) {
+      const offer = resources.get(event.resource)!;
+      const key = 'tremendous:' + event.id;
+      if (await this.processed(w, key)) continue;
+      let settled = false;
+      try {
+        settled = await this.provider.canceledReceipt(offer);
+      } catch {
+        /* Preserve the original claim until confirmed. */
+      }
+      if (!settled) {
+        await this.tx(w, async (sql) => {
+          if (!(await one(sql, 'signal', key)))
+            await put(sql, w, 'signal', key, {
+              kind: 'order_refund_review',
+              ref: offer.id,
+              at: this.now().toISOString(),
+            });
+        });
+        continue;
+      }
+      await this.tx(w, async (sql) => {
+        const current = await one(sql, 'offer', offer.id);
+        if (current?.state !== 'claimed') return;
+        for (const allocation of current.alloc) {
+          const lot = await one(sql, 'lot', allocation.id);
+          requireCondition(
+            lot && lot.spent >= allocation.amount,
+            409,
+            'gift_order_conflict',
+            'Review the canceled order allocation.',
+          );
+          lot.spent -= allocation.amount;
+          await put(sql, w, 'lot', lot.id, lot);
         }
-        current.state='canceled';
-        await put(sql,w,'offer',current.id,current);
-        await entry(sql,w,'canceled:'+current.id,{kind:'canceled',ref:current.id,brand:current.brand,amount:current.face,at:this.now().toISOString()});
-        await put(sql,w,'event',key,{at:this.now().toISOString()});
+        current.state = 'canceled';
+        await put(sql, w, 'offer', current.id, current);
+        await entry(sql, w, 'canceled:' + current.id, {
+          kind: 'canceled',
+          ref: current.id,
+          brand: current.brand,
+          amount: current.face,
+          at: this.now().toISOString(),
+        });
+        await put(sql, w, 'event', key, { at: this.now().toISOString() });
       });
     }
   }
@@ -599,10 +690,11 @@ export class WorkspaceGifts {
           due.push(l);
           continue;
         }
-        if (l.state !== 'funded') continue;
+        if (l.state !== 'funded' && l.state !== 'refunded') continue;
         const face = Math.min(remaining, Math.max(0, available(l)));
         if (!face) continue;
-        l.refundFace = face;
+        l.settledRefundFace = l.state === 'refunded' ? (l.refundFace ?? unused(l)) : 0;
+        l.refundFace = l.settledRefundFace + face;
         l.state = 'refunding';
         l.refundStarted = this.now().toISOString();
         await put(sql, w, 'lot', l.id, l);
@@ -613,7 +705,11 @@ export class WorkspaceGifts {
     });
     for (const l of refunds) {
       const face = l.refundFace ?? unused(l),
-        amount = Math.min(l.total-(l.externalRefundGross??0),face + Math.round((l.fee * face) / l.face)),
+        totalRefund = Math.min(
+          l.total - (l.externalRefundGross ?? 0),
+          face + Math.round((l.fee * face) / l.face),
+        ),
+        amount = totalRefund - l.returned,
         result = await this.provider.refund(w, l, amount);
       requireCondition(
         result.amount === amount,
@@ -628,16 +724,19 @@ export class WorkspaceGifts {
           current.state === 'refunding' &&
             !current.disputed &&
             current.refundFace === face &&
-            unused(current) - current.lost >= face,
+            current.returned === l.returned &&
+            unused(current) - current.lost - (current.externalRefundFace ?? 0) >= face,
           409,
           'gift_refund_review',
           'The settled refund requires review.',
         );
-        current.returned = amount;
+        current.returned = totalRefund;
+        current.settledRefundFace = face;
         current.state = 'refunded';
         current.refundId = result.id;
         await put(sql, w, 'lot', current.id, current);
-        await entry(sql, w, 'refund:' + l.id, {
+        await entry(sql, w, 'refund:' + l.id + (l.returned ? '/' + result.id : ''), {
+          faceMinor: face - (l.settledRefundFace ?? 0),
           kind: 'refunded',
           amount,
           brand: l.brand,
@@ -791,15 +890,32 @@ export class WorkspaceGifts {
       if (d.state === 'lost') {
         await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [l.brand]);
         const f = await giftWorkspaceOnboardingFacts(sql, d.workspace, l.brand);
-        const decision=await one(sql,'signal','eligibility:'+l.brand);
-        if (this.opts.live ? (decision ? decision.kind!=='complete' : !this.opts.completedProbation?.has(l.brand)) : f.probationState !== 'complete')
+        const decision = await one(sql, 'signal', 'eligibility:' + l.brand);
+        if (
+          this.opts.live
+            ? decision
+              ? decision.kind !== 'complete'
+              : !this.opts.completedProbation?.has(l.brand)
+            : f.probationState !== 'complete'
+        ) {
+          await put(sql, d.workspace, 'signal', 'probation-incident:' + d.id, {
+            kind: 'probation_dispute_unreviewed',
+            at: this.now().toISOString(),
+            ref: d.id,
+          });
           await put(sql, d.workspace, 'signal', 'probation_loss', {
             kind: 'review_required',
             at: this.now().toISOString(),
             ref: d.id,
           });
+        }
       }
-      if(!prior)await recordGiftNotice(sql,d.workspace,{kind:'disputeOpened',at:this.now().toISOString(),reference:d.id});
+      if (!prior)
+        await recordGiftNotice(sql, d.workspace, {
+          kind: 'disputeOpened',
+          at: this.now().toISOString(),
+          reference: d.id,
+        });
       await put(sql, d.workspace, 'lot', l.id, l);
       await entry(sql, d.workspace, 'dispute:' + d.id + ':' + d.state, {
         kind: 'dispute_' + d.state,

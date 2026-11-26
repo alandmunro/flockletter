@@ -26,6 +26,7 @@ export type Lot = {
   live?: boolean;
   refundStarted?: string;
   refundFace?: number;
+  settledRefundFace?: number;
   nextCheck?: string;
   disputed: number;
   lost: number;

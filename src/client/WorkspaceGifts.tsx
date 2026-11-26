@@ -69,26 +69,72 @@ const holdReasons: Record<string, string> = {
   probation_budget: 'The current gifting limit requires review.',
 };
 
-function GiftRecipientReport({campaign:c}:{campaign:Campaign}) {
-  const people=c.recipients ?? [];
-  const [page,setPage]=useState(0);
-  const cost=c.claimed ? money((c.spent+(c.fees??0))/c.claimed) : '—';
+function GiftRecipientReport({ campaign: c }: { campaign: Campaign }) {
+  const people = c.recipients ?? [];
+  const [page, setPage] = useState(0);
+  const cost = c.claimed ? money((c.spent + (c.fees ?? 0)) / c.claimed) : '—';
   function download() {
-    const rows=[['Campaign','Recipient','Status','Claimed at (UTC)','Expires (UTC)','Cost per claim (USD)'],
-      ...people.map(p=>[c.title,p.label??p.id,p.state,p.claimedAt??'',p.expires??c.expiresAt??'',cost])];
-    const blob=new Blob(['\uFEFF',rows.map(row=>row.map(csvCell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a'); a.href=url; a.download='gift-results-'+c.id+'.csv'; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const rows = [
+      ['Campaign', 'Recipient', 'Status', 'Claimed at (UTC)', 'Expires (UTC)', 'Cost per claim (USD)'],
+      ...people.map((p) => [
+        c.title,
+        p.label ?? p.id,
+        p.state,
+        p.claimedAt ?? '',
+        p.expires ?? c.expiresAt ?? '',
+        cost,
+      ]),
+    ];
+    const blob = new Blob(['\uFEFF', rows.map((row) => row.map(csvCell).join(',')).join('\r\n')], {
+      type: 'text/csv;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'gift-results-' + c.id + '.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  return <details><summary>Recipient results ({people.length})</summary>
-    <p>{c.open??people.filter(p=>p.state==='offered'||p.state==='pending').length} open · {cost} per claim including fees</p>
-    <table><thead><tr><th scope="col">Recipient</th><th scope="col">Status</th><th scope="col">Claimed at</th><th scope="col">Expires</th></tr></thead>
-      <tbody>{people.slice(page*pageSize,(page+1)*pageSize).map(p=><tr key={p.id}><td>{p.label??p.id}</td><td>{p.state}</td>
-      <td>{p.claimedAt?new Date(p.claimedAt).toLocaleString():'—'}</td><td>{p.expires?new Date(p.expires).toLocaleDateString():'—'}</td></tr>)}</tbody></table>
-    {people.length>pageSize&&<><button disabled={!page} onClick={()=>setPage(page-1)}>Previous</button>
-    <button disabled={(page+1)*pageSize>=people.length} onClick={()=>setPage(page+1)}>Next</button></>}
-    <button onClick={download}>Export recipient CSV</button></details>;
+  return (
+    <details>
+      <summary>Recipient results ({people.length})</summary>
+      <p>
+        {c.open ?? people.filter((p) => p.state === 'offered' || p.state === 'pending').length} open · {cost}{' '}
+        per claim including fees
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Recipient</th>
+            <th scope="col">Status</th>
+            <th scope="col">Claimed at</th>
+            <th scope="col">Expires</th>
+          </tr>
+        </thead>
+        <tbody>
+          {people.slice(page * pageSize, (page + 1) * pageSize).map((p) => (
+            <tr key={p.id}>
+              <td>{p.label ?? p.id}</td>
+              <td>{p.state}</td>
+              <td>{p.claimedAt ? new Date(p.claimedAt).toLocaleString() : '—'}</td>
+              <td>{p.expires ? new Date(p.expires).toLocaleDateString() : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {people.length > pageSize && (
+        <>
+          <button disabled={!page} onClick={() => setPage(page - 1)}>
+            Previous
+          </button>
+          <button disabled={(page + 1) * pageSize >= people.length} onClick={() => setPage(page + 1)}>
+            Next
+          </button>
+        </>
+      )}
+      <button onClick={download}>Export recipient CSV</button>
+    </details>
+  );
 }
 
 function parseDollars(value: string) {
