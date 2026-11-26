@@ -18,7 +18,7 @@ export async function authorized(sql: Sql, workspace:string, brand:string, issue
   isOwner:(user:string,workspace:string)=>Promise<boolean>, settings?:DateSettings) {
   if (!await isOwner(issuer,workspace)) return false;
   if (actor==='user:'+issuer) return true;
-  if (settings?.giftCampaignId || !actor.startsWith('connection:')) return false;
+  if (settings?.gift || settings?.giftCampaignId || !actor.startsWith('connection:')) return false;
   const scopes=['read','automation:manage'];
   if (settings) scopes.push('sms:send', ...(settings.email ? ['campaign:send'] : []));
   return Boolean((await sql.query(`SELECT FROM connections WHERE id::text=$1 AND issuer_id=$2 AND revoked_at IS NULL
@@ -35,8 +35,8 @@ export class DateAutomations {
       requireCondition(await authorized(sql,workspace,brand,actor.userId,actor.actorId,this.isOwner),403,'automation_access','Current automation access is required.');
       if(name==='dateAutomation.preview'){
         const p=dateCommands[name].schema.parse(raw);
-        if (p.settings.giftCampaignId) requireCondition(giftDeliveryAllowed(this.giftDelivery,this.mode,brand),409,'gifting_off','Gift delivery is unavailable for this brand.');
-        if (p.settings.giftCampaignId) requireCondition(actor.actorId==='user:'+actor.userId,403,'gift_owner_required','Gift attachments require the current workspace owner.');
+        if (p.settings.gift || p.settings.giftCampaignId) requireCondition(giftDeliveryAllowed(this.giftDelivery,this.mode,brand),409,'gifting_off','Gift delivery is unavailable for this brand.');
+        if (p.settings.gift || p.settings.giftCampaignId) requireCondition(actor.actorId==='user:'+actor.userId,403,'gift_owner_required','Gift attachments require the current workspace owner.');
         const now=this.now(),end=new Date(now.getTime()+30*86400000);
         const months=new Set([now.getUTCMonth()+1,end.getUTCMonth()+1,new Date(now.getTime()-86400000).getUTCMonth()+1,new Date(end.getTime()+86400000).getUTCMonth()+1]);
         months.add(new Date(now.getTime()+15*86400000).getUTCMonth()+1);
@@ -46,7 +46,7 @@ export class DateAutomations {
           AND (${replannableOccurrence}) IS NOT TRUE`,
           [brand,p.kind,sources.map(source=>source.id),now.getUTCFullYear()-1,end.getUTCFullYear()+1]);
         const closedYears=new Set(closed.rows.map(row=>row.date_id+'/'+row.annual_year));
-        const eligible=p.settings.giftCampaignId ? await eligibleGiftRecipients(sql,workspace,brand,this.mode==='live'?'live':'exercise') : [];
+        const eligible=(p.settings.gift || p.settings.giftCampaignId) ? await eligibleGiftRecipients(sql,workspace,brand,this.mode==='live'?'live':'exercise') : [];
         const giftPeople=new Map(eligible.map(person=>[person.id,person]));
         const policy=await annualPolicy(sql,workspace);
         const rows=[];
@@ -60,9 +60,9 @@ export class DateAutomations {
           const template=sms?p.settings.sms:email?p.settings.email!.body:null;
           let message=template?renderGreeting(template,source.first_name,source.label,when.years):null;
           let channel=sms?'SMS':email?'Email':'No eligible channel';
-          if (template && p.settings.giftCampaignId) {
+          if (template && (p.settings.gift || p.settings.giftCampaignId)) {
             const person=dateGiftPerson(giftPeople,source,sms?'sms':'email');
-            const offered=person && await reservedGiftLink(sql,workspace,brand,p.settings.giftCampaignId,person);
+            const offered=person && (p.settings.gift || await reservedGiftLink(sql,workspace,brand,p.settings.giftCampaignId!,person));
             message=offered ? giftGreetingBody+' [Personal claim link]' : null;
             if (!offered) channel='No available reserved offer';
           }
@@ -118,7 +118,7 @@ export class DateAutomations {
         requireCondition((current?.revision??0)===input.expectedRevision,409,'version_conflict','Reload the current revision.');
         if (name==='dateAutomation.save') {
           const input=dateCommands[name].schema.parse(raw);
-          if (input.settings.giftCampaignId) requireCondition(actor.actorId==='user:'+actor.userId,403,'gift_owner_required','Gift attachments require the current workspace owner.');
+          if (input.settings.gift || input.settings.giftCampaignId) requireCondition(actor.actorId==='user:'+actor.userId,403,'gift_owner_required','Gift attachments require the current workspace owner.');
           const revision=input.expectedRevision+1;
           await sql.query(`INSERT INTO date_automations(workspace_id,brand_id,kind,revision) VALUES($1,$2,$3,$4)
             ON CONFLICT(workspace_id,brand_id,kind) DO UPDATE SET revision=EXCLUDED.revision,enabled=false,scan_after=NULL,next_scan=now()`,
@@ -127,7 +127,7 @@ export class DateAutomations {
         } else {
           requireCondition(current,404,'draft_required','Save a draft first.');
           if (name==='dateAutomation.activate') {
-            if (current.settings.giftCampaignId) {
+            if (current.settings.gift || current.settings.giftCampaignId) {
               requireCondition(giftDeliveryAllowed(this.giftDelivery,this.mode,brand),409,'gifting_off','Gift delivery is unavailable for this brand.');
               const activation=dateCommands[name].schema.parse(raw);
               requireCondition(activation.giftMode===this.mode,409,'gift_mode_review_required','Confirm the gift delivery mode for this revision.');

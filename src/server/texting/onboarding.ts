@@ -1,3 +1,4 @@
+import {recordWorkspacePayment} from '../workspace-gifts/eligibility-receipt.js';
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import type { DraftAccess, OnboardingBusiness, OnboardingView, TextingOnboardingCommand, VerificationChannel } from '../../shared/texting-onboarding.js';
 import { textingOnboardingCommands as commands } from '../../shared/texting-onboarding.js';
@@ -551,6 +552,7 @@ export class TextingOnboarding {
         await audit(sql, workspace, 'stripe', 'webhook', 'onboarding.checkout_declined', row.id, null, { revision, attempt: state.payment.attempt ?? 1 });
         return;
       }
+      await recordWorkspacePayment(sql,workspace,false,receipt.sessionId,receipt.paidAt ?? this.now().toISOString());
       state.payment = { ...state.payment, state: 'paid', sessionId: receipt.sessionId };
       if (!matchPayer(readBusiness(row), receipt.payer)) state.review = 'payer_mismatch';
       await this.record(sql, row, state);

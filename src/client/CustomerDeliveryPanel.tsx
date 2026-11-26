@@ -19,6 +19,7 @@ import {explainDeliveryError as explain} from './delivery-error.js';
 
 type Status=CustomerDeliveryStatus;
 type Captured={to:string;subject:string;html:string;text:string;images:{sha256:string;mime:string;base64:string}[]};
+import {GiftCampaignPicker} from './GiftCampaignPicker.js';
 function captureHtml(message:Captured) {
   const images=new Map(message.images.filter(image=>['image/jpeg','image/png','image/webp','image/gif'].includes(image.mime)&&/^[a-f0-9]{64}$/.test(image.sha256))
     .map(image=>[image.sha256,'data:'+image.mime+';base64,'+image.base64]));
@@ -146,8 +147,7 @@ function DeliveryBrand({api,brand}:{api:Api;brand:Brand}) {
           {status?.scope==='tests'?<p className="help">Group delivery is disabled, including groups named Test. Choose one intended confirmed contact in the test panel below. This selector does not choose your test recipient.</p>:missingGroup?<p className="help" role="status">Selected group unavailable. Choose an available audience.</p>:<p className="help">Review freezes the eligible recipients in this audience. Later group additions are not added to that review.</p>}
         </div>
         {status?.giftDeliveryEnabled&&status.scope!=='tests'&&<div className="field">
-          <label htmlFor="gift-campaign">Funded gift campaign ID (optional)</label>
-          <input id="gift-campaign" value={giftCampaignId} onChange={event=>{setGiftCampaignId(event.target.value.trim());setReview(null);setChecks(null);}}/>
+          <GiftCampaignPicker api={api} brandId={brand.id} value={giftCampaignId} onChange={id=>{setGiftCampaignId(id);setReview(null);setChecks(null);}}/>
           {giftCampaignId&&<p>Each selected recipient will receive “Thank you! We have a gift for you.” and their personal claim link.</p>}
         </div>}
         {!campaigns.length&&<p>Create and save a campaign before reviewing delivery.</p>}

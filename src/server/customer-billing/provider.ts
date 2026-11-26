@@ -77,7 +77,8 @@ export type CustomerBillingProvider = {
   inspectSubscription?(id: string): Promise<ProviderSubscription>;
   portal(customer: string, key: string, plan?: CustomerPlan, subscription?: string): Promise<string>;
   verify(raw: Buffer, signature: string): ProviderNotice | null;
-  resolve(notice: ProviderNotice): Promise<{
+  resolve(notice: ProviderNotice, includeClearedPayment?:boolean): Promise<{
+    clearedPayment?: {reference:string; at:string};
     subscription: ProviderSubscription | null;
     checkoutId: string | null;
     intentId: string | null;
@@ -683,7 +684,7 @@ function buildStripeCustomerProvider(
         ].includes(event.type),
       };
     },
-    async resolve(notice) {
+    async resolve(notice,includeClearedPayment=false) {
       await accountCheck();
       if (notice.checkout) {
         const s = await stripe.checkout.sessions.retrieve(notice.checkout);
@@ -762,6 +763,20 @@ function buildStripeCustomerProvider(
         if (invoice) {
           if (invoice.livemode !== live) throw invalid();
           subscription = reference(invoice.parent?.subscription_details?.subscription);
+          if (includeClearedPayment && subscription && event.type==='invoice.paid' && invoice.status==='paid' && invoice.amount_paid>0 && invoice.status_transitions.paid_at) {
+            const observed=await eventSnapshot(subscription);
+            if (observed && observed.customer===reference(invoice.customer)) {
+              const payments=await stripe.invoicePayments.list({invoice:invoice.id,status:'paid',limit:100});
+              for(const payment of payments.data) {
+                const id=reference(payment.payment.payment_intent);
+                if (payment.payment.type!=='payment_intent' || !id || !payment.amount_paid) continue;
+                const pi=await stripe.paymentIntents.retrieve(id);
+                if(pi.livemode===live && pi.status==='succeeded' && pi.amount_received>0 && reference(pi.customer)===observed.customer)
+                  return {subscription:observed,checkoutId:null,intentId:null,workspace:null,
+                    clearedPayment:{reference:pi.id,at:new Date(invoice.status_transitions.paid_at*1000).toISOString()}};
+              }
+            }
+          }
         }
         if (event.type.startsWith('subscription_schedule.')) {
           const schedule = await stripe.subscriptionSchedules.retrieve(id);

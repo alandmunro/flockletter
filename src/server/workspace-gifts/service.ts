@@ -1,3 +1,4 @@
+import {firstWorkspacePayment} from './eligibility-receipt.js';
 import {configuredGiftNotificationEmail, giftNotificationView, processGiftNotifications, recordGiftNotice, saveGiftNotificationPreferences, type GiftNotificationEmail} from './notifications.js';
 import { createHash } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
@@ -10,7 +11,7 @@ import { workspaceGiftCommands as cmds, type WorkspaceGiftCommand } from '../../
 import { eligibleGiftRecipients, giftWorkspaceOnboardingFacts } from './audience.js';
 import { all, available, entry, feeFor, one, put, unused, type GiftOffer, type Lot } from './store.js';
 import { authenticateOffer, fund, inputHash, offerPath, reserve, transition } from './ledger.js';
-import { WorkspaceGiftProvider, type GiftGateway } from './provider.js';
+import { TerminalGiftOrder, WorkspaceGiftProvider, type GiftGateway } from './provider.js';
 
 type Options = {
   email?:GiftNotificationEmail;
@@ -68,10 +69,10 @@ export class WorkspaceGifts {
   }
   private async eligibility(sql: Sql, w: string, b: string, lots: Lot[], extra = 0) {
     const f = await giftWorkspaceOnboardingFacts(sql, w, b),
-      first = lots
-        .filter((l) => l.paidAt)
-        .map((l) => Date.parse(l.paidAt!))
-        .sort((a, b) => a - b)[0];
+      subscriptionPayment = await firstWorkspacePayment(sql,w,this.opts.live),
+      first = [...lots.filter(l=>l.account===this.provider.account && l.paidAt).map(l=>Date.parse(l.paidAt!)),
+        ...(subscriptionPayment?[Date.parse(subscriptionPayment)]:[])].sort((a,b)=>a-b)[0];
+    const decision=await one(sql,'signal','eligibility:'+b);
     const now = this.now(),
       reasons: string[] = [];
     if (await one(sql, 'closure', 'closed') || giftServiceEnded(await retentionServiceEndSql(sql,w,undefined,now),now))
@@ -83,16 +84,16 @@ export class WorkspaceGifts {
       (!f.companyId ||
         f.registrationState !== 'approved' ||
         !f.industry ||
-        f.probationState === 'paused' ||
+        f.probationState === 'paused' || f.probationState === 'suspended' || decision?.kind==='paused' ||
         (!this.opts.live && !f.probationState))
     )
       reasons.push('registration_required');
-    if (this.opts.live && (!this.opts.verifiedBrands?.has(b) || f.registrationSource !== 'sms_registration'))
+    if (this.opts.live && (!(decision ? ['probation','complete'].includes(decision.kind) : this.opts.verifiedBrands?.has(b)) || f.registrationSource !== 'sms_registration'))
       reasons.push('operator_verification_required');
     if (first === undefined || this.opts.waitMs === null || now.getTime() - first < this.opts.waitMs)
       reasons.push('cleared_payment_wait');
     const probation = this.opts.live
-      ? !this.opts.completedProbation?.has(b)
+      ? (decision ? decision.kind!=='complete' : !this.opts.completedProbation?.has(b))
       : f.probationState !== 'complete';
     if (probation) {
       const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
@@ -107,6 +108,23 @@ export class WorkspaceGifts {
       reasons,
       brokerRequired: f.industry === 'REAL_ESTATE' || (!f.industry && !fixture),
     };
+  }
+  async reserveOccurrence(sql:Sql,w:string,b:string,id:string,kind:string,person:string,
+    gift:import('../../shared/date-automations.js').RecurringGift,now:Date) {
+    const terms={...gift,brandId:b,operationKey:id,title:kind==='birthday'?'Birthday gift':'Anniversary gift',personIds:[person]};
+    const prior=await one(sql,'campaign',id);
+    if(prior) {
+      requireCondition(prior.hash===inputHash(terms),409,'gift_terms_changed','The annual gift terms have changed.');
+      return;
+    }
+    const recipients=await eligibleGiftRecipients(sql,w,b,this.opts.live?'live':'exercise');
+    const target=recipients.find(candidate=>candidate.id===person);
+    const eligibility=await this.eligibility(sql,w,b,await all(sql,'lot'),gift.face);
+    requireCondition(target && eligibility.eligible && (!eligibility.brokerRequired || gift.brokerConfirmed),
+      409,'gift_ineligible','Review the annual gift eligibility.');
+    const catalog=await this.provider.products(gift.face);
+    requireCondition(gift.products.every(id=>catalog.some(p=>p.id===id)),409,'gift_product_unavailable','Review the annual gift choices.');
+    await reserve(sql,w,terms,[target],now,{live:this.opts.live,account:this.provider.account});
   }
   async execute(name: WorkspaceGiftCommand, raw: unknown, actor: Actor) {
     const input = cmds[name].schema.parse(raw),
@@ -136,7 +154,7 @@ export class WorkspaceGifts {
     });
     switch (name) {
       case 'gifts.status':
-        return this.status(w, b, actor.owner && actor.kind === 'session');
+        return this.status(w, b, actor.owner && actor.kind === 'session',actor.kind==='session');
       case 'gifts.notificationPreferences': {
         const d=cmds[name].schema.parse(raw);
         await this.db.tenant(w,sql=>saveGiftNotificationPreferences(sql,w,d.operationKey,{lowCredit:d.lowCredit,campaignEnded:d.campaignEnded}));
@@ -202,7 +220,7 @@ export class WorkspaceGifts {
             'broker_approval_required',
             'Confirm your broker has approved thank-you gifts.',
           );
-          const c = await reserve(sql, w, terms, people, this.now());
+          const c = await reserve(sql, w, terms, people, this.now(), {live:this.opts.live,account:this.provider.account});
           return { id: c.id };
         });
       }
@@ -225,7 +243,7 @@ export class WorkspaceGifts {
         return this.status(w, b, true);
     }
   }
-  private async status(w: string, b: string, manage: boolean) {
+  private async status(w: string, b: string, manage: boolean, showNames=manage) {
     return this.db.brand(w, b, async (sql) => {
       const lots = await all(sql, 'lot'),
         offers = await all(sql, 'offer'),
@@ -235,6 +253,13 @@ export class WorkspaceGifts {
       const balance = visibleLots.reduce((n, l) => n + available(l), 0);
       const eligibility = await this.eligibility(sql, w, b, lots);
       const rows = offers.filter((o) => o.brand === b);
+      const names = rows.length && showNames ? (await sql.query<{id:string; label:string}>(
+        `SELECT id,coalesce(nullif(trim(concat_ws(' ',first_name,last_name)),''),email_normalized) label
+         FROM subscribers WHERE brand_id=$1 AND id=ANY($2::uuid[])
+         UNION ALL SELECT id,coalesce(nullif(name,''),'Phone ending '||right(phone_e164,4))
+         FROM sms_contacts WHERE id=ANY($2::uuid[]) AND (brand_id=$1 OR brand_id IS NULL)`,
+        [b,rows.map(o=>o.person)])).rows : [];
+      const labels = new Map(names.map(person=>[person.id,person.label]));
       return {
         currency: 'USD',
         canManage: manage,
@@ -242,7 +267,7 @@ export class WorkspaceGifts {
         available: balance,
         reserved: visibleLots.reduce((n, l) => n + l.reserved, 0),
         spent: visibleLots.reduce((n, l) => n + l.spent, 0),
-        refunded: visibleLots.reduce((n, l) => n + l.returned, 0),
+        refunded: visibleLots.reduce((n, l) => n + l.returned + (l.externalRefundGross ?? 0), 0),
         purchases: lots
           .filter((l) => l.brand === b)
           .map((l) => ({ id: l.id, face: l.face, total: l.total, state: l.state })),
@@ -260,16 +285,20 @@ export class WorkspaceGifts {
             return {
               id: c.id,
               title: c.title,
+              face: c.face,
+              open: count('offered') + count('pending'),
               offered: members.length,
               claimed: count('claimed'),
               expired: count('expired'),
               reserved: (count('offered') + count('pending')) * c.face,
               spent: count('claimed') * c.face,
               fees: feeFor(count('claimed') * c.face),
-              released: count('expired') * c.face,
+              released: (count('expired') + count('canceled')) * c.face,
               expiresAt: c.expires,
               recipients: members.map((o) => ({
                 id: o.person,
+                label: labels.get(o.person) ?? o.person,
+                expires: o.expires,
                 state: o.state,
                 claimedAt: o.claimedAt ?? null,
               })),
@@ -313,6 +342,7 @@ export class WorkspaceGifts {
         id,
         brand: b,
         account: this.provider.account,
+        live: this.opts.live === true,
         face,
         fee,
         total: face + fee,
@@ -343,6 +373,30 @@ export class WorkspaceGifts {
       await put(sql, w, 'lot', id, current);
     });
     return { id, url: checkout.url, state: checkout.expired ? 'expired' : 'checkout' };
+  }
+  async externalRefund(binding: {workspace:string; brand:string; lot:string; charge:string; payment:string}, eventId:string,
+    snapshot: (lot:Lot)=>Promise<{settled:number; held:number}>) {
+    const w = binding.workspace;
+    await this.tx(w, async sql => {
+      if (await one(sql,'event',eventId)) return;
+      const l = await one(sql,'lot',binding.lot);
+      requireCondition(l && l.brand===binding.brand && l.payment===binding.payment && l.charge===binding.charge &&
+        l.account===this.provider.account,409,'gift_refund_review','The original funded purchase needs reconciliation.');
+      const {settled,held} = await snapshot(l);
+      requireCondition([settled,held].every(value=>Number.isSafeInteger(value)&&value>=0)&&settled+held<=l.total,409,'gift_refund_review','Review the refund amounts.');
+      const delta = settled - (l.externalRefundGross ?? 0);
+      if (delta || held !== (l.externalRefundHeld ?? 0)) {
+        const faceMinor=Math.abs(Math.round(settled*l.face/l.total)-Math.round((l.externalRefundGross??0)*l.face/l.total));
+        l.externalRefundGross=settled;
+        l.externalRefundHeld=held;
+        l.externalRefundFace=Math.round((settled+held)*l.face/l.total);
+        await put(sql,w,'lot',l.id,l);
+        await entry(sql,w,'external-refund:'+eventId,{kind:delta < 0 ? 'refund_reversed' : delta > 0 ? 'external_refund' : 'refund_hold_changed',
+          faceMinor,amount:Math.abs(delta),ref:l.id,brand:l.brand,at:this.now().toISOString()});
+        await this.recheckHold(sql,w);
+      }
+      await put(sql,w,'event',eventId,{at:this.now().toISOString()});
+    });
   }
   async paymentFailure(w:string,b:string,id:string,eventId:string){
     await this.tx(w,async sql=>{
@@ -461,6 +515,12 @@ export class WorkspaceGifts {
       await this.tx(w, async (sql) => {
         const latest = (await one(sql, 'offer', o.id))!;
         if (latest.state !== 'pending') return;
+        if (e instanceof TerminalGiftOrder) {
+          latest.order = e.orderId;
+          await transition(sql,w,latest,'canceled',this.now());
+          await put(sql,w,'signal','claim:'+o.id,{kind:'order_'+e.outcome.toLowerCase(),ref:o.id,at:this.now().toISOString()});
+          return;
+        }
         latest.reason = e instanceof AppError ? e.code : 'gift_provider_pending';
         latest.retryAt = new Date(this.now().getTime() + 60000).toISOString();
         await put(sql, w, 'offer', o.id, latest);
@@ -486,6 +546,37 @@ export class WorkspaceGifts {
       await transition(sql, w, latest, 'claimed', this.now(), receipt);
     });
   }
+  private async reconcileOrderEvents(w:string) {
+    if (!this.provider.canceledReceipt) return;
+    const offers=(await this.db.read(w,sql=>all(sql,'offer'))).filter(o=>o.state==='claimed'&&o.order);
+    const resources=new Map(offers.flatMap(o=>[o.order!,o.reward!].map(id=>[id,o] as const)));
+    if(!resources.size)return;
+    const inbox='system:workspace-gifts:provider-events';
+    const events=await this.db.read(inbox,async sql=>(await sql.query<{id:string;resource:string}>(
+      `SELECT operation_key id,result->>'resource' resource FROM operations WHERE workspace_id=$1
+       AND actor_id='workspace-gifts:vendor-event' AND result->>'kind' IN ('ORDERS.CANCELED','REWARDS.CANCELED')
+       AND result->>'resource'=ANY($2::text[])`,[inbox,[...resources.keys()]])).rows);
+    for(const event of events){
+      const offer=resources.get(event.resource)!;
+      const key='tremendous:'+event.id;
+      if(await this.processed(w,key))continue;
+      if(!await this.provider.canceledReceipt(offer))continue;
+      await this.tx(w,async sql=>{
+        const current=await one(sql,'offer',offer.id);
+        if(current?.state!=='claimed')return;
+        for(const allocation of current.alloc){
+          const lot=await one(sql,'lot',allocation.id);
+          requireCondition(lot&&lot.spent>=allocation.amount,409,'gift_order_conflict','Review the canceled order allocation.');
+          lot.spent-=allocation.amount;
+          await put(sql,w,'lot',lot.id,lot);
+        }
+        current.state='canceled';
+        await put(sql,w,'offer',current.id,current);
+        await entry(sql,w,'canceled:'+current.id,{kind:'canceled',ref:current.id,brand:current.brand,amount:current.face,at:this.now().toISOString()});
+        await put(sql,w,'event',key,{at:this.now().toISOString()});
+      });
+    }
+  }
   private async closeLots(w: string) {
     const refunds = await this.tx(w, async (sql) => {
       if (!(await one(sql, 'closure', 'closed'))) return [];
@@ -493,7 +584,7 @@ export class WorkspaceGifts {
         offers = await all(sql, 'offer');
       if (
         offers.some((o) => o.state === 'offered' || o.state === 'pending') ||
-        lots.some((l) => l.disputed || l.state === 'checkout')
+        lots.some((l) => l.disputed || l.externalRefundHeld || l.state === 'checkout')
       )
         return [];
       // A lost dispute can exceed the free face value on its original purchase.
@@ -522,7 +613,7 @@ export class WorkspaceGifts {
     });
     for (const l of refunds) {
       const face = l.refundFace ?? unused(l),
-        amount = face + Math.round((l.fee * face) / l.face),
+        amount = Math.min(l.total-(l.externalRefundGross??0),face + Math.round((l.fee * face) / l.face)),
         result = await this.provider.refund(w, l, amount);
       requireCondition(
         result.amount === amount,
@@ -601,6 +692,7 @@ export class WorkspaceGifts {
         .slice(0, 20);
     });
     for (const o of pending) await this.settle(w, o);
+    await this.reconcileOrderEvents(w);
     if (closing) await this.closeLots(w);
     await this.tx(w, (sql) => this.recheckHold(sql, w));
     if(this.opts.email)await processGiftNotifications(this.db,w,this.opts.email,now);
@@ -699,11 +791,12 @@ export class WorkspaceGifts {
       if (d.state === 'lost') {
         await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [l.brand]);
         const f = await giftWorkspaceOnboardingFacts(sql, d.workspace, l.brand);
-        if (this.opts.live ? !this.opts.completedProbation?.has(l.brand) : f.probationState !== 'complete')
+        const decision=await one(sql,'signal','eligibility:'+l.brand);
+        if (this.opts.live ? (decision ? decision.kind!=='complete' : !this.opts.completedProbation?.has(l.brand)) : f.probationState !== 'complete')
           await put(sql, d.workspace, 'signal', 'probation_loss', {
             kind: 'review_required',
             at: this.now().toISOString(),
-            ref: l.id,
+            ref: d.id,
           });
       }
       if(!prior)await recordGiftNotice(sql,d.workspace,{kind:'disputeOpened',at:this.now().toISOString(),reference:d.id});

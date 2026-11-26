@@ -70,6 +70,8 @@ type Intent = {
   source: string;
   operator: string;
   approvedAt: string;
+  availableAtApproval?: number;
+  liabilityAtApproval?: number;
   state: "unknown" | z.infer<typeof states>;
   providerId?: string;
 };
@@ -135,6 +137,7 @@ export class GiftFunding {
     private readonly source: string | null,
     private readonly buffer: number,
     private readonly request: typeof fetch,
+    private readonly autoLimit: number,
   ) {
     this.scope = live
       ? "_platform_gift_funding_live"
@@ -152,7 +155,7 @@ export class GiftFunding {
     const live = environment === "production";
     if (
       live &&
-      (env.FLOCKLETTER_GIFT_FUNDING_MODE !== "live_readonly" ||
+      (!["live_readonly","live_automatic"].includes(env.FLOCKLETTER_GIFT_FUNDING_MODE ?? "") ||
         env.FLOCKLETTER_WORKSPACE_GIFTS !== "live")
     )
       return null;
@@ -165,17 +168,20 @@ export class GiftFunding {
     const rawBuffer = env.FLOCKLETTER_GIFT_FUNDING_BUFFER_CENTS;
     verified(rawBuffer !== undefined && /^(0|[1-9][0-9]*)$/.test(rawBuffer));
     const buffer = cents.parse(Number(rawBuffer));
-    const source =
-      !live && env.FLOCKLETTER_GIFT_SANDBOX_TOPUP === "approved"
+    const automatic = env.FLOCKLETTER_GIFT_FUNDING_MODE === (live ? "live_automatic" : "sandbox_automatic");
+    const autoLimit = automatic ? cents.positive().safe().parse(Number(env.FLOCKLETTER_GIFT_TOPUP_LIMIT_CENTS)) : 0;
+    const source = live && automatic
+      ? providerId.parse(env.FLOCKLETTER_GIFT_LIVE_FUNDING_SOURCE)
+      : !live && env.FLOCKLETTER_GIFT_SANDBOX_TOPUP === "approved"
         ? providerId.parse(env.FLOCKLETTER_GIFT_SANDBOX_FUNDING_SOURCE)
         : null;
     const expectedBalance = providerId.parse(env.FLOCKLETTER_GIFT_FUNDING_BALANCE_ID);
-    return new GiftFunding(platform, live, apiKey, expectedBalance, source, buffer, request);
+    return new GiftFunding(platform, live, apiKey, expectedBalance, source, buffer, request, autoLimit);
   }
 
   private async api(path: string, body?: object) {
     verified(
-      !this.live || (path === "/funding_sources/BALANCE" && body === undefined),
+      !this.live || this.autoLimit > 0 || (path === "/funding_sources/BALANCE" && body === undefined),
     );
     const response = await this.request(
       (this.live ? production : sandbox) + path,
@@ -277,6 +283,30 @@ export class GiftFunding {
     }
   }
 
+  /** Persist one transfer intent before submission. Uncertain, partial and reversed transfers
+   * retain their original key and cannot open another automatic draw. */
+  async replenish() {
+    if (!this.autoLimit || !this.source) return this.monitor();
+    const source=this.source;
+    const key=await this.platform.store.transaction(this.scope,async records=>{
+      const currentKeyValue=await records.get<string>('ack',currentKey);
+      const previous=currentKeyValue ? await records.get<Intent>('ack',operation(currentKeyValue)) : null;
+      if(currentKeyValue && (!previous || previous.state!=='fully_credited')) return currentKeyValue;
+      const {id,value}=await this.coverage(records);
+      if(!value.shortfall || value.pending || value.shortfall>this.autoLimit) return undefined;
+      if(previous && previous.availableAtApproval===value.available && previous.liabilityAtApproval===value.liability) return currentKeyValue ?? undefined;
+      await this.sourceEligible(source);
+      const key=randomUUID();
+      const intent:Intent={key,source,balanceId:id,amount:value.shortfall,operator:'automatic',approvedAt:new Date().toISOString(),
+        availableAtApproval:value.available,liabilityAtApproval:value.liability,state:'unknown'};
+      await records.put('ack',operation(key)+':approved',intent,true);
+      await records.put('ack',operation(key),intent,true);
+      await records.put('ack',currentKey,key);
+      return key;
+    });
+    return this.sync(key??undefined,undefined,undefined,true);
+  }
+
   /** Inspect coverage and reconcile the current (or an earlier) receipt. Never submits a top-up. */
   monitor(operationKey?: string) {
     if (operationKey !== undefined) z.uuid().parse(operationKey);
@@ -306,7 +336,7 @@ export class GiftFunding {
     let processed = 0;
     for (const { operation_key: eventKey, result } of events) {
       try {
-        if (!this.live && result.kind.startsWith("TOPUPS.")) {
+        if ((!this.live || this.autoLimit) && result.kind.startsWith("TOPUPS.")) {
           const id = providerId.parse(result.resource);
           const { topup } = z
             .object({
@@ -357,7 +387,7 @@ export class GiftFunding {
     expectedShortfall: number,
   ) {
     requireCondition(
-      !this.live,
+      !this.live || this.autoLimit > 0,
       403,
       "gift_topup_disabled",
       "Production funding is read-only.",
@@ -369,7 +399,7 @@ export class GiftFunding {
       this.source,
       403,
       "gift_topup_disabled",
-      "A private sandbox funding source must be approved.",
+      "An approved funding source is required.",
     );
     const source = this.source;
     // Commit the original approval before any external write, including after a lost response or restart.
@@ -423,13 +453,14 @@ export class GiftFunding {
     key?: string,
     actor?: OperatorSession,
     eventResource?: string,
+    automatic = false,
   ) {
-    verified(!this.live || (!key && !actor && !eventResource));
+    verified(!this.live || this.autoLimit > 0 || (!key && !actor && !eventResource));
     const result = await this.platform.store.transaction(
       this.scope,
       async (records) => {
         let coverage: Coverage | null = null;
-        const selected = this.live
+        const selected = this.live && !this.autoLimit
           ? null
           : (key ?? (await records.get<string>("ack", currentKey)));
         const intent = selected
@@ -458,7 +489,7 @@ export class GiftFunding {
             );
             if (
               !observed &&
-              actor &&
+              (actor || (automatic && this.autoLimit && intent.operator === "automatic")) &&
               !intent.providerId &&
               !complete(intent.state)
             ) {
@@ -468,7 +499,8 @@ export class GiftFunding {
                   Math.round((intent.amount / 100) * 100) === intent.amount,
               );
               await this.sourceEligible(intent.source);
-              await this.operator(actor);
+              if (actor) await this.operator(actor);
+              else verified(intent.amount <= this.autoLimit && !coverage.pending);
               const data = await this.api("/topups", {
                 funding_source_id: intent.source,
                 idempotency_key: operation(intent.key),

@@ -171,7 +171,7 @@ export class CustomerWorkflows {
         }
       },
     },textingSecrets);
-    const datePorts=()=>({mode:this.dates.mode,giftDelivery:this.dates.giftDelivery,isOwner:this.identity.isOwner,delivery:this.delivery,texting:this.texting});
+    const datePorts=()=>({mode:this.dates.mode,gifts:this.gifts,giftDelivery:this.dates.giftDelivery,isOwner:this.identity.isOwner,delivery:this.delivery,texting:this.texting});
     this.delivery.options.annualClaim=(sql,w,b,id,now)=>annualClaim(sql,w,b,'email',id,datePorts(),now);
     if(this.texting){
       this.audience.options.texting=this.texting;
@@ -363,7 +363,10 @@ export class CustomerWorkflows {
     let failure:string|null=null;
     const run=async(action:()=>Promise<unknown>)=>{if(this.closing)return;try{await action();}catch{failure='workspace_job_requires_review';}};
     if(maintenance){
-      if(this.gifts)await run(()=>this.gifts!.tick(workspace));
+      if(this.gifts){
+        await run(()=>this.gifts!.tick(workspace));
+        await run(()=>this.billing.recoverGiftEligibility(workspace,this.gifts!.opts.live));
+      }
       const brands=await this.db.tenant(workspace,async sql=>(await sql.query<{id:string}>('SELECT id FROM brands ORDER BY id LIMIT 5')).rows);
       for(const brand of brands)if(this.settings.infrastructure==='aws'||externalDelivery(this.settings.delivery))
         await run(()=>refreshCustomerSender(this.db,workspace,brand.id));
@@ -378,7 +381,7 @@ export class CustomerWorkflows {
       if(this.dates.mode!=='off') await eachDateBrand(this.db,workspace,brand=>run(async()=>{
         const now=new Date();
         await planBrand(this.db,workspace,brand,this.dates.mode,now);
-        await dispatchBrand(this.db,workspace,brand,{mode:this.dates.mode,giftDelivery:this.dates.giftDelivery,isOwner:this.identity.isOwner,delivery:this.delivery,texting:this.texting},now);
+        await dispatchBrand(this.db,workspace,brand,{mode:this.dates.mode,gifts:this.gifts,giftDelivery:this.dates.giftDelivery,isOwner:this.identity.isOwner,delivery:this.delivery,texting:this.texting},now);
       }));
       await run(()=>this.team.tickWorkspace(workspace));
       await run(()=>this.support.tickWorkspace(workspace));

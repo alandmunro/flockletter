@@ -27,7 +27,7 @@ export function inputHash(t: LaunchTerms) {
     ]),
   );
 }
-export async function reserve(sql: Sql, w: string, t: LaunchTerms, people: GiftPerson[], now = new Date()) {
+export async function reserve(sql: Sql, w: string, t: LaunchTerms, people: GiftPerson[], now = new Date(), provenance?: {live:boolean; account:string}) {
   const prior = await one(sql, 'campaign', t.operationKey);
   if (prior) {
     requireCondition(
@@ -51,7 +51,8 @@ export async function reserve(sql: Sql, w: string, t: LaunchTerms, people: GiftP
     'gift_person_duplicate',
     'The audience contains unresolved duplicates.',
   );
-  const lots = await all(sql, 'lot');
+  const lots = (await all(sql, 'lot')).filter(l=>!provenance || (l.account===provenance.account &&
+    (provenance.live ? l.live===true : l.live!==true)));
   const cost = people.length * t.face;
   requireCondition(
     lots.reduce((n, l) => n + available(l), 0) >= cost,
@@ -62,6 +63,7 @@ export async function reserve(sql: Sql, w: string, t: LaunchTerms, people: GiftP
   const at = now.toISOString(),
     expires = new Date(now.getTime() + t.days * 86400000).toISOString();
   const campaign: GiftCampaign = {
+    ...provenance,
     id: t.operationKey,
     brand: t.brandId,
     title: t.title,
@@ -134,13 +136,13 @@ export async function transition(
   sql: Sql,
   w: string,
   o: GiftOffer,
-  kind: 'claimed' | 'expired',
+  kind: 'claimed' | 'expired' | 'canceled',
   now: Date,
   receipt?: { order: string; reward: string },
 ) {
   if (o.state === kind) return;
   requireCondition(
-    kind === 'claimed' ? o.state === 'pending' && receipt : o.state === 'offered',
+    kind === 'claimed' ? o.state === 'pending' && receipt : kind === 'canceled' ? o.state === 'pending' : o.state === 'offered',
     409,
     'gift_transition',
     'This offer requires reconciliation.',
@@ -178,7 +180,7 @@ export async function fund(
   sql: Sql,
   w: string,
   lot: Lot,
-  payment: { payment: string; charge: string; paidAt: string },
+  payment: { payment: string; charge: string; paidAt: string; refunds?:{settled:number;held:number} },
 ) {
   if (lot.state !== 'checkout') {
     requireCondition(
@@ -190,7 +192,13 @@ export async function fund(
     return;
   }
   lot.state = 'funded';
-  Object.assign(lot, payment);
+  lot.payment=payment.payment; lot.charge=payment.charge; lot.paidAt=payment.paidAt;
+  if(payment.refunds){
+    const {settled,held}=payment.refunds;
+    lot.externalRefundGross=settled; lot.externalRefundHeld=held;
+    lot.externalRefundFace=Math.round((settled+held)*lot.face/lot.total);
+    if(settled)await entry(sql,w,'initial-refund:'+lot.id,{kind:'external_refund',amount:settled,ref:lot.id,brand:lot.brand,at:payment.paidAt});
+  }
   await put(sql, w, 'lot', lot.id, lot);
   await entry(sql, w, 'fund:' + lot.id, {
     kind: 'purchased',

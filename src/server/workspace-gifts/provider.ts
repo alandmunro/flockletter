@@ -6,6 +6,11 @@ import type { Config } from '../config.js';
 import type { GiftCampaign, GiftOffer, Lot } from './store.js';
 
 const purpose = 'flockletter_workspace_gift_v1';
+export class TerminalGiftOrder extends Error {
+  constructor(readonly orderId: string, readonly outcome: 'FAILED' | 'CANCELED') {
+    super('Tremendous confirmed a terminal order.');
+  }
+}
 export interface GiftGateway {
   account: string;
   checkout(w: string, lot: Lot): Promise<{ id: string; url: string | null; expired: boolean }>;
@@ -13,6 +18,7 @@ export interface GiftGateway {
   refund(w: string, lot: Lot, amount: number): Promise<{ id: string; amount: number }>;
   products(face: number): Promise<{ id: string; name: string }[]>;
   order(o: GiftOffer, c: GiftCampaign): Promise<{ order: string; reward: string }>;
+  canceledReceipt?(offer:GiftOffer):Promise<boolean>;
   link(reward: string): Promise<string>;
 }
 const product = z.object({
@@ -177,10 +183,34 @@ export class WorkspaceGiftProvider implements GiftGateway {
         charge.paid &&
         charge.amount_captured === l.total &&
         charge.currency === 'usd' &&
-        !charge.disputed &&
-        !charge.amount_refunded,
+        !charge.disputed,
     );
-    return { payment: p.id, charge: charge.id, paidAt: new Date(charge.created * 1000).toISOString() };
+    const paid={payment:p.id,charge:charge.id,paidAt:new Date(charge.created*1000).toISOString()};
+    if(charge.amount_refunded) return {...paid,refunds:await this.refundSnapshot(w,{...l,...paid})};
+    return paid;
+  }
+  async refundBinding(chargeId: string) {
+    await this.accountCheck();
+    const charge = await this.stripe.charges.retrieve(chargeId);
+    if (typeof charge.payment_intent !== 'string') return null;
+    const payment = await this.stripe.paymentIntents.retrieve(charge.payment_intent);
+    if (payment.metadata.purpose !== purpose) return null;
+    verify(payment.livemode === this.live && charge.livemode === this.live &&
+      payment.latest_charge === charge.id && charge.currency === 'usd' && charge.paid);
+    const binding = z.object({workspace:z.string().min(1),brand:z.uuid(),lot:z.uuid()}).parse(payment.metadata);
+    return {...binding, payment:payment.id, charge:charge.id};
+  }
+  async refundSnapshot(w: string, l: Lot) {
+    verify(l.charge && l.payment && l.account === this.account);
+    let settled = 0, held = 0;
+    for await (const refund of this.stripe.refunds.list({charge:l.charge, limit:100})) {
+      verify(refund.charge === l.charge && refund.payment_intent === l.payment && refund.currency === 'usd');
+      if (this.match(refund.metadata,w,l)) continue;
+      if (refund.status === 'succeeded') settled += refund.amount;
+      else if (refund.status !== 'failed' && refund.status !== 'canceled') held += refund.amount;
+    }
+    verify(Number.isSafeInteger(settled+held) && settled+held <= l.total);
+    return {settled, held};
   }
   async refund(w: string, l: Lot, amount: number) {
     await this.accountCheck();
@@ -193,9 +223,13 @@ export class WorkspaceGiftProvider implements GiftGateway {
         p.amount_received === l.total &&
         p.currency === 'usd',
     );
-    const list = await this.stripe.refunds.list({ payment_intent: p.id, limit: 2 });
-    verify(!list.has_more && list.data.length <= 1);
-    let ref = list.data[0];
+    let ref: Stripe.Refund | undefined;
+    for await (const candidate of this.stripe.refunds.list({payment_intent:p.id, limit:100})) {
+      if (this.match(candidate.metadata,w,l)) {
+        verify(!ref);
+        ref = candidate;
+      }
+    }
     if (!ref) {
       verify(Date.now() - Date.parse(l.refundStarted) < 23 * 3600000);
       ref = await this.stripe.refunds.create(
@@ -213,7 +247,7 @@ export class WorkspaceGiftProvider implements GiftGateway {
         settled.payment_intent === p.id &&
         this.match(settled.metadata, w, l) &&
         ch.livemode === this.live &&
-        ch.amount_refunded === amount,
+        ch.amount_refunded === amount + (l.externalRefundGross ?? 0),
     );
     return { id: settled.id, amount: settled.amount };
   }
@@ -278,7 +312,14 @@ export class WorkspaceGiftProvider implements GiftGateway {
           delivery: { method: 'LINK' },
         },
       });
-    const { order } = orderResult.parse(await this.vendor(path));
+    const raw = await this.vendor(path);
+    const { order: identity } = z.object({
+      order: z.object({ id: obj, external_id: z.string(), status: z.string() }),
+    }).parse(raw);
+    verify(identity.external_id === o.id);
+    if (identity.status === 'FAILED' || identity.status === 'CANCELED')
+      throw new TerminalGiftOrder(identity.id, identity.status);
+    const { order } = orderResult.parse(raw);
     requireCondition(
       order.status === 'EXECUTED',
       503,
@@ -298,6 +339,16 @@ export class WorkspaceGiftProvider implements GiftGateway {
         Math.round(reward.value.denomination * 100) === o.face,
     );
     return { order: order.id, reward: reward.id };
+  }
+  async canceledReceipt(o:GiftOffer) {
+    const {order}=z.object({order:z.object({id:obj,external_id:z.string(),status:z.string(),
+      payment:z.object({refund:z.object({total:z.number(),currency_code:z.string()}).nullish()}).nullish()})})
+      .parse(await this.vendor('/orders/'+encodeURIComponent(o.id)));
+    verify(order.id===o.order && order.external_id===o.id);
+    if(order.status!=='CANCELED') return false;
+    const refund=order.payment?.refund;
+    verify(refund?.currency_code==='USD' && Math.round(refund.total*100)===o.face);
+    return true;
   }
   async link(id: string) {
     const { reward } = z

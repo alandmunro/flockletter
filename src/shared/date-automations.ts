@@ -9,6 +9,14 @@ const template = z.string().trim().min(1).max(1000).refine(value =>
 // so removing a gift attachment restores the owner's original birthday/anniversary copy.
 export const giftGreetingBody = 'Thank you! We have a gift for you.';
 export const giftGreetingSubject = 'A thank-you gift for you';
+export const recurringGift = z.object({
+  face:z.number().int().min(1).max(10000000),
+  days:z.union([z.literal(15),z.literal(30),z.literal(60)]),
+  products:z.array(z.string().regex(/^[A-Z0-9]{4,20}$/)).max(10)
+    .refine(ids=>(ids.length===1 || ids.length>=5) && new Set(ids).size===ids.length),
+  brokerConfirmed:z.boolean(),
+}).strict();
+export type RecurringGift = z.infer<typeof recurringGift>;
 export const dateSettings = z.object({
   time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
   zone: z.string().max(80).refine(value => {
@@ -16,8 +24,9 @@ export const dateSettings = z.object({
   }, 'Choose an IANA time zone.'),
   startHour: z.number().int().min(9).max(19), endHour: z.number().int().min(10).max(20),
   giftCampaignId: z.uuid().optional(),
+  gift: recurringGift.optional(),
   sms: template, email: z.object({ subject: template.max(120), body: template }).strict().nullable(),
-}).strict().refine(v=>v.startHour<v.endHour,'The send window must open before it closes.');
+}).strict().refine(v=>!(v.gift && v.giftCampaignId),'Select one gift attachment.').refine(v=>v.startHour<v.endHour,'The send window must open before it closes.');
 export type DateSettings = z.infer<typeof dateSettings>;
 export type DateKind = z.infer<typeof kind>;
 export type DateDefinition = { kind: DateKind; revision:number; enabled:boolean; settings:DateSettings };

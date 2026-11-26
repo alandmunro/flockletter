@@ -479,6 +479,20 @@ describe("sandbox gift funding", () => {
     } finally {await admin.query('DELETE FROM flockletter_retention_control.restore_quarantines WHERE workspace_id=$1',[orgs[0]]);}
   });
 
+  it('keeps a single automatic draw through concurrent ticks, uncertain settlement and reversal',async()=>{
+    const automatic=GiftFunding.configured(platform,{...env,FLOCKLETTER_GIFT_FUNDING_MODE:'sandbox_automatic',
+      FLOCKLETTER_GIFT_TOPUP_LIMIT_CENTS:'1500'},vendor.fetch)!;
+    vendor.pending=0;
+    vendor.lostResponse=true;
+    await Promise.all([automatic.replenish(),automatic.replenish()]);
+    expect(vendor.attempts).toBe(1);
+    vendor.topups[0]!.status='partially_credited';
+    expect((await automatic.replenish()).topup?.state).toBe('partially_credited');
+    vendor.topups[0]!.status='reversed';
+    expect((await automatic.replenish()).topup?.state).toBe('reversed');
+    await automatic.replenish();
+    expect(vendor.attempts).toBe(1);
+  });
   it("uses only production balance GET in approved live read-only mode even with sandbox approval settings", async () => {
     const livePlatform = new PlatformService(db, platform.store, {
       ...platform.options,

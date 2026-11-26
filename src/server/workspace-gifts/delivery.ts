@@ -10,13 +10,13 @@ import { one } from './store.js';
 import { giftSendingHold } from './service.js';
 import { reservedGiftLink } from './ledger.js';
 
-export type GiftDeliveryPolicy = { mode:'capture'|'live'; account:string; verifiedBrands?:ReadonlySet<string> };
+export type GiftDeliveryPolicy = { mode:'capture'|'live'; account:string; verifiedBrands?:ReadonlySet<string>; recordedDecisions?:boolean };
 type GiftConfiguration = {provider:{account:string};opts:{live:boolean;verifiedBrands?:ReadonlySet<string>}};
 export function configuredGiftDelivery(environment:string, flag:string|undefined, gifts:GiftConfiguration|null) {
   if (!gifts) return undefined;
   const account=gifts.provider.account;
   if (environment==='production' && flag==='live' && gifts.opts.live)
-    return {mode:'live' as const,account,verifiedBrands:gifts.opts.verifiedBrands};
+    return {mode:'live' as const,account,recordedDecisions:true,verifiedBrands:gifts.opts.verifiedBrands};
   if (environment!=='production' && !gifts.opts.live && (flag===undefined||flag==='capture'))
     return {mode:'capture' as const,account};
   return undefined;
@@ -25,7 +25,7 @@ export function configuredGiftDelivery(environment:string, flag:string|undefined
 export function giftDeliveryAllowed(policy:GiftDeliveryPolicy|undefined, mode:string, brand:string|undefined) {
   if (!policy || !brand) return false;
   return policy.mode==='capture' ? mode==='capture'
-    : ['live','ses','resend'].includes(mode) && policy.verifiedBrands?.has(brand)===true;
+    : ['live','ses','resend'].includes(mode) && (policy.recordedDecisions===true || policy.verifiedBrands?.has(brand)===true);
 }
 
 export type GiftRecipient = {
@@ -54,7 +54,9 @@ export async function reservedDeliveryGift(sql: Sql, recipient: GiftRecipient, o
     409, 'gift_link_unavailable', 'The reserved offer link is unavailable.');
   const campaign=await one(sql,'campaign',campaignId);
   if (policy.mode==='live') {
-    requireCondition(base.protocol==='https:' && policy.verifiedBrands?.has(brandId) &&
+    const decision=policy.recordedDecisions ? await one(sql,'signal','eligibility:'+brandId) : undefined;
+    const approved=decision ? ['probation','complete'].includes(decision.kind) : policy.verifiedBrands?.has(brandId);
+    requireCondition(base.protocol==='https:' && approved &&
       campaign && campaign.brand===brandId && 'live' in campaign && campaign.live===true &&
       'account' in campaign && campaign.account===policy.account,
       409,'gift_provenance_mismatch','The gift campaign requires a verified live reservation for this brand.');
