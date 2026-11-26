@@ -67,6 +67,10 @@ export class WorkspaceGifts {
       return fn(sql);
     });
   }
+  private inProbation(brand:string, state:string|null, decision?:{kind:string}) {
+    if (decision) return decision.kind !== 'complete';
+    return this.opts.live ? !this.opts.completedProbation?.has(brand) : state !== 'complete';
+  }
   private async eligibility(sql: Sql, w: string, b: string, lots: Lot[], extra = 0) {
     const f = await giftWorkspaceOnboardingFacts(sql, w, b),
       subscriptionPayment = await firstWorkspacePayment(sql,w,this.opts.live),
@@ -92,10 +96,7 @@ export class WorkspaceGifts {
       reasons.push('operator_verification_required');
     if (first === undefined || this.opts.waitMs === null || now.getTime() - first < this.opts.waitMs)
       reasons.push('cleared_payment_wait');
-    const probation = this.opts.live
-      ? (decision ? decision.kind!=='complete' : !this.opts.completedProbation?.has(b))
-      : f.probationState !== 'complete';
-    if (probation) {
+    if (this.inProbation(b,f.probationState,decision)) {
       const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
       const reserved = (await all(sql, 'entry'))
         .filter((e) => e.kind === 'reserved' && Date.parse(e.at) >= start)
@@ -891,13 +892,7 @@ export class WorkspaceGifts {
         await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [l.brand]);
         const f = await giftWorkspaceOnboardingFacts(sql, d.workspace, l.brand);
         const decision = await one(sql, 'signal', 'eligibility:' + l.brand);
-        if (
-          this.opts.live
-            ? decision
-              ? decision.kind !== 'complete'
-              : !this.opts.completedProbation?.has(l.brand)
-            : f.probationState !== 'complete'
-        ) {
+        if (this.inProbation(l.brand,f.probationState,decision)) {
           await put(sql, d.workspace, 'signal', 'probation-incident:' + d.id, {
             kind: 'probation_dispute_unreviewed',
             at: this.now().toISOString(),
