@@ -15,6 +15,14 @@ With mock texting, staging defaults to `FLOCKLETTER_TEXTING_ONBOARDING=capture`.
 
 An isolated Stripe sandbox can use `FLOCKLETTER_TEXTING_ONBOARDING=stripe_test` with the test account, secret key and endpoint signing secret in `FLOCKLETTER_TEXTING_SETUP_STRIPE_ACCOUNT`, `FLOCKLETTER_TEXTING_SETUP_STRIPE_KEY` and `FLOCKLETTER_TEXTING_SETUP_STRIPE_WEBHOOK`. Configure Checkout session completion, expiration, asynchronous success and asynchronous failure events for `/api/v1/texting/stripe-setup-events`. Return to Texting to refresh the saved payment. After a verified expiration or payment failure, retry the same enrollment. Each replacement has a new attempt identifier. A delayed event for an earlier attempt cannot pay its replacement. Staging capture can run without Stripe credentials.
 
+## Unfinished forms, website retries and corrections
+
+Before accepting a registration, the owner can choose **Save unfinished draft**. The draft stays encrypted in that browser. The recovery key is available to the current owner for the same workspace, company and enrollment revision. Drafts omit the EIN, verification codes and publication consent. Another tab must reload before replacing or discarding a newer save. Completing the form clears its browser draft. Clearing browser storage removes unfinished drafts. The accepted business details remain available on the server.
+
+A signup prerequisite appears before the business form if the company's public signup or mobile field needs setup. Temporary page-read failures retry after one, five and fifteen minutes through the worker, including when Texting is closed. A disclosure finding or an exhausted retry budget needs a correction or a manual recheck. The worker can recover a check interrupted by a restart.
+
+An operator returning a flagged application puts it in **Business details need correction**. The owner sees which details to review. Verification and submission require a newly saved revision. Private operator notes stay in the audit history. Both browser enrollment exercises run as release checks, including a reload of a private draft and a company isolation check.
+
 ## Recovery and plan changes
 
 The owner sees enrollment notices in Texting. Staging captures the email copies. A failed first cohort holds its remaining texts. Restarting after review closes that broadcast, cancels its unattempted remainder and requires a newly reviewed first cohort. A suspension requires an operator decision. The worker checks opt-outs and filtering against privately configured risk settings and checks both age and delivered volume before completing probation.

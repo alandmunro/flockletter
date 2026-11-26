@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { twilioBusinessTypes, twilioIndustries } from '../shared/texting-business.js';
-import type { OnboardingBusiness, OnboardingView } from '../shared/texting-onboarding.js';
+import type { DraftAccess, EnrollmentDraftFields, OnboardingBusiness, OnboardingView } from '../shared/texting-onboarding.js';
 import { TextingPlanChoice } from './TextingPlan.js';
 import { practiceTextPlans } from '../shared/texting-commercial.js';
 import { policyPreview } from '../shared/texting-policy-pages.js';
 import type { VerificationChannel } from '../shared/texting-onboarding.js';
+import { acceptBrowserDraft, draftStorageKey, readBrowserDraft, writeBrowserDraft, type BrowserDraft } from './texting-draft.js';
 import { operationKey, type Api } from './api.js';
 
 const blank: OnboardingBusiness = {
@@ -15,7 +16,7 @@ const blank: OnboardingBusiness = {
 const states: Record<string, string> = {
   not_started: 'Business details needed', draft: 'Preparing enrollment', provisioning: 'Creating your sender',
   brand_pending: 'Business under review', campaign_pending: 'Campaign or number under review', approved: 'Registration approved',
-  rejected: 'Registration needs corrections', suspended: 'Sender needs review', review: 'Identity review required',
+  correction_required: 'Business details need correction', rejected: 'Registration needs corrections', suspended: 'Sender needs review', review: 'Identity review required',
 };
 const labels = {
   legalName: 'Legal business name', ein: 'Employer identification number', website: 'Business website',
@@ -44,12 +45,36 @@ function Enrollment({ api, company, refreshCompanies, onOpenAudience }: { onOpen
   const companyId = company.id;
   const [view, setView] = useState<OnboardingView>();
   const [edit, setEdit] = useState(false);
+  const [formReset, setFormReset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [codes, setCodes] = useState<Partial<Record<VerificationChannel, string>>>({});
   const [capture, setCapture] = useState<Partial<Record<VerificationChannel, string>>>({});
   const [document, setDocument] = useState<'CP575' | '147C'>('CP575');
   const [resumeReason, setResumeReason] = useState('');
+  const [device, setDevice] = useState<{id: string; draft: BrowserDraft | null; unreadable?: boolean; unreadableRaw?: string}>();
+  const draftId = view?.draftId, revision = view?.revision;
+  const accessDraft = useCallback(async () => {
+    const access = await api.call<DraftAccess>('sms.onboardingDraftAccess', {companyId, expectedRevision:revision, operationKey:operationKey()});
+    if (!draftId || access.id !== draftId) throw Error('Reload the current enrollment before using this draft.');
+    return access;
+  }, [api, companyId, draftId, revision]);
+  useEffect(() => {
+    if (!draftId) return;
+    let current = true;
+    const restore = async () => {
+      let raw: string | null = null;
+      try {
+        raw = localStorage.getItem(draftStorageKey(draftId));
+        const draft = raw ? await readBrowserDraft(await accessDraft()) : null;
+        if (current) setDevice({id:draftId, draft});
+      } catch {
+        if (current) setDevice({id:draftId, draft:null, unreadable:true, unreadableRaw:raw ?? undefined});
+      }
+    };
+    void restore();
+    return () => { current = false; };
+  }, [draftId, accessDraft]);
   const latestRequest = useRef(0);
   const load = useCallback(async () => {
     const request = ++latestRequest.current;
@@ -61,7 +86,7 @@ function Enrollment({ api, company, refreshCompanies, onOpenAudience }: { onOpen
     return () => { latestRequest.current++; };
   }, [load, company.registration]);
   const pending = view && ['provisioning', 'brand_pending', 'campaign_pending'].includes(view.state);
-  const observing = pending || view?.state === 'review' || view?.checkout === 'pending' || view?.state === 'approved';
+  const observing = !!view?.pageCheck?.retryAt || (!!view?.revision && !view.pageCheck && view.state === 'draft') || pending || view?.state === 'review' || view?.checkout === 'pending' || view?.state === 'approved';
   useEffect(() => {
     if (!observing) return;
     const update = () => { if (!window.document.hidden) void load().catch(() => setError('Could not refresh enrollment. Try again.')); };
@@ -79,7 +104,9 @@ function Enrollment({ api, company, refreshCompanies, onOpenAudience }: { onOpen
   if (!view) return <><p role="status">{error || 'Loading enrollment…'}</p>{error && <button className="btn secondary" onClick={() => void action(async () => {})}>Retry</button>}</>;
   if (view.blocked) return <p>This company already has a carrier registration. See its status under Companies and numbers.</p>;
   const context = () => ({ companyId, operationKey: operationKey(), expectedRevision: view.revision });
-  const canPrepare = ['not_started', 'draft', 'rejected'].includes(view.state);
+  const canPrepare = ['not_started', 'draft', 'rejected', 'correction_required'].includes(view.state) && view.checkout !== 'pending';
+  const deviceDraft = device?.id === draftId ? device?.draft ?? null : null;
+  const showForm = canPrepare && (edit || !view.revision || !!deviceDraft);
   const verified = view.requiredChannels.every(channel => channel === 'carrier' ? view.carrierVerified : view.verified[channel]);
   const pagesReady = !!view.pageCheck && view.pageCheck.issues.length === 0;
   const published = view.publicPages;
@@ -88,18 +115,41 @@ function Enrollment({ api, company, refreshCompanies, onOpenAudience }: { onOpen
   return <>
     <p role="status"><strong>{states[view.state] ?? 'Registration progress'}</strong>{view.message ? ` · ${view.message}` : ''}</p>
     {error && <p className="notice error" role="alert">{error}</p>}
-    {(edit || !view.revision) && canPrepare ? <BusinessForm key={view.revision ?? 'new'} initial={view.business ?? blank} busy={busy}
-      save={(business) => void action(async () => {
-        await api.call('sms.onboardingSave', { ...context(), business, accepted: true });
+    {view.signupReady === false && <section><h3>Prepare the signup form</h3>
+      <p>Enable a public signup page for this company in Audience, and turn on the mobile number field in Texting settings. You can save an unfinished draft first.</p>
+      {onOpenAudience && <button className="btn secondary" onClick={onOpenAudience}>Open signup settings</button>}
+    </section>}
+    {device?.id === draftId && device?.unreadable && <div role="alert"><p>Your browser could not open private draft storage. Reload to try again.</p>
+      {draftId && device.unreadableRaw && <button className="btn secondary" disabled={busy} onClick={() => void action(async () => {
+        const storage = draftStorageKey(draftId);
+        await navigator.locks.request(storage, () => {
+          if (localStorage.getItem(storage) !== device.unreadableRaw) throw Error('Another tab changed this draft. Reload Texting.');
+          localStorage.removeItem(storage);
+        });
+        setDevice({id:draftId,draft:null}); setFormReset(value => value + 1);
+      })}>Discard unreadable draft</button>}</div>}
+    {showForm && device?.id !== draftId ? <p role="status">Opening your form…</p> : showForm ? <BusinessForm key={String(view.revision) + '/' + formReset}
+      initial={view.business ?? blank} draft={deviceDraft} busy={busy}
+      saveDraft={(fields, version, onSaved) => void action(async () => {
+        const access = await accessDraft();
+        const nextVersion = await writeBrowserDraft(access, fields, version);
+        setDevice({id:access.id, draft:fields && nextVersion ? {version:nextVersion,fields} : null});
+        onSaved(nextVersion);
+        if (!fields) { setFormReset(value => value + 1); setEdit(false); }
+      })}
+      save={(business, version) => void action(async () => {
+        if (!draftId) throw Error('Reload the current enrollment before saving.');
+        await acceptBrowserDraft(draftId, version, () => api.call('sms.onboardingSave', { ...context(), business, accepted: true }));
         setEdit(false);
         setCapture({});
         setCodes({});
       })} />
-      : canPrepare && <button className="btn secondary" disabled={busy} onClick={() => setEdit(true)}>{view.state === 'rejected' ? 'Correct business details' : 'Edit business details'}</button>}
-    {view.revision && !edit && <>
+      : canPrepare && <button className="btn secondary" disabled={busy} onClick={() => setEdit(true)}>{['rejected','correction_required'].includes(view.state) ? 'Correct business details' : 'Edit business details'}</button>}
+    {view.revision && !showForm && <>
       {published && <p><a href={published.website} target="_blank" rel="noreferrer">View published business and policy pages</a></p>}
       {(canPrepare || view.state === 'review') && <section><h3>Website and signup checks</h3>
         {pagesReady ? <p>All four pages passed the automated checks.</p> : view.pageCheck ? <ul>{view.pageCheck.issues.map(issue => <li key={issue.page+issue.message}>{issue.message}</li>)}</ul> : <p>The pages are waiting to be checked.</p>}
+        {view.pageCheck?.retryAt && <p role="status">We’ll check again automatically at {new Date(view.pageCheck.retryAt).toLocaleTimeString()}. You can leave this page.</p>}
         <button className="btn secondary" disabled={busy} onClick={() => void action(() => api.call('sms.onboardingScan', context()).then(() => {}))}>Check pages again</button>
         {onOpenAudience && (!pagesReady || view.pageCheck?.issues.some(issue => issue.page === 'signup')) && <button className="btn secondary" onClick={onOpenAudience}>Open Audience signup settings</button>}
       </section>}
@@ -115,7 +165,7 @@ function Enrollment({ api, company, refreshCompanies, onOpenAudience }: { onOpen
       </> : <p>An operator can return this application for correction.</p>}
     </section>}
     {view.samples.length > 0 && <details><summary>Campaign message examples</summary><ul>{view.samples.map(sample => <li key={sample}>{sample}</li>)}</ul></details>}
-    {(view.state === 'draft' || view.review === 'hosted_ownership') && !edit && <>
+    {(view.state === 'draft' || view.review === 'hosted_ownership') && !showForm && <>
       <h3>Verify the business</h3>
       {view.requiredChannels.map(channel => <div key={channel}>
         {(channel === 'carrier' ? view.carrierVerified : view.verified[channel]) ? <p>{channel === 'email' ? 'Business email' : channel === 'phone' ? 'Business phone' : 'Practice carrier identity'} verified</p> : <>
@@ -184,16 +234,27 @@ function PracticeEvidenceFile({ document, expected, busy, action, attach }: {
   </>;
 }
 
-function BusinessForm({ initial, busy, save }: { initial: OnboardingBusiness; busy: boolean; save: (business: OnboardingBusiness) => void }) {
-  const [business, setBusiness] = useState(initial);
+function BusinessForm({ initial, draft, busy, save, saveDraft }: {
+  initial: OnboardingBusiness; draft: BrowserDraft | null; busy: boolean;
+  save: (business: OnboardingBusiness, version: string | null) => void;
+  saveDraft: (fields: EnrollmentDraftFields | null, version: string | null, onSaved: (version: string | null) => void) => void;
+}) {
+  const [business, setBusiness] = useState<OnboardingBusiness>(() => ({ ...initial, ...draft?.fields }));
+  const [version, setVersion] = useState(draft?.version ?? null);
   const [accepted, setAccepted] = useState(false);
+  const [saved, setSaved] = useState(!!draft);
+  const keepDraft = () => {
+    const fields: EnrollmentDraftFields & { ein?: string } = { ...business };
+    delete fields.ein;
+    saveDraft(fields, version, next => { setVersion(next); setSaved(true); });
+  };
   const set = <K extends keyof OnboardingBusiness>(field: K, value: OnboardingBusiness[K]) => setBusiness(previous => ({ ...previous, [field]: value }));
   const hosted = business.hostedPages === true, sole = business.registrationType === 'sole_proprietor';
   const preview = policyPreview(business.dbaName || business.legalName, business.publicContact ?? '', business.description ?? '');
   const submit = (event: FormEvent) => { event.preventDefault(); if (accepted) save({ ...business,
     ...(hosted ? { website:'', privacyPolicyUrl:'', smsTermsUrl:'' } : { publicContact:undefined, description:undefined }),
-    ...(sole ? {ein:'', dbaName:undefined} : {}) }); };
-  return <form onSubmit={submit}><fieldset disabled={busy}>
+    ...(sole ? {ein:'', dbaName:undefined} : {}) }, version); };
+  return <form onSubmit={submit} onChange={e => { setSaved(false); if (!(e.target instanceof HTMLInputElement && e.target.name === 'acceptEnrollment')) setAccepted(false); }}><fieldset disabled={busy}>
     <legend>Registered US business details</legend>
     <label>Registration type<select value={sole ? 'sole_proprietor' : 'ein'} onChange={e=>setBusiness(value => ({...value,registrationType:e.target.value as 'ein'|'sole_proprietor', ...(e.target.value==='sole_proprietor' && value.plan==='text_2500' ? {plan:'text_300'}:{})}))}>
       <option value="ein">US business with an EIN</option><option value="sole_proprietor">Sole proprietor without an EIN · practice</option></select></label>
@@ -214,9 +275,13 @@ function BusinessForm({ initial, busy, save }: { initial: OnboardingBusiness; bu
       {twilioIndustries.map(value => <option value={value} key={value}>{value.replaceAll('_', ' ').toLowerCase()}</option>)}
     </select></label>
     {hosted && <details><summary>Review the pages to publish</summary><h3>Privacy policy</h3><p>{preview.privacy}</p><h3>SMS terms</h3><p>{preview.terms}</p></details>}
-    <label className="asset-option"><input type="checkbox" required checked={accepted} onChange={event => setAccepted(event.target.checked)} />
+    <label className="asset-option"><input type="checkbox" name="acceptEnrollment" required checked={accepted} onChange={event => setAccepted(event.target.checked)} />
       {hosted ? 'I authorize publishing this practice business name, description, support email, privacy policy and SMS terms on the public business page.' : 'I am authorized to register this business and confirm these are the published privacy policy and SMS terms for its texting program.'}
     </label>
     <button className="btn" disabled={busy || !accepted}>Save business details</button>
+    <button type="button" className="btn secondary" disabled={busy} onClick={keepDraft}>Save unfinished draft</button>
+    {version && <button type="button" className="btn secondary" disabled={busy} onClick={() => saveDraft(null, version, setVersion)}>Discard saved draft</button>}
+    <p className="help">Resume the encrypted draft in this browser when signed in as the same owner. Enter the EIN and confirm the details when you finish.</p>
+    {saved && <p role="status">Private draft saved.</p>}
   </fieldset></form>;
 }

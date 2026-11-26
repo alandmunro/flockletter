@@ -88,7 +88,7 @@ export class Texting {
       requireCondition(actor.kind === 'session' && actor.owner && await this.options.isOwner(actor.userId, actor.workspaceId), 403, 'owner_required', 'Use a current workspace owner session.');
       requireCondition(this.onboarding, 503, 'sms_onboarding_unavailable', 'Self-service texting setup is unavailable in this environment.');
       const result = await this.onboarding.execute(name as TextingOnboardingCommand, raw, actor, via);
-      if (name === 'sms.onboardingSubmit' || name === 'sms.onboardingFinish' || name === 'sms.onboardingResume') await this.wake(actor.workspaceId);
+      if (['sms.onboardingSubmit', 'sms.onboardingFinish', 'sms.onboardingResume', 'sms.onboardingScan', 'sms.onboardingSave'].includes(name)) await this.wake(actor.workspaceId);
       return result;
     }
     if (textingCommands[name].scope === 'owner' && textingCommands[name].mutation)
@@ -531,7 +531,8 @@ export class Texting {
     }) : null;
     const messages = await this.messaging.tick(workspace);
     const forwarding = await this.messaging.forwardPending(workspace);
-    return [registration, capture, probation, messages, forwarding, billing].filter((d): d is Date => !!d).sort((a, b) => +a - +b)[0] ?? null;
+    const pageCheck = await this.onboarding?.nextPageCheck(workspace);
+    return [registration, capture, probation, messages, forwarding, billing, pageCheck].filter((d): d is Date => !!d).sort((a, b) => +a - +b)[0] ?? null;
   }
   private async advanceOnboardingCapture(workspace: string) {
     const mock = this.mock!;

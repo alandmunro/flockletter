@@ -1,5 +1,5 @@
-import { randomInt, randomUUID } from 'node:crypto';
-import type { OnboardingBusiness, OnboardingView, TextingOnboardingCommand, VerificationChannel } from '../../shared/texting-onboarding.js';
+import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import type { DraftAccess, OnboardingBusiness, OnboardingView, TextingOnboardingCommand, VerificationChannel } from '../../shared/texting-onboarding.js';
 import { textingOnboardingCommands as commands } from '../../shared/texting-onboarding.js';
 import { businessRefusals, twilioBusiness } from '../../shared/texting-business.js';
 import type { Database, Sql } from '../db.js';
@@ -16,6 +16,8 @@ import { enrollmentNotices, restartPracticeProbation } from './enrollment-recove
 import { audit, once, requestHash, type Interface } from './storage.js';
 
 const policyVersion = 'sms-enrollment-v1';
+const scanRetryDelays = [60_000, 300_000, 900_000];
+const scanLeaseMs = 60_000;
 const checkLifetime = 24 * 3600_000;
 const reviewMessages = {
   ein_conflict: 'This EIN already belongs to another owner. Ask for a correction review before registering.',
@@ -23,6 +25,15 @@ const reviewMessages = {
   payer_mismatch: 'The payer details differ from the registered business. Supply practice ownership evidence for review.',
   hosted_ownership: 'This business uses hosted pages. Supply a practice ownership letter for operator review.',
 };
+const correctionMessages: Record<keyof typeof reviewMessages, string> = {
+  hosted_ownership: 'Review the legal business name and public business details, then save a corrected revision for ownership review.',
+  payer_mismatch: 'Review the registered business name and billing address before saving your corrections.',
+  ein_conflict: 'Check the EIN and legal name against the business registration before saving your corrections.',
+  dba_conflict: 'Check the business identity and trade name or sole proprietor phone before saving your corrections.',
+};
+function browserDraftId(workspace: string, company: string, owner: string, revision: number | null) {
+  return requestHash(['browser-enrollment-v1', workspace, company, owner, revision]);
+}
 const publicMailHosts = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com', 'icloud.com', 'proton.me', 'protonmail.com', 'aol.com']);
 type Channel = VerificationChannel;
 const channelsFor = (sole: boolean): Channel[] => sole ? ['email', 'phone', 'carrier'] : ['email', 'phone'];
@@ -33,9 +44,10 @@ type Enrollment = {
   payment?: { state: 'paid' | 'declined' | 'pending'; source: 'capture' | 'stripe_test'; receipt: string;
     amount: number; currency: string; revision: number; requestedAt?: number; sessionId?: string; attempt?: number };
   review?: 'ein_conflict' | 'dba_conflict' | 'payer_mismatch' | 'hosted_ownership';
+  correction?: keyof typeof reviewMessages;
   hostedApproved?: boolean;
   evidence?: NonNullable<OnboardingView['evidence']>;
-  pendingScan?: { id: string; at: number };
+  pendingScan?: { id: string; at: number; attempt?: number };
   pageCheck?: NonNullable<OnboardingView['pageCheck']>;
   submittedAt?: string;
   probation?: { state: 'canary' | 'paused' | 'active' | 'complete' | 'suspended'; startsAt: string; sendId?: string; members?: string[]; overrideAt?: string };
@@ -106,7 +118,7 @@ export class TextingOnboarding {
       FROM sms_carrier_brands b JOIN sms_registrations r ON r.carrier_brand_id=b.id WHERE b.company_id=$1`, [companyId])).rows[0];
   }
 
-  private async view(sql: Sql, workspace: string, row: Row | undefined, user: string): Promise<OnboardingView> {
+  private async view(sql: Sql, workspace: string, companyId: string, row: Row | undefined, user: string): Promise<OnboardingView> {
     const current = row?.profile.onboarding;
     const owned = current?.owner === user;
     const personal = owned && row ? current : undefined;
@@ -114,11 +126,15 @@ export class TextingOnboarding {
     const progress = personal && row ? await this.registration.progress(sql, workspace, row.registration_id) : null;
     return {
       available: true, blocked: !!row && !owned,
+      signupReady: !row || (owned && ['draft','rejected'].includes(row.state))
+        ? !!await signupPage(sql, companyId, this.origin) : null,
+      draftId: !row || (owned && ['draft','rejected'].includes(row.state) && !current.review && current.payment?.state !== 'pending')
+        ? browserDraftId(workspace, companyId, user, personal?.revision ?? null) : null,
       revision: owned ? current.revision : null,
       business: row && owned && ['draft', 'rejected'].includes(row.state) ? business : null,
       requiredChannels: channelsFor(business?.registrationType === 'sole_proprietor'),
       carrierVerified: personal?.challenges.carrier?.verified === true,
-      pageCheck: personal?.pageCheck ?? null, review: personal?.review ?? null, evidence: personal?.evidence ?? null,
+      pageCheck: personal?.pendingScan ? null : personal?.pageCheck ?? null, review: personal?.review ?? null, evidence: personal?.evidence ?? null,
       ...(row && personal && (personal.review === 'payer_mismatch' || personal.review === 'hosted_ownership') && {
         evidenceFiles: { CP575: practiceLetter(workspace, row, personal.revision, 'CP575'), '147C': practiceLetter(workspace, row, personal.revision, '147C') },
       }),
@@ -128,9 +144,9 @@ export class TextingOnboarding {
       verified: { email: owned && current.challenges.email?.verified === true, phone: owned && current.challenges.phone?.verified === true },
       checkout: owned ? current.payment?.state ?? 'unpaid' : 'unpaid',
       checkoutMode: this.stripe ? 'stripe_test' : 'capture',
-      setupFee: setupFeeFor(business?.plan), state: owned && current.review ? 'review'
+      setupFee: setupFeeFor(business?.plan), state: personal?.correction ? 'correction_required' : owned && current.review ? 'review'
         : owned && row?.state === 'rejected' && !current.submittedAt ? 'draft' : row?.state ?? 'not_started',
-      message: owned && current.review
+      message: personal?.correction ? correctionMessages[personal.correction] : owned && current.review
         ? reviewMessages[current.review]
         : row?.state === 'rejected' && owned && current.submittedAt ? rejectionMessage(row.rejection_reason) : null,
       samples: owned ? row?.profile.campaign?.samples ?? [] : [],
@@ -141,21 +157,36 @@ export class TextingOnboarding {
     const workspace = actor.workspaceId;
     if (name === 'sms.onboardingStatus') {
       const { companyId } = commands[name].schema.parse(raw);
-      return this.db.read(workspace, async sql => this.view(sql, workspace, await this.row(sql, companyId), actor.userId));
+      return this.db.read(workspace, async sql => this.view(sql, workspace, companyId, await this.row(sql, companyId), actor.userId));
+    }
+    if (name === 'sms.onboardingDraftAccess') {
+      const { companyId, expectedRevision } = commands[name].schema.parse(raw);
+      return this.db.tenant(workspace, async sql => {
+        await lockWorkspace(sql, workspace);
+        const row = await this.row(sql, companyId);
+        const enrollment = row?.profile.onboarding;
+        requireCondition(!row || (enrollment?.owner === actor.userId && !enrollment.review && enrollment.payment?.state !== 'pending' &&
+          ['draft','rejected'].includes(row.state)), 409, 'enrollment_unavailable', 'This registration cannot be edited.');
+        requireCondition((enrollment?.revision ?? null) === expectedRevision, 409, 'revision_conflict', 'Reload the current enrollment before opening a draft.');
+        const id = browserDraftId(workspace, companyId, actor.userId, expectedRevision);
+        // Issue one recovery key per editable revision. Receipts contain no form fields or encrypted draft.
+        return once(sql, workspace, 'texting-browser-draft/' + id, 'issue', [id], async (): Promise<DraftAccess> =>
+          ({id, key: randomBytes(32).toString('base64')}));
+      });
     }
     if (name === 'sms.onboardingScan') {
       const input = commands[name].schema.parse(raw);
-      return this.scan(actor, input.companyId, input.expectedRevision, input.operationKey, true);
+      return this.scan(workspace, input.companyId, input.expectedRevision, 'manual', actor.userId);
     }
     if (name === 'sms.onboardingSave') {
       const input = commands[name].schema.parse(raw);
       const saved = await this.change(name, input, actor, via) as { revision: number };
-      await this.scan(actor, input.companyId, saved.revision, input.operationKey, false);
+      await this.scan(workspace, input.companyId, saved.revision, 'current', actor.userId);
       return saved;
     }
     if (name === 'sms.onboardingPay' || name === 'sms.onboardingSubmit' || name === 'sms.onboardingFinish') {
       const input = commands[name].schema.parse(raw);
-      await this.scan(actor, input.companyId, input.expectedRevision, input.operationKey, false);
+      await this.scan(workspace, input.companyId, input.expectedRevision, 'current', actor.userId);
     }
     if (name === 'sms.onboardingPay' && this.stripe) {
       const input = commands[name].schema.parse(raw);
@@ -165,7 +196,7 @@ export class TextingOnboarding {
     return this.change(name, raw, actor, via);
   }
 
-  private async change(name: Exclude<TextingOnboardingCommand, 'sms.onboardingStatus' | 'sms.onboardingScan'>, raw: unknown, actor: Actor, via: Interface) {
+  private async change(name: Exclude<TextingOnboardingCommand, 'sms.onboardingStatus' | 'sms.onboardingScan' | 'sms.onboardingDraftAccess'>, raw: unknown, actor: Actor, via: Interface) {
     const workspace = actor.workspaceId;
     const input = commands[name].schema.parse(raw);
     return this.db.tenant(workspace, async sql => {
@@ -184,6 +215,7 @@ export class TextingOnboarding {
         }
         requireCondition(row && state?.owner === actor.userId, 404, 'enrollment_not_found', 'This enrollment is unavailable.');
         requireCondition(state.revision === input.expectedRevision, 409, 'revision_conflict', 'This enrollment changed. Reload it first.');
+        requireCondition(!state.correction, 409, 'enrollment_correction_required', 'Save a corrected enrollment before continuing.');
         if (name === 'sms.onboardingResume') {
           const { reason } = commands[name].schema.parse(raw);
           return restartPracticeProbation(sql, workspace, row.id, row.registration_id, actor.actorId, via, reason, this.now(), 'paused');
@@ -286,28 +318,55 @@ export class TextingOnboarding {
   }
 
   private requireCheck(state: Enrollment, hosted: unknown) {
-    requireCondition(state.pageCheck && !state.pageCheck.issues.length && this.now().getTime() - Date.parse(state.pageCheck.checkedAt) < checkLifetime,
+    requireCondition(!state.pendingScan && state.pageCheck && !state.pageCheck.issues.length && this.now().getTime() - Date.parse(state.pageCheck.checkedAt) < checkLifetime,
       409, 'website_check_required', 'Resolve the website checks and check the pages again before continuing.');
     requireCondition(!state.review && (!hosted || state.hostedApproved), 409, 'onboarding_review', 'Resolve the enrollment review before continuing.');
   }
 
+  // The worker reads a single due revision per pass. A saved lease survives a restart during the fetch.
+  async nextPageCheck(workspace: string): Promise<Date | null> {
+    const due = await this.db.read(workspace, async sql => (await sql.query<{company_id: string; revision: number; due: Date}>(`
+      SELECT b.company_id,(e->>'revision')::int revision,
+        CASE WHEN e ? 'pendingScan' THEN to_timestamp(((e#>>'{pendingScan,at}')::double precision+$1)/1000)
+          ELSE coalesce((e#>>'{pageCheck,retryAt}')::timestamptz,'epoch') END due
+      FROM sms_carrier_brands b JOIN sms_registrations r ON r.carrier_brand_id=b.id
+      CROSS JOIN LATERAL (SELECT b.profile->'onboarding' AS e) enrollment
+      WHERE r.state IN ('draft','rejected') AND e IS NOT NULL AND NOT (e ? 'submittedAt' OR e ? 'correction')
+        AND (e ? 'pendingScan' OR NOT e ? 'pageCheck' OR e#>>'{pageCheck,retryAt}' IS NOT NULL)
+      ORDER BY due,b.company_id LIMIT 1`,[scanLeaseMs])).rows[0]);
+    if (!due || due.due > this.now()) return due?.due ?? null;
+    await this.scan(workspace, due.company_id, due.revision, 'worker');
+    return this.now(); // Look for another company or the next scheduled check.
+  }
+
   // Read public pages after committing the draft. Never hold a database connection while a website responds.
-  private async scan(actor: Actor, companyId: string, revision: number, operationKey: string, force: boolean) {
-    const workspace = actor.workspaceId;
+  private async scan(workspace: string, companyId: string, revision: number,
+    mode: 'current' | 'manual' | 'worker', owner?: string) {
+    const leaseId = randomUUID();
     const claim = await this.db.tenant(workspace, async sql => {
       await lockWorkspace(sql, workspace);
       const row = await this.row(sql, companyId), state = row?.profile.onboarding;
-      requireCondition(row && state?.owner === actor.userId, 404, 'enrollment_not_found', 'This enrollment is unavailable.');
-      if (!force && state.revision !== revision) return null;
+      if (mode === 'worker' && (!row || !state)) return null;
+      requireCondition(row && state && (mode === 'worker' || state.owner === owner), 404, 'enrollment_not_found', 'This enrollment is unavailable.');
+      if (mode !== 'manual' && state.revision !== revision) return null;
       requireCondition(state.revision === revision, 409, 'revision_conflict', 'The enrollment changed. Reload it first.');
-      if (!['draft', 'rejected'].includes(row.state) || state.submittedAt) return null;
+      if (!['draft', 'rejected'].includes(row.state) || state.submittedAt || state.correction) return null;
       const now = this.now().getTime();
-      if (state.pendingScan && now - state.pendingScan.at < 60_000) return null;
+      if (state.pendingScan && now - state.pendingScan.at < scanLeaseMs) return null;
       const signupUrl = await signupPage(sql, companyId, this.origin);
-      if (state.pageCheck?.signupUrl === signupUrl && now - Date.parse(state.pageCheck.checkedAt) < (force ? 5_000 : checkLifetime)) return null;
-      state.pendingScan = { id: operationKey, at: now };
+      const previous = state.pageCheck;
+      if (mode === 'worker' && !state.pendingScan && previous && (!previous.retryAt || Date.parse(previous.retryAt) > now)) return null;
+      if (mode !== 'worker' && previous?.signupUrl === signupUrl && now - Date.parse(previous.checkedAt) < (mode === 'manual' ? 5000 : checkLifetime)) return null;
+      const attempt = mode === 'worker' ? (state.pendingScan?.attempt ?? previous?.attempts ?? 0) + 1 : 1;
+      if (attempt > scanRetryDelays.length + 1) {
+        delete state.pendingScan;
+        state.pageCheck = { checkedAt: this.now().toISOString(), signupUrl, issues: [{page:'website', message:'Website checks were interrupted. Check the pages again.'}] };
+        await this.record(sql,row,state);
+        return null;
+      }
+      state.pendingScan = { id: leaseId, at: now, attempt };
       await this.record(sql, row, state);
-      return { business: readBusiness(row), signupUrl };
+      return { business: readBusiness(row), signupUrl, attempt };
     });
     if (!claim) return { checked: false };
     const { website, privacyPolicyUrl, smsTermsUrl, hostedPages } = claim.business;
@@ -317,14 +376,17 @@ export class TextingOnboarding {
     return this.db.tenant(workspace, async sql => {
       await lockWorkspace(sql, workspace);
       const row = await this.row(sql, companyId), state = row?.profile.onboarding;
-      if (!row || state?.revision !== revision || state.pendingScan?.id !== operationKey) return { checked: false };
+      if (!row || state?.revision !== revision || state.pendingScan?.id !== leaseId) return { checked: false };
       delete state.pendingScan;
       if (claim.signupUrl !== await signupPage(sql, companyId, this.origin)) {
         delete state.pageCheck;
         await this.record(sql, row, state);
         return { checked: false };
       }
-      state.pageCheck = { checkedAt: this.now().toISOString(), signupUrl: claim.signupUrl, issues: result.issues };
+      const delay = scanRetryDelays[claim.attempt - 1];
+      const transient = result.issues.length > 0 && result.issues.every(issue => 'retryable' in issue && issue.retryable);
+      state.pageCheck = { checkedAt: this.now().toISOString(), signupUrl: claim.signupUrl, issues: result.issues,
+        attempts: claim.attempt, ...(transient && delay && { retryAt: new Date(this.now().getTime() + delay).toISOString() }) };
       await this.record(sql, row, state);
       return { checked: true, issues: result.issues };
     });
@@ -345,7 +407,7 @@ export class TextingOnboarding {
       const state = row?.profile.onboarding;
       requireCondition(row && state?.owner === actor.userId, 404, 'enrollment_not_found', 'This enrollment is unavailable.');
       requireCondition(state.revision === revision, 409, 'revision_conflict', 'This enrollment changed. Reload it first.');
-      requireCondition(!state.review && !state.submittedAt && ['draft', 'rejected'].includes(row.state), 409, 'onboarding_review', 'This enrollment is not ready for checkout.');
+      requireCondition(!state.review && !state.correction && !state.submittedAt && ['draft', 'rejected'].includes(row.state), 409, 'onboarding_review', 'This enrollment is not ready for checkout.');
       requireCondition(channelsFor(row.profile.registrationType === 'sole_proprietor').every(channel => state.challenges[channel]?.verified), 409, 'identity_unverified', 'Verify the business email and phone first.');
       this.requireCheck(state, row.profile.hostedPages);
       const setupFee = setupFeeFor(readBusiness(row).plan);
@@ -440,6 +502,7 @@ export class TextingOnboarding {
     } else if (action === 'request_correction') {
       requireCondition(state.review, 409, 'review_unavailable', 'This enrollment does not need identity review.');
       requireCondition(state.payment?.state !== 'paid' || state.review !== 'payer_mismatch', 409, 'checkout_reconciliation_required', 'Review the paid receipt and its evidence before resolving this mismatch.');
+      state.correction = state.review;
       delete state.review;
       delete state.evidence;
       state.challenges = {};
@@ -500,6 +563,7 @@ export class TextingOnboarding {
     if (hostedPolicy) await audit(sql, actor.workspaceId, actor.actorId, via, 'onboarding.policy_published', id, null, hostedPolicy);
     if (!row) await sql.query(`INSERT INTO sms_registrations(workspace_id,id,carrier_brand_id,state) VALUES($1,$2,$3,'draft')`,
       [actor.workspaceId, randomUUID(), id]);
+    await sql.query('SELECT flockletter_customer_jobs.wake($1,clock_timestamp())', [actor.workspaceId]);
     await audit(sql, actor.workspaceId, actor.actorId, via, 'onboarding.saved', id, null, { revision, policyVersion });
     return { revision };
   }

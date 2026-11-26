@@ -51,6 +51,19 @@ export const onboardingBusiness = z.strictObject({
 });
 export type OnboardingBusiness = z.infer<typeof onboardingBusiness>;
 
+// An unfinished form accepts incomplete values. EINs, codes and publication consent are never draft fields.
+export const enrollmentDraftFields = z.strictObject({
+  legalName: z.string().max(120), dbaName: z.string().max(120), registrationType: z.enum(['ein','sole_proprietor']),
+  plan: textPlanId, hostedPages: z.boolean(), publicContact: z.string().max(120), description: z.string().max(300),
+  businessType: z.enum(twilioBusinessTypes), vertical: z.enum(twilioIndustries),
+  website: z.string().max(300), privacyPolicyUrl: z.string().max(300), smsTermsUrl: z.string().max(300),
+  street: z.string().max(120), city: z.string().max(60), region: z.string().max(2), postalCode: z.string().max(5),
+  firstName: z.string().max(60), lastName: z.string().max(60), title: z.string().max(60),
+  email: z.string().max(254), phone: z.string().max(24),
+}).partial();
+export type EnrollmentDraftFields = z.infer<typeof enrollmentDraftFields>;
+export type DraftAccess = { id: string; key: string };
+
 const define = <T extends z.ZodRawShape>(description: string, isMutation: boolean, shape: T) => ({
   description, scope: 'owner' as const, mutation: isMutation, schema: z.strictObject(shape),
 });
@@ -59,6 +72,9 @@ const planAcceptance = { acceptedPlan: textPlanId.optional(), acceptedMonthlyUsd
 
 export const textingOnboardingCommands = {
   'sms.onboardingStatus': define('Read the current owner’s carrier enrollment and required next actions.', false, { companyId }),
+  'sms.onboardingDraftAccess': define('Open private browser draft storage for this owner, company and enrollment revision.', true, {
+    ...mutation, expectedRevision: revision.nullable(),
+  }),
   'sms.onboardingSave': define('Save the accepted practice registration details and SMS policy revision.', true, {
     ...mutation, expectedRevision: revision.nullable(), business: onboardingBusiness, accepted: z.literal(true),
   }),
@@ -82,6 +98,8 @@ export type OnboardingView = {
   blocked: boolean;
   revision: number | null;
   business: OnboardingBusiness | null;
+  draftId: string | null;
+  signupReady: boolean | null;
   verified: Record<'email' | 'phone', boolean>;
   checkout: 'unpaid' | 'declined' | 'pending' | 'paid';
   checkoutMode: 'capture' | 'stripe_test';
@@ -91,7 +109,7 @@ export type OnboardingView = {
   samples: string[];
   requiredChannels: VerificationChannel[];
   carrierVerified: boolean;
-  pageCheck: { checkedAt: string; signupUrl?: string | null; issues: { page: string; message: string }[] } | null;
+  pageCheck: { retryAt?: string; attempts?: number; checkedAt: string; signupUrl?: string | null; issues: { page: string; message: string }[] } | null;
   review: string | null;
   evidence: { document: 'CP575' | '147C'; attachedAt: string; fingerprint?: string; source?: 'template' | 'upload' } | null;
   evidenceFiles?: Partial<Record<'CP575' | '147C', string>>;
