@@ -354,7 +354,7 @@ export class TextingOnboarding {
           return { verified: attempt.verified };
         }
         requireCondition(channelsFor(row.profile.registrationType === 'sole_proprietor').every(channel => state.challenges[channel]?.verified), 409, 'identity_unverified', 'Verify the business email and phone first.');
-        this.requireCheck(state, row.profile.hostedPages);
+        this.requireCheck(state, row.profile);
         const business = readBusiness(row);
         const setupFee = setupFeeFor(business.plan);
         const finish = name === 'sms.onboardingFinish';
@@ -421,10 +421,18 @@ export class TextingOnboarding {
     });
   }
 
-  private requireCheck(state: Enrollment, hosted: unknown) {
+  private requireBusinessWebsite(website: string, hosted: unknown) {
+    if (hosted) return;
+    const host = (url: string) => new URL(url).hostname.toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
+    requireCondition(host(website) !== host(this.origin), 422, 'business_website_required',
+      'Use your own business website or choose to publish practice business and policy pages.');
+  }
+
+  private requireCheck(state: Enrollment, profile: Row['profile']) {
+    this.requireBusinessWebsite(String(profile.website), profile.hostedPages);
     requireCondition(!state.pendingScan && state.pageCheck && !state.pageCheck.issues.length && this.now().getTime() - Date.parse(state.pageCheck.checkedAt) < checkLifetime,
       409, 'website_check_required', 'Resolve the website checks and check the pages again before continuing.');
-    requireCondition(!state.review && (!hosted || state.hostedApproved || state.challenges.carrier?.verified), 409, 'onboarding_review', 'Resolve the enrollment review before continuing.');
+    requireCondition(!state.review && (!profile.hostedPages || state.hostedApproved || state.challenges.carrier?.verified), 409, 'onboarding_review', 'Resolve the enrollment review before continuing.');
   }
 
   // The worker reads a single due revision per pass. A saved lease survives a restart during the fetch.
@@ -514,7 +522,7 @@ export class TextingOnboarding {
       requireCondition(state.revision === revision, 409, 'revision_conflict', 'This enrollment changed. Reload it first.');
       requireCondition(!state.review && !state.correction && !state.submittedAt && ['draft', 'rejected'].includes(row.state), 409, 'onboarding_review', 'This enrollment is not ready for checkout.');
       requireCondition(channelsFor(row.profile.registrationType === 'sole_proprietor').every(channel => state.challenges[channel]?.verified), 409, 'identity_unverified', 'Verify the business email and phone first.');
-      this.requireCheck(state, row.profile.hostedPages);
+      this.requireCheck(state, row.profile);
       const setupFee = setupFeeFor(readBusiness(row).plan);
       await this.requireSignup(sql, companyId, state);
       requireCondition(!state.payment || state.payment.source === 'stripe_test', 409, 'checkout_mode_mismatch', 'Use the payment mode that started this checkout.');
@@ -809,6 +817,7 @@ export class TextingOnboarding {
       requireCondition(signup, 409, 'signup_page_missing', 'Enable the company’s hosted signup page and its mobile field before publishing practice pages.');
       business = { ...business, ...hostedBusinessUrls(signup) };
     }
+    this.requireBusinessWebsite(business.website, business.hostedPages);
     const domain = hostname(business.website);
     requireCondition(business.hostedPages || (domain === business.email.split('@')[1]?.toLowerCase() && !publicMailHosts.has(domain)),
       422, 'business_domain_mismatch', 'Use a business email address on the website domain.');

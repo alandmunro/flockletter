@@ -358,6 +358,8 @@ it('completes an authorized setup once and requires a separate carrier verificat
 });
 
 it('keeps domainless practice ownership in review until a bound synthetic letter is accepted',async()=>{
+  await expect(mutation(hosted,'sms.onboardingSave',{expectedRevision:null,accepted:true,nameConfirmed:true,
+    business:{...business,website:'https://127.0.0.1/business/garden'}})).rejects.toMatchObject({code:'business_website_required'});
   await mutation(hosted,'sms.onboardingSave',{expectedRevision:null,accepted: true, nameConfirmed: true,business:{...business,ein:'00-9400041',
     hostedPages:true,description:'Fictional gardening updates.',publicContact:'help@example.test',website:'',smsTermsUrl:'',privacyPolicyUrl:''}});
   expect(await status(hosted)).toMatchObject({state:'review',review:'hosted_ownership',pageCheck:{issues:[]}});
