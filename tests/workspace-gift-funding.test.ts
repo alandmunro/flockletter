@@ -504,6 +504,31 @@ describe("sandbox gift funding", () => {
     } finally {await admin.query('DELETE FROM flockletter_retention_control.restore_quarantines WHERE workspace_id=$1',[orgs[0]]);}
   });
 
+  it('refuses an automatic draw above the cap and settles one draw at the exact cap', async () => {
+    const automatic = configured({
+      FLOCKLETTER_GIFT_FUNDING_MODE: "sandbox_automatic",
+      FLOCKLETTER_GIFT_TOPUP_LIMIT_CENTS: "1000",
+    })!;
+    vendor.pending = 0;
+    vendor.available = 199;
+    expect((await automatic.replenish()).coverage).toMatchObject({ shortfall: 1001 });
+    expect(vendor.attempts).toBe(0);
+
+    vendor.available = 200;
+    await automatic.replenish();
+    expect(vendor.topups).toHaveLength(1);
+    const transfer = vendor.topups[0]!;
+    expect(transfer.amount).toBe(10);
+    transfer.status = "fully_credited";
+    vendor.available = 1200;
+    expect(await automatic.replenish()).toMatchObject({
+      coverage: { shortfall: 0 },
+      topup: { state: "fully_credited" },
+    });
+    await automatic.replenish();
+    expect(vendor.attempts).toBe(1);
+  });
+
   it('keeps a single automatic draw through concurrent ticks, uncertain settlement and reversal',async()=>{
     const automatic=GiftFunding.configured(platform,{...env,FLOCKLETTER_GIFT_FUNDING_MODE:'sandbox_automatic',
       FLOCKLETTER_GIFT_TOPUP_LIMIT_CENTS:'1500'},vendor.fetch)!;
