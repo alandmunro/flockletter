@@ -15,6 +15,7 @@ import { CommandService, type Actor } from '../src/server/service.js';
 import type { CampaignInput } from '../src/server/texting/twilio.js';
 import { Texting } from '../src/server/texting/service.js';
 import { enrollmentPageReader } from '../src/server/texting/public-page-reader.js';
+import { lockWorkspace } from '../src/server/workspace-lock.js';
 import { hostedBusinessUrls, policyPreview } from '../src/shared/texting-policy-pages.js';
 import type { Workspace } from '../src/shared/contracts.js';
 
@@ -278,6 +279,8 @@ try {
       recipient.getByRole('button', { name: 'Subscribe' }).click()]);
     assert.ok(accepted.ok(), 'The public signup must accept the checked consent.');
     await db.tenant(actor.workspaceId, async sql => {
+      // Match the inbound webhook's lock order while the delivery worker is still running.
+      await lockWorkspace(sql, actor.workspaceId);
       const id = (await sql.query<{ id: string }>("SELECT id FROM sms_numbers WHERE state='active'")).rows[0]!.id;
       await texting.messaging.inbound(sql, actor.workspaceId, id, { From: phone, Body: 'HELP', MessageSid: 'SM-HELP-' + randomUUID() }, { help_words: ['HELP'] });
       const messages = await sql.query<{ purpose: string; rendered_body: string }>("SELECT purpose,rendered_body FROM sms_messages WHERE to_e164=$1 ORDER BY purpose", [phone]);
