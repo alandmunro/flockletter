@@ -41,6 +41,47 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
     'Authorized contact first name': 'Robin', 'Authorized contact last name': 'Sample', 'Job title': 'Owner',
     'Business email': 'owner@orchard.example.test', 'Business phone in +1 format': '+13035550126',
   };
+  const picker = panel.getByRole('combobox',{name:/^Company to register/});
+  const company = await picker.inputValue();
+  const drafts = () => page.evaluate(() => Object.entries(localStorage).filter(([key]) => key.startsWith('flockletter.texting.draft.')));
+  await field('Legal business name').fill('Private unfinished orchard');
+  await field('Employer identification number').fill(values['Employer identification number']);
+  await button('Save unfinished draft').click();
+  await panel.getByText('Private draft saved.').waitFor();
+  const entries = await drafts();
+  assert.equal(entries.length, 1);
+  assert.doesNotMatch(JSON.stringify(entries), /Private unfinished orchard|00-0010328/);
+  assert.deepEqual(Object.keys(JSON.parse(entries[0]![1])).sort(), ['ciphertext','iv','version']);
+  await picker.selectOption({ label: 'Second practice company' });
+  await panel.getByRole('heading',{name:'Prepare the signup form'}).waitFor();
+  assert.equal(await field('Legal business name').inputValue(), '');
+  await picker.selectOption(company);
+  await panel.getByText('Private draft saved.').waitFor();
+  await page.reload();
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Texting', exact: true }).click();
+  await panel.getByText('Private draft saved.').waitFor();
+  assert.equal(await field('Legal business name').inputValue(), 'Private unfinished orchard');
+  assert.equal(await field('Employer identification number').inputValue(), '');
+  assert.equal(await panel.getByRole('checkbox',{name:/I am authorized/}).isChecked(),false);
+  if (!hosted) {
+    const otherTab = await page.context().newPage();
+    await otherTab.goto(origin);
+    await otherTab.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Texting',exact:true}).click();
+    await otherTab.getByText('Private draft saved.').waitFor();
+    await otherTab.getByLabel('Legal business name',{exact:true}).fill('Newer orchard draft');
+    await otherTab.getByRole('button',{name:'Save unfinished draft'}).click();
+    await otherTab.getByText('Private draft saved.').waitFor();
+    await button('Discard saved draft').click();
+    await panel.getByRole('alert').filter({hasText:'Another tab changed this draft'}).waitFor();
+    await otherTab.close();
+    await page.reload();
+    await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Texting',exact:true}).click();
+    await panel.getByText('Private draft saved.').waitFor();
+    assert.equal(await field('Legal business name').inputValue(),'Newer orchard draft');
+  }
+  await button('Discard saved draft').click();
+  await panel.getByText('Private draft saved.').waitFor({state:'hidden'});
+  assert.equal((await drafts()).length, 0);
   if (hosted) {
     await panel.getByRole('checkbox', { name: 'Publish practice business and policy pages' }).check();
     await field('Public support email').fill('support@orchard.example.test');
@@ -50,6 +91,8 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
     if (hosted && ['Business website','Privacy policy URL','SMS terms URL'].includes(name)) continue;
     await field(name).fill(value);
   }
+  await button('Save unfinished draft').click();
+  await panel.getByText('Private draft saved.').waitFor();
   await panel.getByRole('checkbox', { name: hosted ? /I authorize publishing/ : /I am authorized/ }).check();
   await button('Save business details').click();
   if (!hosted) {
@@ -61,6 +104,7 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
     await button('Save business details').click();
   }
   await panel.getByText('All four pages passed the automated checks.').waitFor();
+  assert.equal((await drafts()).length,0, 'Completing the form clears the local draft.');
   if (hosted) {
     const [publication] = await Promise.all([page.waitForEvent('popup'), panel.getByRole('link', { name: 'View published business and policy pages' }).click()]);
     await publication.getByRole('heading', { name: values['Legal business name'] }).waitFor();
@@ -144,6 +188,9 @@ try {
   Object.assign(workflows.audience.options, { texting });
   const service = new CommandService(db, undefined, identity.isOwner, undefined, undefined, identity.team, undefined, undefined, undefined, 'local', undefined, workflows);
   await service.execute('workspace.initialize', { name: 'Orchard Practice', brandName: 'Orchard', operationKey: randomUUID() }, actor);
+  // Seed a sibling in this disposable database to verify draft isolation without a plan purchase.
+  await db.tenant(actor.workspaceId,sql=>sql.query('INSERT INTO companies(workspace_id,id,name) VALUES($1,$2,$3)',
+    [actor.workspaceId,randomUUID(),'Second practice company']));
   const workspace = await service.execute('workspace.get', {}, actor) as Workspace;
   for (const [key, value] of Object.entries({ carrier_daily_limit: 10, monthly_segment_allowance: 300,
     probation_canary_count: 1, probation_canary_minutes: 1, probation_min_days: 2, probation_delivered_min: 2,
@@ -163,12 +210,13 @@ try {
   server.on('request', createApp(config, service, new Authenticator(db, identity, workflows.billing.options)));
   worker = workflows.run(stop.signal);
   browser = await chromium.launch({ channel: process.env.FLOCKLETTER_BROWSER_CHANNEL ?? 'chrome' });
-  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+  const browserContext = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+  const page = await browserContext.newPage();
   page.setDefaultTimeout(12_000);
   const errors: string[] = [];
   page.on('pageerror', err => errors.push(err.message));
   const reviewEvidence = async () => {
-    const companyId = await db.read(actor.workspaceId, async sql => (await sql.query<{ id: string }>('SELECT id FROM companies')).rows[0]!.id);
+    const companyId = await db.read(actor.workspaceId, async sql => (await sql.query<{ id: string }>('SELECT company_id AS id FROM company_brands WHERE brand_id=$1',[brandId])).rows[0]!.id);
     await texting.operator('platform.textingOnboardingReview', { operationKey: randomUUID(), workspaceId: actor.workspaceId,
       companyId, expectedRevision: 1, action: 'accept_evidence', reason: 'Reviewed fictional ownership letter in isolated practice.' },
     { userId: 'fixture-reviewer', via: 'operator_api' });
@@ -179,7 +227,7 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(hosted ? 'Verified actual hosted business, privacy, terms and opt-in pages, local rejection of two invalid files, downloaded letter attachment, fictional ownership review, one-step setup and submission, number activation and owner notices.'
-    : 'Verified a blocked policy check, corrected enrollment, captured verification, one-step setup and submission, worker number activation, and owner notices.');
+    : 'Verified private draft recovery across reload, company isolation, stale-tab refusal, corrected policy, captured verification, number activation and owner notices.');
 } finally {
   stop.abort();
   await worker;

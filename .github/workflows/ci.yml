@@ -43,6 +43,8 @@ jobs:
       - run: npx playwright-core install --with-deps chromium webkit
       - run: node --import tsx scripts/prove-gifting.ts
       - run: node --import tsx scripts/prove-workspace-gifts.ts
+      - run: node --import tsx scripts/prove-texting-onboarding.ts
+      - run: node --import tsx scripts/prove-texting-onboarding.ts --hosted-pages
       - run: node --import tsx scripts/prove-cookie-consent.ts
       - run: npm run audience:verify
       - run: node --import tsx scripts/prove-customer-workflows.ts
