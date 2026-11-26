@@ -1,4 +1,5 @@
 (() => {
+  window.addEventListener('hashchange', () => window.location.reload());
   const fragment = new URLSearchParams(location.hash.slice(1));
   const body = JSON.stringify({
     workspace: fragment.get('workspace'),
