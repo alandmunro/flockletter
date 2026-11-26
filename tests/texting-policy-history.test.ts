@@ -101,7 +101,7 @@ it('discards a late website check after the owner edits the enrollment or disabl
   const settings = { brandId: brand, purpose: 'news', policyVersion: 'v1', consentText: 'Send me news. I can unsubscribe at any time.', sourceDomain: 'cedar.example.test' };
   const config = (enabled: boolean) => access.execute('audienceOnboarding.configure', { ...settings, enabled, operationKey: randomUUID() }, actor);
   const save = (expectedRevision: number | null, privacyPolicyUrl: string) => texting.execute('sms.onboardingSave',
-    { companyId: company, operationKey: randomUUID(), business: { ...business, privacyPolicyUrl }, expectedRevision, accepted: true }, actor, 'ui');
+    { companyId: company, operationKey: randomUUID(), business: { ...business, privacyPolicyUrl }, expectedRevision, accepted: true, nameConfirmed: true }, actor, 'ui');
   const check = () => texting.execute('sms.onboardingScan', { companyId: company, operationKey: randomUUID(), expectedRevision: 2 }, actor, 'ui');
   const status = () => texting.execute('sms.onboardingStatus', { companyId: company }, actor, 'ui') as Promise<OnboardingView>;
   await texting.execute('sms.configure', { operationKey: randomUUID(), expectedRevision: 1, phoneField: true }, actor, 'ui');

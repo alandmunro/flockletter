@@ -4,7 +4,7 @@ import type { Database, Sql } from '../db.js';
 import { requireCondition } from '../errors.js';
 import type { Actor } from '../service.js';
 import { lockWorkspace } from '../workspace-lock.js';
-import { audit, once, requestHash, type Interface } from './storage.js';
+import { audit, once, requestHash, type Interface, type SettingValues } from './storage.js';
 import { reviewPracticeUpgrade } from './standard-upgrade.js';
 
 // The staging agreement and its changes share the tenant's append-only SMS audit history. It is
@@ -61,13 +61,39 @@ function hold(state: Agreement): string | null {
   if (state.capUsdCents !== null && state.fees + state.setup >= state.capUsdCents) return 'texting_spend_cap';
   return null;
 }
-export async function practicePlanLimits(sql: Sql, workspace: string, now: Date, operatorAllowance: number | undefined, messageCreatedAt?: Date) {
+// Daily usage is workspace-wide. With multiple active senders, use the lowest approved
+// tier limit. An unrecognized or manually managed sender still needs an operator cap.
+async function practiceDailyLimit(sql: Sql, workspace: string, state: Agreement, settings: SettingValues) {
+  const operatorCap = settings.carrier_daily_limit;
+  if (!state.active || state.cancelled || (settings.mock_sole_proprietor_daily_limit === undefined &&
+      settings.mock_low_volume_daily_limit === undefined && settings.mock_standard_daily_limit === undefined)) return operatorCap;
+  const { rows } = await sql.query<{ company_id: string; tier: string | null }>(`SELECT b.company_id,
+    CASE WHEN b.profile ? 'onboarding' THEN s.facts->>'tier' END tier
+    FROM sms_registrations r JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id
+    LEFT JOIN sms_registration_steps s ON s.registration_id=r.id AND s.revision=r.revision AND s.step='brand' AND s.state='done'
+    WHERE r.workspace_id=$1 AND r.state='approved' AND EXISTS
+      (SELECT 1 FROM sms_numbers n WHERE n.carrier_brand_id=b.id AND n.state='active')`, [workspace]);
+  let daily = operatorCap;
+  let incomplete = false;
+  for (const row of rows) {
+    const tier = row.company_id === state.companyId && state.standard && row.tier === 'low_volume' ? 'standard' : row.tier;
+    const tierCap = tier === 'standard' ? settings.mock_standard_daily_limit :
+      tier === 'sole_proprietor' ? settings.mock_sole_proprietor_daily_limit :
+      tier === 'low_volume' ? settings.mock_low_volume_daily_limit : undefined;
+    if (tierCap === undefined) incomplete = true;
+    else daily = Math.min(daily ?? tierCap, tierCap);
+  }
+  return incomplete && operatorCap === undefined ? undefined : daily;
+}
+
+export async function practicePlanLimits(sql: Sql, workspace: string, now: Date, settings: SettingValues, messageCreatedAt?: Date) {
   const original = await agreement(sql, workspace);
-  if (!original) return { allowance: operatorAllowance, hold: null };
+  if (!original) return { allowance: settings.monthly_segment_allowance, daily: settings.carrier_daily_limit, hold: null };
   const state = advancePeriod(original, now);
   const segments = state.active && !state.cancelled ? practiceTextPlans[state.active].segments : 0;
   const cancelledWork = messageCreatedAt && state.cancelledAt && +messageCreatedAt <= Date.parse(state.cancelledAt);
-  return { allowance: operatorAllowance === undefined ? undefined : Math.min(operatorAllowance, segments), hold: cancelledWork ? 'texting_plan_cancelled' : hold(state) };
+  return { allowance: Math.min(settings.monthly_segment_allowance ?? segments, segments),
+    daily: await practiceDailyLimit(sql, workspace, state, settings), hold: cancelledWork ? 'texting_plan_cancelled' : hold(state) };
 }
 async function view(sql: Sql, workspace: string, state: Agreement, now: Date): Promise<PracticePlanStatus> {
   const current = advancePeriod(state, now);

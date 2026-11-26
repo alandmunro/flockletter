@@ -62,6 +62,11 @@ it('captures setup once and enforces a workspace agreement across approval, upgr
   await billing.tick(a.workspaceId);
   expect((await status(a)).state).toBe('pending_registration');
   await approve(a, 'low_volume'); await billing.tick(a.workspaceId);
+  const tierSettings = {mock_low_volume_daily_limit: 8, mock_standard_daily_limit: 19, mock_sole_proprietor_daily_limit: 3};
+  const limitsFor = (overrides = {}) => db.read(a.workspaceId, sql => practicePlanLimits(sql, a.workspaceId, now, {...tierSettings, ...overrides}));
+  expect(await limitsFor()).toEqual({allowance:300, daily:8, hold:null});
+  expect(await limitsFor({monthly_segment_allowance:0, carrier_daily_limit:2})).toEqual({allowance:0, daily:2, hold:null});
+  expect(await db.read(b.workspaceId, sql => practicePlanLimits(sql, b.workspaceId, now, tierSettings))).toEqual({allowance:undefined, daily:undefined, hold:null});
   const active = await status(a);
   expect(active).toMatchObject({ active: 'text_300', monthlyFeeUsdCents: 1900, setupFeeUsdCents: 4900, allowance: 300 });
   const change = { operationKey: randomUUID(), expectedRevision: active.revision, plan: 'text_1000', acceptedMonthlyUsdCents: 3900 };
@@ -72,8 +77,8 @@ it('captures setup once and enforces a workspace agreement across approval, upgr
   expect(await status(a)).toMatchObject({used:999,reserved:1});
   const capRequest = { operationKey: randomUUID(), expectedRevision: (await status(a)).revision, capUsdCents: (await status(a)).spendUsdCents };
   await billing.execute('sms.planCap', capRequest, a, 'ui');
-  const limits = () => db.read(a.workspaceId, sql => practicePlanLimits(sql, a.workspaceId, now, 800));
-  expect(await limits()).toEqual({ allowance: 800, hold: 'texting_spend_cap' });
+  const limits = () => db.read(a.workspaceId, sql => practicePlanLimits(sql, a.workspaceId, now, {monthly_segment_allowance:800}));
+  expect(await limits()).toMatchObject({ allowance: 800, hold: 'texting_spend_cap' });
   const heldId = await db.tenant(a.workspaceId, sql => queueText(sql, a.workspaceId, { companyId: ids.get(a.workspaceId)!.company,
     contactId: null, purpose: 'verification', to: '+12125550167', body: 'Practice verification', dueAt: now }));
   await texting.messaging.tick(a.workspaceId);
@@ -85,6 +90,7 @@ it('captures setup once and enforces a workspace agreement across approval, upgr
   expect(await status(a)).toMatchObject({active:'text_1000', upgradeFailure:null, change:'standard_review', allowance:1000});
   for (let i = 0; i < 5; i++) { now = new Date(+now + 5000); await billing.tick(a.workspaceId); }
   expect(await status(a)).toMatchObject({active:'text_2500', change:null, allowance:2500});
+  expect(await limitsFor()).toMatchObject({allowance:2500, daily:19});
   await billing.execute('sms.planChange',{ operationKey:randomUUID(), expectedRevision:(await status(a)).revision, plan:'text_300', acceptedMonthlyUsdCents:1900 },a,'ui');
   expect(await status(a)).toMatchObject({active:'text_2500', change:'renewal'});
   now = new Date('2026-12-01T00:00:00Z'); await billing.tick(a.workspaceId);
@@ -96,7 +102,7 @@ it('captures setup once and enforces a workspace agreement across approval, upgr
   const restore = () => status(a).then(s => texting.execute('sms.planReactivate', {operationKey: randomUUID(), expectedRevision:s.revision,acceptedMonthlyUsdCents:1900},a,'api'));
   expect(await restore()).toMatchObject({state:'active',monthlyFeeUsdCents:1900,setupFeeUsdCents:0});
   expect((await heldMessage()).state).toBe('cancelled');
-  expect(await db.read(a.workspaceId, sql => practicePlanLimits(sql, a.workspaceId, now, 800, new Date('2026-11-30T22:00:00Z')))).toMatchObject({hold:'texting_plan_cancelled'});
+  expect(await db.read(a.workspaceId, sql => practicePlanLimits(sql, a.workspaceId, now, {monthly_segment_allowance:800}, new Date('2026-11-30T22:00:00Z')))).toMatchObject({hold:'texting_plan_cancelled'});
   await billing.execute('sms.planCancel', {operationKey: randomUUID(), expectedRevision:(await status(a)).revision, confirm:true},a,'ui');
   now = new Date('2027-01-01T00:00:00Z');
   await expect(restore()).rejects.toMatchObject({code:'reactivation_unavailable'});

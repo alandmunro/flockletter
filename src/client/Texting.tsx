@@ -25,7 +25,7 @@ const gapText: Record<string, string> = {
   probation_template_required: 'During probation, use one of your approved campaign message examples.',
 };
 
-export function Texting({ api, manage = true, onOpenAudience }: { api: Api; manage?: boolean; onOpenAudience?: () => void }) {
+export function Texting({ api, manage = true, onOpenAudience }: { api: Api; manage?: boolean; onOpenAudience?: (brand?: string) => void }) {
   const [status, setStatus] = useState<Status | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState('');
   const latestRequest = useRef(0);
@@ -71,7 +71,7 @@ export function Texting({ api, manage = true, onOpenAudience }: { api: Api; mana
     {manage && status.onboardingAvailable && <TextingOnboarding onOpenAudience={onOpenAudience} api={api} companies={status.companies} refreshCompanies={load} />}
     {manage && status.practicePlan && <TextingPracticePlan key={status.practicePlan.revision} api={api} busy={busy} act={act} plan={status.practicePlan} />}
     {status.onboardingAvailable && status.companies.length > 0 && <TextingReport key={status.companies.map(company => company.id).join(',')} api={api} companies={status.companies} manage={manage} />}
-    {manage && <Profile api={api} status={status} busy={busy} act={act} />}
+    {manage && <Profile key={status.profile?.revision ?? 1} api={api} status={status} busy={busy} act={act} />}
     {status.companies.length > 0
       ? <Composer api={api} companies={status.companies} busy={busy} act={act} />
       : <p className="notice">You need access to all brands in a company to text its audience.</p>}

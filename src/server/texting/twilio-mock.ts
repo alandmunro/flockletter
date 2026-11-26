@@ -10,7 +10,7 @@ import { mockFaults, type MockFault } from '../../shared/texting-mock.js';
 export { mockFaults, type MockFault };
 export type MockCallback = { id: string; url: string; params: Record<string, string>; accountSid: string; body?: string };
 type FaultTarget = `${'send' | ProvisionKind}/${string}`;
-type Resource = ProvisionFacts & { kind: ProvisionKind; op: string; brandSid?: string };
+type Resource = ProvisionFacts & { kind: ProvisionKind; op: string; brandSid?: string; reason?: string };
 type NumberRoute = { accountSid: string; serviceSid: string; numberSid: string };
 type CapturedAccountList = {
   accounts: { sid: string; owner_account_sid: string; friendly_name: string; status: string; auth_token: string }[];
@@ -30,7 +30,7 @@ export class TwilioMockState {
   async workspace(account: string): Promise<string | null> {
     return (await (this.connection ?? this.db.pool).query('SELECT flockletter_customer_jobs.texting_route_account($1) workspace', [account])).rows[0]?.workspace ?? null;
   }
-  async list<T>(prefix: string): Promise<{ key: string; value: T }[]> { return (await (this.connection ?? this.db.pool).query('SELECT * FROM flockletter_customer_jobs.texting_mock_list($1)', [prefix])).rows; }
+  async list<T>(prefix: string, sql: Sql = this.connection ?? this.db.pool): Promise<{ key: string; value: T }[]> { return (await sql.query('SELECT * FROM flockletter_customer_jobs.texting_mock_list($1)', [prefix])).rows; }
   private async faultQueue(sql: Sql, key: string): Promise<MockFault[]> {
     await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [key]);
     return (await sql.query('SELECT flockletter_customer_jobs.texting_mock_get($1) faults', [key])).rows[0]?.faults ?? [];
@@ -213,8 +213,9 @@ export class TwilioMockPlatform implements TwilioPlatformPort {
       await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[key]);
       const existing = await this.state.get<Resource>(key,sql);
       if (existing) return { outcome:'accepted',value:existing };
-      const current = { ...previous.value, op, status: 'IN_PROGRESS', wordingDigest: bodyDigest(JSON.stringify(input)) };
+      const current = { ...previous.value, op, status: 'IN_PROGRESS', reason:undefined, wordingDigest: bodyDigest(JSON.stringify(input)) };
       await this.state.put(key, current, sql);
+      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['decision/' + account.accountSid + '/' + campaignSid]);
       await this.state.put('current-campaign/' + account.accountSid + '/' + campaignSid, key, sql);
       return fault === 'commit_then_unknown' ? { outcome: 'unknown', reason: 'timeout' } : { outcome: 'accepted', value: current };
     });
@@ -250,7 +251,7 @@ export class TwilioMockPlatform implements TwilioPlatformPort {
       return fault === 'commit_then_unknown' ? { outcome: 'unknown', reason: 'timeout' } : { outcome: 'accepted', value: resource };
     });
   }
-  async attachNumber(account: AccountCredentials, serviceSid: string, numberSid: string): Promise<Result<true>> {
+  async attachNumber(account: AccountCredentials, serviceSid: string, numberSid: string, mockNotice?: 'omit'): Promise<Result<true>> {
     return this.state.transaction(async sql => {
       const key = `attachment/${account.accountSid}/${numberSid}`;
       await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [key]);
@@ -265,10 +266,16 @@ export class TwilioMockPlatform implements TwilioPlatformPort {
       }]);
       const url = new URL('/api/v1/texting/twilio/carrier-events', service.registration);
       url.searchParams.set('bodySHA256', bodyDigest(body));
-      await this.state.enqueue({ url: url.href, params: {}, accountSid: account.accountSid, body }, sql);
+      if (mockNotice !== 'omit') await this.state.enqueue({ url: url.href, params: {}, accountSid: account.accountSid, body }, sql);
+      await this.state.put(`number-receipt/${account.accountSid}/${serviceSid}/${numberSid}`, {
+        url: url.href, body, signature: twilioSignature(url.href, {}, account.authToken),
+      }, sql);
       await this.state.put(key, serviceSid, sql);
       return { outcome: 'accepted', value: true };
     });
+  }
+  capturedNumberReceipt(account: AccountCredentials, serviceSid: string, numberSid: string) {
+    return this.state.get<{ url: string; body: string; signature: string }>(`number-receipt/${account.accountSid}/${serviceSid}/${numberSid}`);
   }
   async find(kind: ProvisionKind, account: AccountCredentials | null, op: string, _parentSid?: string, workspace?: string): Promise<Result<ProvisionFacts & { account?: AccountCredentials }>> {
     if (kind === 'subaccount') {
@@ -285,22 +292,29 @@ export class TwilioMockPlatform implements TwilioPlatformPort {
     const current = kind === 'campaign' ? await this.state.get<string>('current-campaign/' + account.accountSid + '/' + sid) : null;
     if (current) {
       const resource = await this.state.get<Resource>(current);
-      if (resource) return { outcome: 'accepted' as const, value: { status: resource.status ?? 'IN_PROGRESS' } };
+      if (resource) return { outcome: 'accepted' as const, value: { status: resource.status ?? 'IN_PROGRESS', reason:resource.reason } };
     }
     for (const row of await this.state.list<Resource>(`resource/${account.accountSid}/${kind}/`))
-      if (row.value.sid === sid) return { outcome: 'accepted' as const, value: { status: row.value.status ?? 'PENDING' } };
+      if (row.value.sid === sid) return { outcome: 'accepted' as const, value: { status: row.value.status ?? 'PENDING', reason:row.value.reason } };
     return { outcome: 'unknown' as const };
   }
   /** Staging console and tests: a carrier decision, delivered by signed callback. */
-  async decide(kind: 'brand' | 'campaign', account: AccountCredentials, sid: string, status: 'APPROVED' | 'VERIFIED' | 'FAILED' | 'SUSPENDED', callbackUrl: string) {
-    const current = kind === 'campaign' ? await this.state.get<string>('current-campaign/' + account.accountSid + '/' + sid) : null;
-    for (const row of await this.state.list<Resource>(`resource/${account.accountSid}/${kind}/`)) if (row.value.sid === sid && (!current || current === row.key)) {
-      await this.state.put(row.key, { ...row.value, status });
-      await this.state.enqueue({ url: callbackUrl, accountSid: account.accountSid, params: { AccountSid: account.accountSid, ResourceType: kind, ResourceSid: sid, Status: status,
-        ...(current && { MockCorrection: row.value.op }) } });
+  async decide(kind: 'brand' | 'campaign', account: AccountCredentials, sid: string, status: 'APPROVED' | 'VERIFIED' | 'FAILED' | 'SUSPENDED', callbackUrl: string,
+    options: { onlyWhilePending?: boolean; errorCode?: string } = {}) {
+    return this.state.transaction(async sql => {
+      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['decision/' + account.accountSid + '/' + sid]);
+      const current = kind === 'campaign' ? await this.state.get<string>('current-campaign/' + account.accountSid + '/' + sid,sql) : null;
+      const resources = await this.state.list<Resource>(`resource/${account.accountSid}/${kind}/`,sql);
+      const row = resources.find(item => item.value.sid === sid && (!current || current === item.key));
+      if (!row || (options.onlyWhilePending && !['PENDING','IN_PROGRESS'].includes(row.value.status ?? 'PENDING'))) return false;
+      const reason = status === 'FAILED' ? options.errorCode : undefined;
+      await this.state.put(row.key, { ...row.value, status, reason },sql);
+      await this.state.enqueue({ url: callbackUrl, accountSid: account.accountSid, params: {
+        AccountSid: account.accountSid, ResourceType: kind, ResourceSid: sid, Status: status,
+        ...(reason && {ErrorCode:reason}), ...(current && { MockCorrection: row.value.op }),
+      } },sql);
       return true;
-    }
-    return false;
+    });
   }
   creates(accountSid: string, kind: ProvisionKind, op: string) { return this.state.get<number>('creates/' + (kind === 'subaccount' ? 'subaccount/' + op : this.key(accountSid, kind, op))); }
 }

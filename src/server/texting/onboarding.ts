@@ -1,3 +1,4 @@
+import { enrollmentCampaign, reviewEnrollmentCampaign, type EnrollmentCampaign, type ReviewedCampaign } from './enrollment-campaign.js';
 import {recordWorkspacePayment} from '../workspace-gifts/eligibility-receipt.js';
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import type { DraftAccess, OnboardingBusiness, OnboardingView, TextingOnboardingCommand, VerificationChannel } from '../../shared/texting-onboarding.js';
@@ -7,24 +8,26 @@ import type { Database, Sql } from '../db.js';
 import { requireCondition } from '../errors.js';
 import type { Actor } from '../service.js';
 import { lockWorkspace } from '../workspace-lock.js';
-import { signupPage, type TextingRegistration } from './registration.js';
+import { companySignupSetup, signupPage, type TextingRegistration } from './registration.js';
 import { practiceTextPlans, setupFeeFor } from '../../shared/texting-commercial.js';
 import { acceptEnrollmentPlan } from './commercial.js';
 import { hostedBusinessUrls, makeHostedPolicySnapshot } from '../../shared/texting-policy-pages.js';
 import { scanEnrollmentPages } from './website-preflight.js';
 import type { SetupReceipt, StripeTestSetupPayment } from './setup-payment.js';
+import { rejectionMessage } from './registration-errors.js';
 import { PracticeEvidence, practiceLetter, saveEvidenceCase, type EvidenceCase, type EvidenceActor } from './practice-evidence.js';
 import { textingPlatformCommands } from '../../shared/texting-platform.js';
 import type { z } from 'zod';
 import { enrollmentNotices, restartPracticeProbation } from './enrollment-recovery.js';
 import { audit, once, requestHash, type Interface } from './storage.js';
 
-const policyVersion = 'sms-enrollment-v1';
+const policyVersion = 'sms-enrollment-v2';
 const scanRetryDelays = [60_000, 300_000, 900_000];
 const scanLeaseMs = 60_000;
 const checkLifetime = 24 * 3600_000;
 const reviewMessages = {
   ein_conflict: 'This EIN already belongs to another owner. Ask for a correction review before registering.',
+  sole_conflict: 'This sole proprietor phone is already registered. Correct the phone number or ask for ownership review.',
   dba_conflict: 'This business identity is already registered. Review the owner and the business name.',
   payer_mismatch: 'The payer details differ from the registered business. Supply practice ownership evidence for review.',
   hosted_ownership: 'This business uses hosted pages. Supply a practice ownership letter for operator review.',
@@ -33,7 +36,8 @@ const correctionMessages: Record<keyof typeof reviewMessages, string> = {
   hosted_ownership: 'Review the legal business name and public business details, then save a corrected revision for ownership review.',
   payer_mismatch: 'Review the registered business name and billing address before saving your corrections.',
   ein_conflict: 'Check the EIN and legal name against the business registration before saving your corrections.',
-  dba_conflict: 'Check the business identity and trade name or sole proprietor phone before saving your corrections.',
+  dba_conflict: 'Check the business identity and registered trade name before saving your corrections.',
+  sole_conflict: 'Check the sole proprietor phone against the number used for carrier verification.',
 };
 function browserDraftId(workspace: string, company: string, owner: string, revision: number | null) {
   return requestHash(['browser-enrollment-v1', workspace, company, owner, revision]);
@@ -42,38 +46,50 @@ const publicMailHosts = new Set(['gmail.com', 'googlemail.com', 'outlook.com', '
 type Channel = VerificationChannel;
 const channelsFor = (sole: boolean): Channel[] => sole ? ['email', 'phone', 'carrier'] : ['email', 'phone'];
 type Challenge = { issuedAt: number; attempts: number; verified: boolean; nonce?: string; digest?: string };
+export type EnrollmentPayment = { state: 'paid' | 'declined' | 'pending'; source: 'capture' | 'stripe_test'; receipt: string;
+  amount: number; currency: string; revision: number; requestedAt?: number; sessionId?: string; attempt?: number };
 type Enrollment = {
   revision: number; owner: string; acceptedAt: string; policyVersion: string;
   challenges: Partial<Record<Channel, Challenge>>;
-  payment?: { state: 'paid' | 'declined' | 'pending'; source: 'capture' | 'stripe_test'; receipt: string;
-    amount: number; currency: string; revision: number; requestedAt?: number; sessionId?: string; attempt?: number };
-  review?: 'ein_conflict' | 'dba_conflict' | 'payer_mismatch' | 'hosted_ownership';
+  payment?: EnrollmentPayment;
+  review?: keyof typeof reviewMessages;
   correction?: keyof typeof reviewMessages;
   hostedApproved?: boolean;
   evidence?: NonNullable<OnboardingView['evidence']>;
   pendingScan?: { id: string; at: number; attempt?: number };
   pageCheck?: NonNullable<OnboardingView['pageCheck']>;
+  nameConfirmation?: 'irs_ein_record' | 'personal_legal_name';
+  campaignReview?: ReviewedCampaign;
   submittedAt?: string;
   probation?: { state: 'canary' | 'paused' | 'active' | 'complete' | 'suspended'; startsAt: string; sendId?: string; members?: string[]; overrideAt?: string };
 };
+export function voidablePracticeReceipt(registrationId: string, registrationState: string, identity: unknown,
+  review: unknown, revision: number | null, submittedAt: unknown, payment?: EnrollmentPayment | null) {
+  if (registrationState !== 'draft' || identity !== 'sole_proprietor' || review !== 'payer_mismatch' || submittedAt ||
+    payment?.source !== 'capture' || payment.state !== 'paid' || payment.revision !== revision ||
+    payment.receipt !== 'capture/' + registrationId + '/' + revision || payment.currency !== 'USD') return null;
+  return requestHash([payment.receipt,payment.amount,payment.currency]);
+}
 type Row = {
   id: string; dba_name: string | null; registration_id: string; state: string; legal_name: string; rejection_reason: string | null;
-  profile: Record<string, unknown> & { onboarding?: Enrollment; practiceEvidenceCases?: Record<string,EvidenceCase>; campaign?: { samples: string[] } };
+  profile: Record<string, unknown> & { onboarding?: Enrollment; practiceEvidenceCases?: Record<string,EvidenceCase>; campaign?: EnrollmentCampaign | Pick<EnrollmentCampaign, 'description' | 'samples' | 'useCase'> };
 };
 
-function campaign(business: OnboardingBusiness) {
-  const topics = business.vertical === 'FOOD_AND_BEVERAGE'
-    ? ['Reservations are open for our weekend special.', 'Here are our new hours for the holiday weekend.']
-    : business.vertical === 'REAL_ESTATE'
-      ? ['Your annual home maintenance reminder is available.', 'Here is this month’s home care update for past clients.']
-      : ['Our latest business update is available.', 'We have new hours for the holiday weekend.'];
-  const sender = business.dbaName ?? business.legalName;
-  const purpose = business.vertical === 'REAL_ESTATE' ? 'home care updates to past clients' : 'business updates';
-  return {
-    description: `${sender} sends ${purpose} to subscribers who opt in on its Flockletter sign-up page and confirm by replying YES.`,
-    samples: topics.map(topic => `${sender}: ${topic} Reply STOP to opt out.`),
-    useCase: business.plan === 'text_2500' ? 'MARKETING' : 'LOW_VOLUME',
-  };
+function currentCampaign(row: Row, signupUrl: string | null) {
+  const state = row.profile.onboarding;
+  if (state?.campaignReview || state?.submittedAt) return state.campaignReview;
+  const saved = row.profile.campaign;
+  if (!signupUrl || !saved) return undefined;
+  // Resume old drafts with the examples the owner already saved. Only submitted snapshots establish what was filed.
+  const business = readBusiness(row);
+  const contact = business.publicContact ?? (business.email.length <= 120 ? business.email : business.phone);
+  const wording = 'flow' in saved ? saved : { ...enrollmentCampaign(business, contact), ...saved };
+  return reviewEnrollmentCampaign(wording, signupUrl, business.privacyPolicyUrl, business.smsTermsUrl);
+}
+
+function campaignDigest({ signupUrl, payload }: ReviewedCampaign) {
+  return requestHash([signupUrl, payload.useCase, payload.description, payload.messageFlow, payload.samples, payload.optInMessage,
+    payload.helpMessage, payload.optOutMessage, payload.privacyPolicyUrl, payload.termsUrl, payload.hasLinks]);
 }
 
 function readBusiness(row: Row): OnboardingBusiness {
@@ -82,19 +98,12 @@ function readBusiness(row: Row): OnboardingBusiness {
   const urls = { website: String(profile.website), privacyPolicyUrl: String(profile.privacyPolicyUrl), smsTermsUrl: String(profile.smsTermsUrl) };
   const result = commands['sms.onboardingSave'].schema.shape.business.parse({
     legalName: row.legal_name, ein: profile.ein ?? '', registrationType: profile.registrationType, dbaName: row.dba_name ?? undefined,
-    hostedPages: profile.hostedPages, publicContact: profile.publicContact, description: profile.description, plan: profile.plan, businessType: profile.businessType, vertical: profile.vertical,
+    hostedPages: profile.hostedPages, publicContact: profile.publicContact, description: profile.description, plan: profile.plan, businessType: profile.registrationType === 'sole_proprietor' ? undefined : profile.businessType, vertical: profile.vertical,
     ...(profile.hostedPages ? { website: '', privacyPolicyUrl: '', smsTermsUrl: '' } : urls),
     street: address.street, city: address.city, region: address.region, postalCode: address.postalCode,
     ...(profile.contact as object),
   });
   return { ...result, ...urls };
-}
-
-function rejectionMessage(reason: string | null) {
-  if (reason?.includes('30908') || reason?.includes('30933')) return 'Review the public privacy policy URL and add your SMS privacy disclosures.';
-  if (reason?.includes('30882')) return 'Review the public SMS terms URL and make sure it describes the texting program.';
-  if (reason?.includes('signup_page_missing')) return 'Enable your Flockletter sign-up page and its mobile number field.';
-  return 'The carrier rejected this registration. Review the business information, campaign examples and published SMS policies before correcting it.';
 }
 
 export class TextingOnboarding {
@@ -135,16 +144,19 @@ export class TextingOnboarding {
     const personal = owned && row ? current : undefined;
     const business = personal && row ? readBusiness(row) : null;
     const progress = personal && row ? await this.registration.progress(sql, workspace, row.registration_id) : null;
+    const setup = !row || (owned && ['draft','rejected'].includes(row.state)) ? await companySignupSetup(sql, companyId, this.origin) : null;
+    const signup = setup?.mobileEnabled ? setup.url : null;
+    const campaign = owned && row ? currentCampaign(row, signup) : undefined;
     const review = personal?.review;
     const c = personal?.evidence?.caseId && row?.profile.practiceEvidenceCases?.[personal.evidence.caseId];
     const attached = c && row && await this.letters.recover(sql,row.id,c,this.now(),false);
     return {
       available: true, blocked: !!row && !owned,
-      signupReady: !row || (owned && ['draft','rejected'].includes(row.state))
-        ? !!await signupPage(sql, companyId, this.origin) : null,
+      signupReady: setup ? !!signup : null,
+      signupSetup: setup ? {brandId:setup.brandId, published:!!setup.url, mobileEnabled:setup.mobileEnabled, profileRevision:setup.profileRevision} : null,
       draftId: !row || (owned && ['draft','rejected'].includes(row.state) && !current.review && current.payment?.state !== 'pending')
         ? browserDraftId(workspace, companyId, user, personal?.revision ?? null) : null,
-      revision: owned ? current.revision : null,
+      revision: owned ? current.revision : null, resubmission: !!owned && row?.state === 'rejected' && !current.submittedAt,
       business: row && owned && ['draft', 'rejected'].includes(row.state) ? business : null,
       requiredChannels: channelsFor(business?.registrationType === 'sole_proprietor'),
       carrierVerified: personal?.challenges.carrier?.verified === true,
@@ -162,8 +174,9 @@ export class TextingOnboarding {
         : owned && row?.state === 'rejected' && !current.submittedAt ? 'draft' : row?.state ?? 'not_started',
       message: personal?.correction ? correctionMessages[personal.correction] : review
         ? row?.profile.registrationType === 'sole_proprietor' && review === 'payer_mismatch'
-          ? 'The payer details differ. Ask for a billing review or correction.' : reviewMessages[review]
+          ? this.stripe ? 'The payer details differ. Ask for a billing review.' : 'The payer details differ. An operator can void the practice receipt so you can correct and verify the application again.' : reviewMessages[review]
         : row?.state === 'rejected' && owned && current.submittedAt ? rejectionMessage(row.rejection_reason) : null,
+      campaignReview: campaign && { ...campaign.payload, digest: campaignDigest(campaign) },
       samples: owned ? row?.profile.campaign?.samples ?? [] : [],
     };
   }
@@ -205,7 +218,7 @@ export class TextingOnboarding {
     }
     if (name === 'sms.onboardingPay' && this.stripe) {
       const input = commands[name].schema.parse(raw);
-      requireCondition(input.result === 'paid', 422, 'checkout_mode_mismatch', 'Use the Stripe test checkout to exercise payment results.');
+      requireCondition(input.result === 'paid' && !input.practicePayer, 422, 'checkout_mode_mismatch', 'Use the Stripe test checkout to exercise payment results.');
       return this.openTestCheckout(actor, via, input.companyId, input.expectedRevision);
     }
     return this.change(name, raw, actor, via);
@@ -309,7 +322,10 @@ export class TextingOnboarding {
           }
           return { attached: true };
         }
-        if ((name === 'sms.onboardingSubmit' || name === 'sms.onboardingFinish') && state.submittedAt) return { submitted: true };
+        if ((name === 'sms.onboardingSubmit' || name === 'sms.onboardingFinish') && state.submittedAt) {
+          requireCondition(row.state !== 'rejected', 409, 'registration_correction_required', 'Save the corrected business details before resubmitting.');
+          return { submitted: true };
+        }
         requireCondition(row.state === 'draft' || row.state === 'rejected', 409, 'registration_in_progress', 'This enrollment is already with the carrier.');
         requireCondition(!state.review || (state.review === 'hosted_ownership' && (name === 'sms.onboardingChallenge' || name === 'sms.onboardingVerify')), 409, 'onboarding_review', 'An operator must resolve the pending review before registration.');
         const required = channelsFor(row.profile.registrationType === 'sole_proprietor');
@@ -338,10 +354,18 @@ export class TextingOnboarding {
           return { verified: attempt.verified };
         }
         requireCondition(channelsFor(row.profile.registrationType === 'sole_proprietor').every(channel => state.challenges[channel]?.verified), 409, 'identity_unverified', 'Verify the business email and phone first.');
-        this.requireCheck(state, row.profile.hostedPages);
+        this.requireCheck(state, row.profile);
         const business = readBusiness(row);
         const setupFee = setupFeeFor(business.plan);
         const finish = name === 'sms.onboardingFinish';
+        if (name === 'sms.onboardingSubmit' || name === 'sms.onboardingFinish') {
+          const { reviewedCampaign } = commands[name].schema.parse(raw);
+          if (reviewedCampaign) {
+            const current = currentCampaign(row, state.pageCheck?.signupUrl ?? null);
+            requireCondition(current && reviewedCampaign === campaignDigest(current), 409, 'campaign_review_changed',
+              'The carrier wording changed. Choose Check pages again, then review the updated wording before submitting.');
+          }
+        }
         if ((name === 'sms.onboardingSubmit' || name === 'sms.onboardingFinish') && !this.stripe) {
           const acceptance = commands[name].schema.parse(raw);
           const plan = business.plan;
@@ -355,30 +379,39 @@ export class TextingOnboarding {
         if (name === 'sms.onboardingPay' || (finish && state.payment?.state !== 'paid')) {
           requireCondition(!state.payment || state.payment.source === 'capture', 409, 'checkout_mode_mismatch', 'Use the payment mode that started this checkout.');
           if (state.payment?.state === 'paid') return { paid: true };
-          const result = name === 'sms.onboardingPay' ? commands[name].schema.parse(raw).result : 'paid';
+          const checkout = name === 'sms.onboardingPay' ? commands[name].schema.parse(raw) : commands['sms.onboardingFinish'].schema.parse(raw);
+          const result = 'result' in checkout ? checkout.result : 'paid';
+          requireCondition(!checkout.practicePayer || result !== 'payer_mismatch', 422, 'payer_scenario_conflict', 'Provide the fictional billing details to compare or select the preset mismatch.');
           await this.requireSignup(sql, input.companyId, state);
-          if (result === 'paid' && !await this.claimIdentity(sql, row, state.owner)) {
-            state.review = row.profile.registrationType === 'sole_proprietor' || row.dba_name ? 'dba_conflict' : 'ein_conflict';
+          const conflict = result === 'declined' ? null : await this.claimIdentity(sql, row, state.owner);
+          if (conflict) {
+            state.review = conflict;
             await this.record(sql, row, state);
             await audit(sql, workspace, actor.actorId, via, 'onboarding.review', row.id, null, { reason: state.review });
             return { paid: false };
           }
-          if (result === 'payer_mismatch') {
-            state.review = 'payer_mismatch';
-            await this.record(sql, row, state);
-            await audit(sql, workspace, actor.actorId, via, 'onboarding.review', row.id, null, { reason: state.review });
-            return { paid: false };
-          }
-          state.payment = { ...setupFee, source: 'capture', state: result, receipt: 'capture/' + row.registration_id + '/' + state.revision, revision: state.revision };
+          const payer = checkout.practicePayer ?? {
+            name: result === 'payer_mismatch' ? 'Unrelated practice payer' : business.legalName,
+            street: business.street, city: business.city, region: business.region, postalCode: business.postalCode, country: 'US',
+          };
+          const paid = result !== 'declined';
+          const mismatch = paid && !matchPayer(business, payer);
+          state.payment = { ...setupFee, source: 'capture', state: paid ? 'paid' : 'declined', receipt: 'capture/' + row.registration_id + '/' + state.revision, revision: state.revision };
+          if (mismatch) state.review = 'payer_mismatch';
           await this.record(sql, row, state);
-          await audit(sql, workspace, actor.actorId, via, 'onboarding.checkout_capture', row.id, null, { revision: state.revision, state: result });
-          if (!finish) return { paid: result === 'paid' };
+          await audit(sql, workspace, actor.actorId, via, 'onboarding.checkout_capture', row.id, null, { revision: state.revision, state: state.payment.state });
+          if (mismatch) {
+            await audit(sql, workspace, actor.actorId, via, 'onboarding.review', row.id, null, { reason: state.review });
+            return { paid: true, submitted: false, review: state.review };
+          }
+          if (!finish) return { paid };
         }
         requireCondition(state.payment?.state === 'paid' && state.payment.revision === state.revision &&
           state.payment.amount === setupFee.amount && state.payment.currency === setupFee.currency &&
           state.payment.source === (this.stripe ? 'stripe_test' : 'capture'),
         409, 'setup_payment_required', 'Complete the setup payment before submitting.');
-        await this.requireSignup(sql, input.companyId, state);
+        const signup = await this.requireSignup(sql, input.companyId, state);
+        state.campaignReview = currentCampaign(row, signup);
         state.submittedAt = this.now().toISOString();
         await this.record(sql, row, state);
         await this.registration.submit(sql, workspace, row.registration_id, actor.actorId, via, true);
@@ -388,10 +421,18 @@ export class TextingOnboarding {
     });
   }
 
-  private requireCheck(state: Enrollment, hosted: unknown) {
+  private requireBusinessWebsite(website: string, hosted: unknown) {
+    if (hosted) return;
+    const host = (url: string) => new URL(url).hostname.toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
+    requireCondition(host(website) !== host(this.origin), 422, 'business_website_required',
+      'Use your own business website or choose to publish practice business and policy pages.');
+  }
+
+  private requireCheck(state: Enrollment, profile: Row['profile']) {
+    this.requireBusinessWebsite(String(profile.website), profile.hostedPages);
     requireCondition(!state.pendingScan && state.pageCheck && !state.pageCheck.issues.length && this.now().getTime() - Date.parse(state.pageCheck.checkedAt) < checkLifetime,
       409, 'website_check_required', 'Resolve the website checks and check the pages again before continuing.');
-    requireCondition(!state.review && (!hosted || state.hostedApproved || state.challenges.carrier?.verified), 409, 'onboarding_review', 'Resolve the enrollment review before continuing.');
+    requireCondition(!state.review && (!profile.hostedPages || state.hostedApproved || state.challenges.carrier?.verified), 409, 'onboarding_review', 'Resolve the enrollment review before continuing.');
   }
 
   // The worker reads a single due revision per pass. A saved lease survives a restart during the fetch.
@@ -468,6 +509,7 @@ export class TextingOnboarding {
     requireCondition(signup, 409, 'signup_page_missing',
       'Enable a Flockletter sign-up page for this company and turn on the mobile number field in Texting settings.');
     requireCondition(state.pageCheck?.signupUrl === signup, 409, 'website_check_required', 'The signup address changed. Check the published pages again.');
+    return signup;
   }
 
   private async openTestCheckout(actor: Actor, via: Interface, companyId: string, revision: number) {
@@ -480,13 +522,14 @@ export class TextingOnboarding {
       requireCondition(state.revision === revision, 409, 'revision_conflict', 'This enrollment changed. Reload it first.');
       requireCondition(!state.review && !state.correction && !state.submittedAt && ['draft', 'rejected'].includes(row.state), 409, 'onboarding_review', 'This enrollment is not ready for checkout.');
       requireCondition(channelsFor(row.profile.registrationType === 'sole_proprietor').every(channel => state.challenges[channel]?.verified), 409, 'identity_unverified', 'Verify the business email and phone first.');
-      this.requireCheck(state, row.profile.hostedPages);
+      this.requireCheck(state, row.profile);
       const setupFee = setupFeeFor(readBusiness(row).plan);
       await this.requireSignup(sql, companyId, state);
       requireCondition(!state.payment || state.payment.source === 'stripe_test', 409, 'checkout_mode_mismatch', 'Use the payment mode that started this checkout.');
       if (state.payment?.state === 'paid') return { paid: true } as const;
-      if (!await this.claimIdentity(sql, row, state.owner)) {
-        state.review = row.profile.registrationType === 'sole_proprietor' || row.dba_name ? 'dba_conflict' : 'ein_conflict';
+      const conflict = await this.claimIdentity(sql, row, state.owner);
+      if (conflict) {
+        state.review = conflict;
         await this.record(sql, row, state);
         await audit(sql, workspace, actor.actorId, via, 'onboarding.review', row.id, null, { reason: state.review });
         return null;
@@ -565,11 +608,12 @@ export class TextingOnboarding {
     workspace: string,
     companyId: string,
     expectedRevision: number,
-    action: 'request_correction' | 'complete_probation' | 'accept_evidence' | 'lift_suspension',
+    action: 'request_correction' | 'complete_probation' | 'accept_evidence' | 'lift_suspension' | 'void_practice_receipt',
     actor: string,
     via: Interface,
     reason: string,
     reviewer?: EvidenceActor,
+    expectedReceipt?: string,
   ) {
     const row = await this.row(sql, companyId);
     const state = row?.profile.onboarding;
@@ -580,6 +624,26 @@ export class TextingOnboarding {
       'revision_conflict',
       'This enrollment changed. Reload it first.',
     );
+    if (action === 'void_practice_receipt') {
+      const payment = state.payment;
+      const candidate = voidablePracticeReceipt(row.registration_id,row.state,row.profile.registrationType,state.review,state.revision,state.submittedAt,payment);
+      requireCondition(!this.stripe && reviewer && ['operator_ui','operator_api','operator_mcp'].includes(via) && payment &&
+        candidate && candidate === expectedReceipt, 409, 'practice_void_unavailable', 'Select the current mismatched practice receipt for an unsubmitted sole proprietor.');
+      const identityKey = 'enrollment-sole/' + requestHash(readBusiness(row).phone);
+      await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [identityKey]);
+      // Only this unsubmitted registration's synthetic phone claim can be released.
+      await sql.query(`SELECT flockletter_customer_jobs.texting_mock_put($1,'null'::jsonb)
+        WHERE flockletter_customer_jobs.texting_mock_get($1)=to_jsonb($2::text)`, [identityKey,requestHash(row.id)]);
+      const prior = {receipt:payment.receipt,amount:payment.amount,currency:payment.currency,revision:state.revision};
+      state.revision++;
+      state.correction = 'payer_mismatch';
+      state.challenges = {};
+      delete state.review;
+      delete state.payment;
+      await this.record(sql,row,state);
+      await audit(sql,workspace,actor,via,'onboarding.practice_receipt_voided',row.id,prior,{revision:state.revision,reason});
+      return {voided:true,revision:state.revision};
+    }
     if (action === 'lift_suspension')
       return restartPracticeProbation(
         sql,
@@ -744,15 +808,18 @@ export class TextingOnboarding {
   }
 
   private async save(sql: Sql, actor: Actor, via: Interface, companyId: string, row: Row | undefined, business: OnboardingBusiness) {
-    const valid = twilioBusiness('private_profit', business.businessType, business.vertical);
-    requireCondition(!('reason' in valid), 422, 'business_type_mismatch',
-      'reason' in valid ? businessRefusals[valid.reason]! : '');
+    if (business.registrationType !== 'sole_proprietor') {
+      const valid = twilioBusiness('private_profit', business.businessType, business.vertical);
+      requireCondition(!('reason' in valid), 422, 'business_type_mismatch',
+        'reason' in valid ? businessRefusals[valid.reason]! : '');
+    }
     const hostname = (value: string) => new URL(value).hostname.toLowerCase().replace(/^www\./, '');
     const signup = business.hostedPages ? await signupPage(sql, companyId, this.origin) : null;
     if (business.hostedPages) {
       requireCondition(signup, 409, 'signup_page_missing', 'Enable the company’s hosted signup page and its mobile field before publishing practice pages.');
       business = { ...business, ...hostedBusinessUrls(signup) };
     }
+    this.requireBusinessWebsite(business.website, business.hostedPages);
     const domain = hostname(business.website);
     requireCondition(business.hostedPages || (domain === business.email.split('@')[1]?.toLowerCase() && !publicMailHosts.has(domain)),
       422, 'business_domain_mismatch', 'Use a business email address on the website domain.');
@@ -763,24 +830,25 @@ export class TextingOnboarding {
     const ein = business.ein.replace('-', '');
     const previous = row?.profile.onboarding;
     const revision = (previous?.revision ?? 0) + 1;
-    const state: Enrollment = { revision, owner: actor.userId, acceptedAt: this.now().toISOString(), policyVersion, challenges: {} };
+    const state: Enrollment = { revision, owner: actor.userId, acceptedAt: this.now().toISOString(), policyVersion, nameConfirmation: business.registrationType === 'sole_proprietor' ? 'personal_legal_name' : 'irs_ein_record', challenges: {} };
     if (business.hostedPages && business.registrationType !== 'sole_proprietor') state.review = 'hosted_ownership';
     if (previous?.payment?.state === 'paid' && row) {
       const original = readBusiness(row);
       requireCondition(original.ein.replace('-', '') === ein && original.legalName === business.legalName && original.street === street &&
         original.region === region && original.postalCode === postalCode && (original.registrationType ?? 'ein') === (business.registrationType ?? 'ein') &&
         original.dbaName === business.dbaName && original.city === city && original.plan === business.plan &&
-        previous.payment.amount === setupFeeFor(business.plan).amount, 409, 'paid_enrollment_locked',
+        (business.registrationType !== 'sole_proprietor' || original.phone === business.phone) && previous.payment.amount === setupFeeFor(business.plan).amount, 409, 'paid_enrollment_locked',
       'Ask an operator to reconcile the setup payment before changing the registered business or its billing address.');
       state.payment = { ...previous.payment, revision };
     }
     const hostedPolicy = signup && business.hostedPages ? makeHostedPolicySnapshot({ legalName: business.dbaName ?? business.legalName,
       publicContact: business.publicContact!, description: business.description!, signupUrl: signup, revision, acceptedAt: state.acceptedAt }) : undefined;
+    const helpContact = business.publicContact ?? (email.length <= 120 ? email : phone);
     const profile = {
       ...(row?.profile.practiceEvidenceCases && {practiceEvidenceCases:row.profile.practiceEvidenceCases}),
       registrationType: business.registrationType, plan: business.plan, hostedPages: business.hostedPages, publicContact: business.publicContact,
       description: business.description, hostedPolicy, ein, website: business.website, privacyPolicyUrl: business.privacyPolicyUrl, smsTermsUrl: business.smsTermsUrl,
-      businessType: business.businessType, vertical: business.vertical, campaign: campaign(business),
+      businessType: business.registrationType === 'sole_proprietor' ? undefined : business.businessType, vertical: business.vertical, campaign: enrollmentCampaign(business, helpContact),
       address: { street, city, region, postalCode, country: 'US' }, contact: { firstName, lastName, email, phone, title }, onboarding: state,
     };
     const id = row?.id ?? randomUUID();
@@ -788,12 +856,12 @@ export class TextingOnboarding {
       VALUES($1,$2,$3,$4,$8,$5,$6,$7,clock_timestamp(),clock_timestamp(),$9)
       ON CONFLICT(workspace_id,id) DO UPDATE SET legal_name=EXCLUDED.legal_name,dba_name=EXCLUDED.dba_name,entity_type=EXCLUDED.entity_type,profile=EXCLUDED.profile,help_contact=EXCLUDED.help_contact,
       privacy_policy_confirmed_at=EXCLUDED.privacy_policy_confirmed_at,sms_terms_confirmed_at=EXCLUDED.sms_terms_confirmed_at,updated_at=clock_timestamp()`,
-    [actor.workspaceId, id, companyId, business.legalName, JSON.stringify(profile), email.length <= 120 ? email : phone, actor.actorId, business.registrationType === 'sole_proprietor' ? 'sole_proprietor' : 'private_profit', business.dbaName ?? null]);
+    [actor.workspaceId, id, companyId, business.legalName, JSON.stringify(profile), helpContact, actor.actorId, business.registrationType === 'sole_proprietor' ? 'sole_proprietor' : 'private_profit', business.dbaName ?? null]);
     if (hostedPolicy) await audit(sql, actor.workspaceId, actor.actorId, via, 'onboarding.policy_published', id, null, hostedPolicy);
     if (!row) await sql.query(`INSERT INTO sms_registrations(workspace_id,id,carrier_brand_id,state) VALUES($1,$2,$3,'draft')`,
       [actor.workspaceId, randomUUID(), id]);
     await sql.query('SELECT flockletter_customer_jobs.wake($1,clock_timestamp())', [actor.workspaceId]);
-    await audit(sql, actor.workspaceId, actor.actorId, via, 'onboarding.saved', id, null, { revision, policyVersion });
+    await audit(sql, actor.workspaceId, actor.actorId, via, 'onboarding.saved', id, null, { revision, policyVersion, nameConfirmation: state.nameConfirmation });
     return { revision };
   }
 
@@ -805,11 +873,11 @@ export class TextingOnboarding {
   /** Synthetic registry only. Capture keys are deliberately isolated from real provider data. */
   private async claimIdentity(sql: Sql, row: Row, owner: string) {
     if (row.profile.registrationType === 'sole_proprietor') {
-      return this.claim(sql, 'enrollment-sole/' + requestHash(readBusiness(row).phone), requestHash(row.id));
+      return await this.claim(sql, 'enrollment-sole/' + requestHash(readBusiness(row).phone), requestHash(row.id)) ? null : 'sole_conflict';
     }
-    if (!await this.claim(sql, 'enrollment-ein/' + requestHash(row.profile.ein), requestHash(owner))) return false;
+    if (!await this.claim(sql, 'enrollment-ein/' + requestHash(row.profile.ein), requestHash(owner))) return 'ein_conflict' as const;
     const name = (row.dba_name ?? row.legal_name).normalize('NFKC').trim().toLowerCase();
-    return this.claim(sql, 'enrollment-brand/' + requestHash([row.profile.ein, name]), requestHash(row.id));
+    return await this.claim(sql, 'enrollment-brand/' + requestHash([row.profile.ein, name]), requestHash(row.id)) ? null : 'dba_conflict';
   }
 
   private async claim(sql: Sql, key: string, holder: string) {
@@ -822,8 +890,9 @@ export class TextingOnboarding {
 }
 
 function matchPayer(business: OnboardingBusiness, payer: SetupReceipt['payer']) {
-  const normalize = (value: string | null) => value?.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-  return payer.country === 'US' && normalize(payer.name) === normalize(business.legalName) &&
-    normalize(payer.street) === normalize(business.street) && normalize(payer.region) === normalize(business.region) &&
-    payer.postalCode?.slice(0, 5) === business.postalCode;
+  const normalize = (value: string | null) => value?.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').trim().replace(/\s+/g, ' ');
+  const same = (actual: string | null, expected: string) => !!normalize(actual) && normalize(actual) === normalize(expected);
+  return payer.country === 'US' && same(payer.name,business.legalName) && same(payer.street,business.street) &&
+    same(payer.city,business.city) && same(payer.region,business.region) && !!payer.postalCode &&
+    /^\d{5}(-\d{4})?$/.test(payer.postalCode) && payer.postalCode.slice(0, 5) === business.postalCode;
 }

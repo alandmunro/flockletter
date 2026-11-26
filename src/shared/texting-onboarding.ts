@@ -24,7 +24,7 @@ export const onboardingBusiness = z.strictObject({
   hostedPages: z.boolean().optional(),
   publicContact: z.email().max(120).optional(),
   description: text(300).optional(),
-  businessType: z.enum(twilioBusinessTypes),
+  businessType: z.enum(twilioBusinessTypes).optional(),
   vertical: z.enum(twilioIndustries),
   website: z.union([https, z.literal('')]),
   privacyPolicyUrl: z.union([https, z.literal('')]),
@@ -42,7 +42,10 @@ export const onboardingBusiness = z.strictObject({
   const issue = (field: string, message: string) => ctx.addIssue({ code: 'custom', path: [field], message });
   if (value.registrationType === 'sole_proprietor') {
     if (value.ein || value.dbaName || value.plan === 'text_2500') issue('registrationType', 'Use the EIN registration for DBAs and Standard plans.');
-  } else if (!value.ein) issue('ein', 'Enter the EIN on the business registration.');
+  } else {
+    if (!value.ein) issue('ein', 'Enter the EIN on the business registration.');
+    if (!value.businessType) issue('businessType', 'Choose the legal structure of the registered business.');
+  }
   if (value.hostedPages) {
     if (!value.publicContact || !value.description) issue('publicContact', 'Supply a public contact and business description to publish practice pages.');
   } else {
@@ -50,6 +53,12 @@ export const onboardingBusiness = z.strictObject({
   }
 });
 export type OnboardingBusiness = z.infer<typeof onboardingBusiness>;
+// Optional synthetic checkout input. Real payment evidence can only come from a signed provider event.
+export const practicePayer = z.strictObject({
+  name: text(120), street: text(120), city: text(60), region: text(60), postalCode: text(16), country: z.string().length(2),
+});
+export type PracticePayer = z.infer<typeof practicePayer>;
+
 
 // An unfinished form accepts incomplete values. EINs, codes and publication consent are never draft fields.
 export const enrollmentDraftFields = z.strictObject({
@@ -68,7 +77,7 @@ const define = <T extends z.ZodRawShape>(description: string, isMutation: boolea
   description, scope: 'owner' as const, mutation: isMutation, schema: z.strictObject(shape),
 });
 
-const planAcceptance = { acceptedPlan: textPlanId.optional(), acceptedMonthlyUsdCents: z.number().int().nonnegative().optional() };
+const planAcceptance = { reviewedCampaign: z.string().regex(/^[0-9a-f]{64}$/).optional(), acceptedPlan: textPlanId.optional(), acceptedMonthlyUsdCents: z.number().int().nonnegative().optional() };
 
 export const textingOnboardingCommands = {
   'sms.onboardingStatus': define('Read the current owner’s carrier enrollment and required next actions.', false, { companyId }),
@@ -76,7 +85,7 @@ export const textingOnboardingCommands = {
     ...mutation, expectedRevision: revision.nullable(),
   }),
   'sms.onboardingSave': define('Save the accepted practice registration details and SMS policy revision.', true, {
-    ...mutation, expectedRevision: revision.nullable(), business: onboardingBusiness, accepted: z.literal(true),
+    ...mutation, expectedRevision: revision.nullable(), business: onboardingBusiness, nameConfirmed: z.literal(true), accepted: z.literal(true),
   }),
   'sms.onboardingChallenge': define('Request a practice verification code for this registration and channel.', true, { ...mutation, channel }),
   'sms.onboardingVerify': define('Check the code for the current business verification challenge.', true, {
@@ -87,9 +96,9 @@ export const textingOnboardingCommands = {
   'sms.onboardingEvidence': define('Attach a synthetic ownership letter to a practice review.', true, { ...mutation, document: z.enum(['CP575', '147C']), contents: z.string().max(1024).optional() }),
   'sms.onboardingResume': define('Resume a paused practice sender after reviewing the cause.', true, { ...mutation, reason: text(300).min(12) }),
   'sms.onboardingPay': define('Exercise the setup payment in the isolated mock checkout.', true, {
-    ...mutation, result: z.enum(['paid', 'declined', 'payer_mismatch']).default('paid'),
+    ...mutation, result: z.enum(['paid', 'declined', 'payer_mismatch']).default('paid'), practicePayer: practicePayer.optional(),
   }),
-  'sms.onboardingFinish': define('Confirm a practice setup fee and submit the verified enrollment in one transaction.', true, { ...mutation, ...planAcceptance, acceptedFee: z.number().int().positive(), currency: z.literal('USD') }),
+  'sms.onboardingFinish': define('Confirm a practice setup fee and submit the verified enrollment in one transaction.', true, { ...mutation, ...planAcceptance, practicePayer: practicePayer.optional(), acceptedFee: z.number().int().positive(), currency: z.literal('USD') }),
   'sms.onboardingSubmit': define('Submit the paid, verified enrollment to carrier registration.', true, { ...mutation, ...planAcceptance }),
 } as const;
 export type TextingOnboardingCommand = keyof typeof textingOnboardingCommands;
@@ -98,9 +107,11 @@ export type OnboardingView = {
   available: boolean;
   blocked: boolean;
   revision: number | null;
+  resubmission?: boolean;
   business: OnboardingBusiness | null;
   draftId: string | null;
   signupReady: boolean | null;
+  signupSetup: {brandId:string | null; published:boolean; mobileEnabled:boolean; profileRevision:number} | null;
   verified: Record<'email' | 'phone', boolean>;
   checkout: 'unpaid' | 'declined' | 'pending' | 'paid';
   checkoutMode: 'capture' | 'stripe_test';
@@ -108,6 +119,7 @@ export type OnboardingView = {
   state: string;
   message: string | null;
   samples: string[];
+  campaignReview?: { digest: string; description: string; samples: string[]; messageFlow: string; optInMessage: string; optOutMessage: string; helpMessage: string };
   requiredChannels: VerificationChannel[];
   carrierVerified: boolean;
   pageCheck: { retryAt?: string; attempts?: number; checkedAt: string; signupUrl?: string | null; issues: { page: string; message: string }[] } | null;

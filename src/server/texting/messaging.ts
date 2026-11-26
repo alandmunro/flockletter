@@ -18,7 +18,7 @@ export type Forward = (message: {
 }) => Promise<'forwarded' | 'captured' | 'failed' | 'uncertain'>;
 export type DispatchAuthority = (sql: Sql, workspace: string, companyId: string, actorId: string) => Promise<boolean>;
 export type MessagingOptions = {
-  probationPolicy?: import('./probation-policy.js').ProbationPolicy; practiceBilling?: boolean; annualClaim?:(sql:Sql,w:string,brand:string,id:string,now:Date,company:string)=>Promise<string|null>; db: Database; port: TwilioMessagingPort; seal: CredentialSeal; origin: string; forward?: Forward; canDispatch?: DispatchAuthority; now?: () => Date };
+  defaults?: import('./storage.js').SettingValues; practiceBilling?: boolean; annualClaim?:(sql:Sql,w:string,brand:string,id:string,now:Date,company:string)=>Promise<string|null>; db: Database; port: TwilioMessagingPort; seal: CredentialSeal; origin: string; forward?: Forward; canDispatch?: DispatchAuthority; now?: () => Date };
 
 const permanentStatusCodes = new Set(['30005', '30006', '21211', '21614', '21612']);
 const purposeNeedsWindow = new Set(['broadcast', 'confirmation']);
@@ -130,12 +130,13 @@ export class TextingMessaging {
       catch { return defer(new Date(now.getTime() + 5 * 60000), 'send_authority_unavailable'); }
       if (!authorized) return skip('send_authority_revoked');
     }
-    const settings = await readSettings(sql, workspace, this.options.probationPolicy);
+    const settings = await readSettings(sql, workspace, this.options.defaults);
     if (this.options.practiceBilling) {
-      const plan = await practicePlanLimits(sql, workspace, now, settings.monthly_segment_allowance, row.created_at);
+      const plan = await practicePlanLimits(sql, workspace, now, settings, row.created_at);
       if (plan.hold === 'texting_plan_cancelled') return skip(plan.hold);
       if (plan.hold) return defer(new Date(+now + 60_000), plan.hold);
       settings.monthly_segment_allowance = plan.allowance;
+      settings.carrier_daily_limit = plan.daily;
     }
     let required: ReturnType<typeof requireSettings<(typeof sendingSettings)[number]>>;
     try { required = requireSettings(settings, sendingSettings); } catch { return defer(new Date(now.getTime() + 15 * 60000), 'texting_setting_required'); }
@@ -226,7 +227,7 @@ export class TextingMessaging {
         await this.release(sql, current, true);
         await this.finishSend(sql, current.send_id);
       } else if (found.outcome === 'not_submitted') {
-        const settle = (await readSettings(sql, workspace, this.options.probationPolicy)).reconcile_settle_minutes;
+        const settle = (await readSettings(sql, workspace)).reconcile_settle_minutes;
         const since = (current.submitted_at ?? current.next_check_at).getTime();
         if (settle !== undefined && since + settle * 60000 <= this.now().getTime()) {
           // Confirmed absent after the settle time: the reserved segments go back and it may be admitted again.
@@ -272,7 +273,7 @@ export class TextingMessaging {
         if (params.ErrorCode && permanentStatusCodes.has(params.ErrorCode)) await this.permanentFailure(sql, workspace, row, params.ErrorCode === '30006' ? 'landline' : 'permanent_failure');
         else if (params.ErrorCode === '21610') await this.permanentFailure(sql, workspace, row, 'unsubscribed');
         else {
-          const limit = (await readSettings(sql, workspace, this.options.probationPolicy)).consecutive_failure_limit ?? 3;
+          const limit = (await readSettings(sql, workspace, this.options.defaults)).consecutive_failure_limit ?? 3;
           const failures = (await sql.query<{ n: number }>('UPDATE sms_contacts SET consecutive_temp_failures=consecutive_temp_failures+1 WHERE id=$1 RETURNING consecutive_temp_failures n', [row.contact_id])).rows[0]!.n;
           if (failures >= limit) await this.permanentFailure(sql, workspace, row, 'repeated_failures');
         }
@@ -287,7 +288,9 @@ export class TextingMessaging {
     const from = params.From ?? '', body = (params.Body ?? '').slice(0, 1600), sid = params.MessageSid ?? '';
     const exists = (await sql.query('SELECT 1 FROM sms_inbound WHERE provider_sid=$1', [sid])).rowCount;
     if (exists) return { duplicate: true as const };
-    const number = (await sql.query<{ carrier_brand_id: string; company_id: string; help_contact: string }>(`SELECT n.carrier_brand_id,b.company_id,b.help_contact FROM sms_numbers n JOIN sms_carrier_brands b ON b.id=n.carrier_brand_id WHERE n.id=$1`, [numberId])).rows[0]!;
+    const number = (await sql.query<{ carrier_brand_id: string; company_id: string; help_contact: string; help_reply: string | null }>(`SELECT n.carrier_brand_id,b.company_id,
+      COALESCE(CASE WHEN b.profile ? 'onboarding' THEN b.profile->>'publicContact' END,b.help_contact) AS help_contact,
+      b.profile #>> '{onboarding,campaignReview,payload,helpMessage}' AS help_reply FROM sms_numbers n JOIN sms_carrier_brands b ON b.id=n.carrier_brand_id WHERE n.id=$1`, [numberId])).rows[0]!;
     const contact = (await sql.query<ContactRow>('SELECT * FROM sms_contacts WHERE phone_e164=$1', [from])).rows[0];
     const keyword = body.trim().toUpperCase().replace(/[^\p{L}\p{N}]+$/u, '');
     const has = (list: string[] | undefined) => !!list?.includes(keyword);
@@ -308,7 +311,7 @@ export class TextingMessaging {
       if (classification === 'confirm') await setConsent(sql, workspace, number.company_id, contact.id, 'opted_in', 'confirmed', 'inbound_sms', 'contact', 'webhook', { messageId: sid });
       if (classification === 'help') {
         await sql.query(`INSERT INTO sms_consent_events(workspace_id,id,company_id,contact_id,event,source,evidence_message_id,recorded_by) VALUES($1,$2,$3,$4,'help','inbound_sms',$5,'contact')`, [workspace, randomUUID(), number.company_id, contact.id, sid]);
-        await queueText(sql, workspace, { companyId: number.company_id, contactId: contact.id, purpose: 'help', to: from, body: helpText(await businessName(sql, number.company_id), number.help_contact) });
+        await queueText(sql, workspace, { companyId: number.company_id, contactId: contact.id, purpose: 'help', to: from, body: number.help_reply ?? helpText(await businessName(sql, number.company_id), number.help_contact) });
       }
     }
     await audit(sql, workspace, 'twilio', 'webhook', 'inbound.' + classification, id, null, { contact: contact?.id ?? null });

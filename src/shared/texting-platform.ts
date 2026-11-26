@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { textingSettingKeys, registrationSteps, campaignUseCases } from './texting.js';
-import { mockFaults } from './texting-mock.js';
+import { mockFaults, mockRegistrationScenarios } from './texting-mock.js';
 import { carrierEntityTypes, twilioBusinessTypes, twilioIndustries } from './texting-business.js';
 
 // Operator-only texting commands. Customer connection scopes never grant these (FL-SMS-003/013).
@@ -23,9 +23,10 @@ const campaignWording = z.object({
   stayTexts: z.boolean().optional(),
 }).strict();
 const mockAction = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('registration_scenario'), registrationId: z.uuid(), scenario: z.enum(mockRegistrationScenarios), reason }).strict(),
   z.object({ kind: z.literal('fault'), target: z.enum([...registrationSteps, 'send']), faults: z.array(z.enum(mockFaults)).min(1).max(10) }).strict(),
-  z.object({ kind: z.literal('brand'), registrationId: z.uuid(), status: z.enum(['APPROVED', 'FAILED', 'SUSPENDED']) }).strict(),
-  z.object({ kind: z.literal('campaign'), registrationId: z.uuid(), status: z.enum(['VERIFIED', 'FAILED', 'SUSPENDED']) }).strict(),
+  z.object({ kind: z.literal('brand'), registrationId: z.uuid(), status: z.enum(['APPROVED', 'FAILED', 'SUSPENDED']), errorCode: z.string().regex(/^30[789]\d{2}$/).optional() }).strict(),
+  z.object({ kind: z.literal('campaign'), registrationId: z.uuid(), status: z.enum(['VERIFIED', 'FAILED', 'SUSPENDED']), errorCode: z.string().regex(/^30[789]\d{2}$/).optional() }).strict(),
   z.object({ kind: z.literal('inbound'), from: z.string().regex(/^\+1\d{10}$/), to: z.string().regex(/^\+1\d{10}$/), body: z.string().min(1).max(320) }).strict(),
   z.object({ kind: z.literal('release_held_broadcast'), sendId: z.uuid(), reason }).strict(),
   z.object({ kind: z.literal('deliver') }).strict(),
@@ -56,7 +57,7 @@ export const textingPlatformCommands = {
   }),
   'platform.textingOnboardingReview': define('Return a practice enrollment for correction or end its probation with an audit reason.', true, {
     operationKey, workspaceId, companyId: z.uuid(), expectedRevision: z.number().int().positive(),
-    action: z.enum(['request_correction', 'complete_probation', 'accept_evidence', 'lift_suspension']), reason,
+    action: z.enum(['request_correction', 'complete_probation', 'accept_evidence', 'lift_suspension', 'void_practice_receipt']), expectedReceipt: z.string().regex(/^[0-9a-f]{64}$/).optional(), reason,
   }),
   'platform.textingProcess': define('Run one texting worker pass for a workspace now.', true, { operationKey, workspaceId }),
   'platform.textingMock': define('Staging mock only: script provider faults, decide brand or campaign status, deliver queued callbacks, or receive a text from a phone.', true, {

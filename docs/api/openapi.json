@@ -1061,6 +1061,9 @@
                       "send_window_end_hour",
                       "contact_monthly_limit",
                       "carrier_daily_limit",
+                      "mock_low_volume_daily_limit",
+                      "mock_standard_daily_limit",
+                      "mock_sole_proprietor_daily_limit",
                       "monthly_segment_allowance",
                       "test_texts_per_day",
                       "member_code_minutes",
@@ -2046,8 +2049,13 @@
                       "request_correction",
                       "complete_probation",
                       "accept_evidence",
-                      "lift_suspension"
+                      "lift_suspension",
+                      "void_practice_receipt"
                     ]
+                  },
+                  "expectedReceipt": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
                   },
                   "reason": {
                     "type": "string",
@@ -2173,6 +2181,39 @@
                         "properties": {
                           "kind": {
                             "type": "string",
+                            "const": "registration_scenario"
+                          },
+                          "registrationId": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "scenario": {
+                            "type": "string",
+                            "enum": [
+                              "lose_number_notice",
+                              "reject_campaign_terms"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 12,
+                            "maxLength": 400
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "registrationId",
+                          "scenario",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
                             "const": "fault"
                           },
                           "target": {
@@ -2233,6 +2274,10 @@
                               "FAILED",
                               "SUSPENDED"
                             ]
+                          },
+                          "errorCode": {
+                            "type": "string",
+                            "pattern": "^30[789]\\d{2}$"
                           }
                         },
                         "required": [
@@ -2261,6 +2306,10 @@
                               "FAILED",
                               "SUSPENDED"
                             ]
+                          },
+                          "errorCode": {
+                            "type": "string",
+                            "pattern": "^30[789]\\d{2}$"
                           }
                         },
                         "required": [
@@ -10939,7 +10988,6 @@
                     "required": [
                       "legalName",
                       "ein",
-                      "businessType",
                       "vertical",
                       "website",
                       "privacyPolicyUrl",
@@ -10956,6 +11004,10 @@
                     ],
                     "additionalProperties": false
                   },
+                  "nameConfirmed": {
+                    "type": "boolean",
+                    "const": true
+                  },
                   "accepted": {
                     "type": "boolean",
                     "const": true
@@ -10966,6 +11018,7 @@
                   "companyId",
                   "expectedRevision",
                   "business",
+                  "nameConfirmed",
                   "accepted"
                 ],
                 "additionalProperties": false
@@ -11543,6 +11596,50 @@
                       "declined",
                       "payer_mismatch"
                     ]
+                  },
+                  "practicePayer": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "street": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "city": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      },
+                      "region": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      },
+                      "postalCode": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16
+                      },
+                      "country": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 2
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "street",
+                      "city",
+                      "region",
+                      "postalCode",
+                      "country"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -11620,6 +11717,10 @@
                     "minimum": 1,
                     "maximum": 9007199254740991
                   },
+                  "reviewedCampaign": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
                   "acceptedPlan": {
                     "type": "string",
                     "enum": [
@@ -11632,6 +11733,50 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "practicePayer": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "street": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "city": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      },
+                      "region": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      },
+                      "postalCode": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16
+                      },
+                      "country": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 2
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "street",
+                      "city",
+                      "region",
+                      "postalCode",
+                      "country"
+                    ],
+                    "additionalProperties": false
                   },
                   "acceptedFee": {
                     "type": "integer",
@@ -11719,6 +11864,10 @@
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 9007199254740991
+                  },
+                  "reviewedCampaign": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
                   },
                   "acceptedPlan": {
                     "type": "string",

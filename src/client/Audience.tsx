@@ -32,8 +32,8 @@ type Summary = AudienceSummary & { people?: PeopleSummary };
 type Filters = { search: string; state: SubscriberState | 'no_email' | ''; text: TextState | ''; dates: 'birthday' | 'anniversary' | 'any' | ''; month: string };
 const noFilters: Filters = { search: '', state: '', text: '', dates: '', month: '' };
 
-export function Audience({ api, brands, canManageAutomations, onSetup }: { api: Api; brands: Brand[]; canManageAutomations: boolean; onSetup: () => void }) {
-  const [selectedBrand, setBrand] = useState(brands[0]?.id ?? '');
+export function Audience({ api, brands, initialBrand, canManageAutomations, onSetup }: { initialBrand?: string; api: Api; brands: Brand[]; canManageAutomations: boolean; onSetup: () => void }) {
+  const [selectedBrand, setBrand] = useState(brands.find(item => item.id === initialBrand)?.id ?? brands[0]?.id ?? '');
   const brandControl = useId();
   const brand = brands.find((item) => item.id === selectedBrand);
   return (
