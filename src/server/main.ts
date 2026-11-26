@@ -19,6 +19,7 @@ import { sandboxGateway } from './billing/gateway.js';
 import { platformRuntime } from './platform/runtime.js';
 import type { PlatformService } from './platform/service.js';
 import { CustomerWorkflows } from './customer-runtime.js';
+import { requestStagingWebhookTest } from './workspace-gifts/staging-webhook-test.js';
 
 if (existsSync('.env')) loadEnvFile('.env');
 const config = loadConfig();
@@ -72,6 +73,11 @@ if (configurationGaps(config).length === 0) {
   }
 }
 const server = createApp(config, service, auth, platform).listen(config.port, config.host, () => {
+  if (config.environment === 'staging' && service && process.env.FLOCKLETTER_GIFT_WEBHOOK_TEST_ID) {
+    tasks.push(requestStagingWebhookTest(service.db, process.env).catch(() => {
+      console.error('Tremendous staging webhook test could not verify or contact its configured destination.');
+    }));
+  }
   console.info(`Flockletter ${config.environment} listening on port ${config.port}. Customer delivery ${externalDelivery(service?.customer?.settings.delivery??'off')?'requires verified per-brand provider eligibility':'disabled'}.`);
 });
 for (const signal of ['SIGTERM', 'SIGINT'])

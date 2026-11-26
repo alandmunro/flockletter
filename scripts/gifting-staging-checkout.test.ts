@@ -11,6 +11,7 @@ import { loadConfig } from '../src/server/config.js';
 import { Database } from '../src/server/db.js';
 import { installCheckoutProof, operateCheckoutProof, readCheckoutProofStage } from '../src/server/workspace-gifts/checkout-proof.js';
 import { startDatabase } from './database-fixture.js';
+import { requestStagingWebhookTest } from '../src/server/workspace-gifts/staging-webhook-test.js';
 
 const origin = 'https://flockletter-staging.onrender.com';
 const workspace = 'fixture:gifting:checkout:v1';
@@ -278,5 +279,31 @@ test('the configured gateway resumes the bounded fixture across unpaid, ambiguou
     assert.deepEqual(await readCheckoutProofStage(db), stage('report_unavailable'));
     await stamp(marker, 'unpublished internal diagnostic');
     assert.deepEqual(await readCheckoutProofStage(db), stage('report_unavailable'));
+    await t.test('only the configured staging receiver gets one simulated event per request ID', async sub => {
+      const env = { ...bindings, FLOCKLETTER_GIFT_WEBHOOK_TEST_ID: 'da0c29d1-b338-4403-9525-2e792a6078eb',
+        FLOCKLETTER_GIFT_TREMENDOUS_WEBHOOK_SECRET: 'synthetic-webhook-secret' };
+      const api = 'https://testflight.tremendous.com/api/v2/webhooks';
+      let destination = 'https://other.example/events', reads = 0, submissions = 0;
+      sub.mock.method(globalThis, 'fetch', async (url: string, init: RequestInit) => {
+        assert.equal(init.redirect, 'error');
+        if (url === api && !init.method) {
+          reads++;
+          return Response.json({ webhooks: [{ id: 'TEST1234', url: destination }] });
+        }
+        assert.equal(url, api + '/TEST1234/simulate');
+        assert.equal(init.method, 'POST');
+        assert.deepEqual(JSON.parse(String(init.body)), { event: 'ORDERS.CREATED' });
+        submissions++;
+        return Response.json({});
+      });
+      await requestStagingWebhookTest(db, { ...env, APP_ENV: 'production' });
+      await requestStagingWebhookTest(db, { ...env, FLOCKLETTER_GIFT_WEBHOOK_TEST_ID: '' });
+      assert.equal(reads, 0);
+      await assert.rejects(requestStagingWebhookTest(db, env), /points elsewhere/);
+      assert.equal(submissions, 0);
+      destination = origin + '/api/v1/workspace-gifts/tremendous-events';
+      await Promise.all([requestStagingWebhookTest(db, env), requestStagingWebhookTest(db, env)]);
+      assert.equal(submissions, 1);
+    });
   } finally { await db.close(); }
 });
