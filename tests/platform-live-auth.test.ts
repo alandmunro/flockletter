@@ -33,8 +33,22 @@ describe('explicit temporary operator policy',()=>{
   ])('refuses %s=%s even while platform access is off', (key,value)=>{
     expect(()=>loadConfig({...env,FLOCKLETTER_OPERATOR_MFA_POLICY:'pre-revenue',FLOCKLETTER_PLATFORM_MODE:'off',[key]:value})).toThrow('hosted retention and signing off');
   });
-  it('does not make the Clerk upgrade a prerequisite to a first paid customer',()=>{
-    expect(loadConfig({...env,FLOCKLETTER_OPERATOR_MFA_POLICY:'pre-revenue',FLOCKLETTER_CUSTOMER_BILLING:'stripe_live',FLOCKLETTER_LIVE_BILLING_APPROVED:'true'}).operatorMfaPolicy).toBe('pre-revenue');
+  it.each([
+    ['FLOCKLETTER_CUSTOMER_BILLING','stripe_live'],
+    ['FLOCKLETTER_LIVE_BILLING_APPROVED','true'],
+    ['FLOCKLETTER_CUSTOMER_DELIVERY','resend'],
+    ['FLOCKLETTER_CUSTOMER_DELIVERY','ses'],
+    ['FLOCKLETTER_LIVE_MAILING_APPROVED','true'],
+    ['FLOCKLETTER_CUSTOMER_SUPPORT','live'],
+    ['FLOCKLETTER_SUPPORT_ACTIVATION_APPROVED','true'],
+    ['FLOCKLETTER_TEXTING','live'],
+    ['FLOCKLETTER_TEXTING_ACTIVATION_APPROVED','true'],
+    ['FLOCKLETTER_WORKSPACE_GIFTS','live'],
+    ['FLOCKLETTER_GIFT_DELIVERY','live'],
+  ])('refuses pre-revenue exception when %s=%s is configured',(key,value)=>{
+    expect(()=>loadConfig({...env,FLOCKLETTER_OPERATOR_MFA_POLICY:'pre-revenue',[key]:value})).toThrow('cannot be used with live billing');
+  });
+  it('permits pre-revenue exception only without live customer workflows',()=>{
     expect(operatorMfaPolicy('production',{FLOCKLETTER_OPERATOR_MFA_POLICY:'pre-revenue',FLOCKLETTER_BILLING_MODE:'sandbox'})).toBe('pre-revenue');
   });
   it('permits required policy with live-billing configuration for its separate checks',()=>{

@@ -1,12 +1,3 @@
 {
-  "exceptions": [
-    {
-      "advisory": "GHSA-fc5q-39xc-vjpf",
-      "package": "picomatch",
-      "scope": "development",
-      "reason": "ReDoS through single-branch repeated extglobs, affecting picomatch <=4.0.7 with no patched release yet. It reaches Flockletter only through build and test tooling (vite, vitest, tinyglobby, typescript-eslint), which match the repository's own fixed glob patterns, never user input. The production dependency tree does not include picomatch and is audited without exceptions.",
-      "accepted": "2026-11-17",
-      "expires": "2026-12-01"
-    }
-  ]
+  "exceptions": []
 }
