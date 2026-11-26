@@ -82,6 +82,7 @@ export const textingOnboardingCommands = {
   'sms.onboardingVerify': define('Check the code for the current business verification challenge.', true, {
     ...mutation, channel, code: z.string().regex(/^\d{6}$/),
   }),
+  'sms.onboardingCorrect': define('Return your unresolved, unpaid practice application to correct its business details.', true, mutation),
   'sms.onboardingScan': define('Check the business website, signup and policy pages for this revision.', true, mutation),
   'sms.onboardingEvidence': define('Attach a synthetic ownership letter to a practice review.', true, { ...mutation, document: z.enum(['CP575', '147C']), contents: z.string().max(1024).optional() }),
   'sms.onboardingResume': define('Resume a paused practice sender after reviewing the cause.', true, { ...mutation, reason: text(300).min(12) }),
@@ -111,7 +112,7 @@ export type OnboardingView = {
   carrierVerified: boolean;
   pageCheck: { retryAt?: string; attempts?: number; checkedAt: string; signupUrl?: string | null; issues: { page: string; message: string }[] } | null;
   review: string | null;
-  evidence: { document: 'CP575' | '147C'; attachedAt: string; fingerprint?: string; source?: 'template' | 'upload' } | null;
+  evidence: { caseId?: string; document: 'CP575' | '147C'; attachedAt: string; fingerprint?: string; source?: 'template' | 'upload' } | null;
   evidenceFiles?: Partial<Record<'CP575' | '147C', string>>;
   publicPages: { website: string; privacyPolicyUrl: string; smsTermsUrl: string } | null;
   progress: { stage: string; stalled: boolean; since: string } | null;

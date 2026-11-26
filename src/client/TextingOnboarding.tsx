@@ -155,9 +155,11 @@ function Enrollment({ api, company, refreshCompanies, onOpenAudience }: { onOpen
       </section>}
     </>}
     {view.state === 'review' && <section><h3>Ownership review</h3>
-      {view.review === 'hosted_ownership' || view.review === 'payer_mismatch' ? view.evidence ? <p>Practice letter {view.evidence.document} attached. An operator will review it.</p> : <>
+      {view.checkout !== 'paid' && view.checkout !== 'pending' && <button className="btn secondary" disabled={busy}
+        onClick={()=>void action(()=>api.call('sms.onboardingCorrect',context()).then(()=>setEdit(true)))}>Correct my application</button>}
+      {view.evidenceFiles ? view.evidence ? <p>Practice letter {view.evidence.document} attached. An operator will review it.</p> : <>
         <label>Practice IRS letter<select value={document} disabled={busy} onChange={e=>setDocument(e.target.value as 'CP575'|'147C')}><option>CP575</option><option>147C</option></select></label>
-        <p>Use the fictional letter for this company and enrollment revision.</p>
+        <p>Use only the fictional letter for this company and revision. An assigned reviewer can open it after verifying their sign-in. Originals expire 7 days after review closes or 30 days after upload, whichever comes first, unless a documented hold applies.</p>
         {view.evidenceFiles?.[document] && <PracticeEvidenceFile key={view.revision + document}
           expected={view.evidenceFiles[document]} document={document} busy={busy} action={action}
           attach={contents => api.call('sms.onboardingEvidence', { ...context(), document, contents })} />}

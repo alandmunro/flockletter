@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { TextingEvidenceCase, type ReviewerCase } from './TextingEvidenceCase.js';
 import { operationKey } from './api.js';
 import type { PlatformApi } from './platform-api.js';
 
 // FL-SMS-004/013: operator texting controls. Same commands as /api/operator/v1 and the operator MCP.
-type Setting = { key: string; kind: string; min?: number; max?: number; required: string; description: string; platform: { value: unknown; revision: number } | null; workspace: { value: unknown; revision: number } | null };
+type Setting = { key: string; kind: string; privateDefault?: boolean; min?: number; max?: number; required: string; description: string; platform: { value: unknown; revision: number } | null; workspace: { value: unknown; revision: number } | null };
 type CohortCount = { first: boolean; state: string; reason: string | null; texts: number; attempts: number };
 type Registration = { mode: string; settingsNeeded?: string[]; reviewQueue?: {id:string;company:string;reason:string;since:string}[]; registrations: { id: string; company_id: string; legal_name: string; state: string; revision: number; rejection_reason: string | null; carrier_brand_id: string;
-  onboardingRevision?: number | null; onboardingReview?: string | null; evidenceDocument?:string | null; evidenceSource?: string | null; evidenceFingerprint?: string | null; probationState?: string | null; firstBroadcast?: CohortCount[];
+  evidenceCases?:ReviewerCase[]; onboardingRevision?: number | null; onboardingReview?: string | null; evidenceDocument?:string | null; evidenceSource?: string | null; evidenceFingerprint?: string | null; probationState?: string | null; firstBroadcast?: CohortCount[];
   steps: { step: string; state: string; attempts: number; operationKey: string; reason: string | null }[] }[]; numbers: { e164: string; state: string }[] };
 
 export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformApi; workspaceId: string; onError: (message: string) => void }) {
@@ -37,7 +38,7 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
       <label>Reason for change<input minLength={12} maxLength={400} value={reason} onChange={e => setReason(e.target.value)} /></label>
       <div className="operator-table-wrap"><table className="operator-health"><thead><tr><th>Setting</th><th>Platform</th><th>Workspace</th><th>New value</th><th /></tr></thead><tbody>
         {settings.map(s => <tr key={s.key}><td><strong>{s.key}</strong><br /><span className="help">{s.description}{s.kind === 'int' ? ` (${s.min}–${s.max})` : ''}{s.required !== 'optional' ? ` · needed for ${s.required}` : ''}</span></td>
-          <td>{show(s.platform?.value)}</td><td>{show(s.workspace?.value)}</td>
+          <td>{s.privateDefault && !s.platform ? 'Private default configured' : show(s.platform?.value)}</td><td>{show(s.workspace?.value)}</td>
           <td><input aria-label={'New value for ' + s.key} value={edits[s.key] ?? ''} placeholder={s.kind === 'int' ? 'number, blank clears' : 'comma-separated, blank clears'} onChange={e => setEdits(x => ({ ...x, [s.key]: e.target.value }))} /></td>
           <td><button className="btn secondary" disabled={busy || reason.trim().length < 12 || (scope === 'workspace' && !workspaceId)} onClick={() => void save(s)}>Save</button></td></tr>)}
       </tbody></table></div>
@@ -61,14 +62,15 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
           </li>)}</ul>
         </div>}
         <ul>{r.steps.map(s => <li key={s.step}>{s.step.replaceAll('_', ' ')}: {s.state}{s.attempts ? ` (${s.attempts} call${s.attempts > 1 ? 's' : ''})` : ''}{s.reason ? ' · ' + s.reason : ''} <code>{s.operationKey}</code></li>)}</ul>
+        {r.evidenceCases?.map(item=><TextingEvidenceCase key={workspaceId+'/'+item.id+'/'+item.assignedToMe} item={item} workspaceId={workspaceId} companyId={r.company_id} api={api} run={run} busy={busy} />)}
         <div className="button-row">
           {!r.onboardingRevision && ['draft', 'rejected'].includes(r.state) && <button className="btn" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingSubmit', { operationKey: operationKey(), workspaceId, registrationId: r.id, reason }))}>Submit registration</button>}
           {r.evidenceDocument && r.onboardingRevision && ['hosted_ownership','payer_mismatch'].includes(r.onboardingReview ?? '') && <>
             <p>Practice evidence · {r.evidenceDocument} · enrollment revision {r.onboardingRevision}
               {r.evidenceSource === 'upload' ? ' · Verified practice file' : ' · Generated practice letter'}
               {r.evidenceFingerprint && ' · Receipt ' + r.evidenceFingerprint.slice(0, 12)}</p>
-            <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={()=>void run(()=>api.call('platform.textingOnboardingReview',{
-              operationKey:operationKey(),workspaceId,companyId:r.company_id,expectedRevision:r.onboardingRevision,action:'accept_evidence',reason}))}>Accept practice ownership evidence</button></>}
+            {r.evidenceCases?.some(item=>item.assignedToMe && !item.closed && item.revision===r.onboardingRevision) && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={()=>void run(()=>api.call('platform.textingOnboardingReview',{
+              operationKey:operationKey(),workspaceId,companyId:r.company_id,expectedRevision:r.onboardingRevision,action:'accept_evidence',reason}))}>Accept practice ownership evidence</button>}</>}
           {r.onboardingRevision && r.probationState === 'suspended' && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={()=>void run(()=>api.call('platform.textingOnboardingReview',{
             operationKey:operationKey(),workspaceId,companyId:r.company_id,expectedRevision:r.onboardingRevision,action:'lift_suspension',reason}))}>Lift suspension and restart probation</button>}
           {r.onboardingRevision && r.onboardingReview && <button className="btn secondary" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingOnboardingReview', {

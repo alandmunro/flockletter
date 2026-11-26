@@ -5,14 +5,14 @@ import type { Authenticator } from '../auth.js';
 import { requireCondition } from '../errors.js';
 import { currentFirstFactor,operatorMfaPolicy,type OperatorMfaPolicy } from './auth-policy.js';
 
-export type OperatorSession={userId:string;sessionId:string;verifiedAt:string;workspaceId?:string;exercise:boolean;authentication?:OperatorMfaPolicy};
+export type OperatorSession={userId:string;sessionId:string;verifiedAt:string;workspaceId?:string;exercise:boolean;mfaAt?:string;authentication?:OperatorMfaPolicy};
 export interface OperatorIdentity { readonly mfaPolicy?:OperatorMfaPolicy; authenticate(request:ExpressRequest):Promise<OperatorSession>; current(session:OperatorSession):Promise<boolean>; }
 export const MFA_MAX_AGE_MS=5*60000;
 export function currentMfa(ages:unknown,enabled:boolean){return enabled&&Array.isArray(ages)&&ages.length===2&&ages.every(v=>Number.isFinite(v)&&v>=0&&v<5);}
 export function platformIdentity(config:Config,auth:Authenticator,mode:'capture'|'live',env:NodeJS.ProcessEnv):OperatorIdentity {
   const policy=operatorMfaPolicy(config.environment,env);
   if(mode==='capture')return {
-    async authenticate(request){const actor=await auth.authenticate(request);requireCondition(actor.kind==='session'&&actor.owner&&await auth.identity.isOwner(actor.userId,actor.workspaceId),403,'operator_required','Use a current owner session for this workspace exercise.');return {userId:actor.userId,sessionId:actor.actorId,workspaceId:actor.workspaceId,verifiedAt:new Date().toISOString(),exercise:true};},
+    async authenticate(request){const actor=await auth.authenticate(request);requireCondition(actor.kind==='session'&&actor.owner&&await auth.identity.isOwner(actor.userId,actor.workspaceId),403,'operator_required','Use a current owner session for this workspace exercise.');return {userId:actor.userId,sessionId:actor.actorId,workspaceId:actor.workspaceId,verifiedAt:new Date().toISOString(),mfaAt:actor.mfaAt,exercise:true};},
     async current(session){return !!session.exercise&&!!session.workspaceId&&await auth.identity.isOwner(session.userId,session.workspaceId);},
   };
   const organization=env.FLOCKLETTER_OPERATOR_ORGANIZATION_ID;

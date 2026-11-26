@@ -1,3 +1,5 @@
+import {readProbationPolicy} from '../src/server/texting/probation-policy.js';
+import {probationHold,assignCanary} from '../src/server/texting/probation.js';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { startDatabase } from '../scripts/database-fixture.js';
@@ -17,6 +19,8 @@ const settings = {
   probation_initial_days: 1,
   probation_initial_daily_limit: 20,
   probation_daily_limit: 20,
+  probation_pause_filter_bps: 4500,
+  probation_pause_optout_bps: 4500,
   probation_risk_window_days: 1,
   probation_risk_minimum: 4,
   probation_suspend_filter_bps: 5000,
@@ -40,7 +44,7 @@ afterAll(async () => {
   await fixture?.stop();
 });
 
-async function active(workspace: string) {
+async function active(workspace: string, overrides: Record<string,number> = settings) {
   clock = start + 3_600_000;
   const owner: Actor = {
     kind: 'session',
@@ -57,7 +61,7 @@ async function active(workspace: string) {
     { operationKey: randomUUID(), name: 'Practice workspace', brandName: 'Practice' },
     owner,
   );
-  for (const [key, value] of Object.entries(settings))
+  for (const [key, value] of Object.entries(overrides))
     await texting.operator(
       'platform.textingSetSetting',
       {
@@ -107,7 +111,7 @@ type Practice = Awaited<ReturnType<typeof active>>;
 // Persist terminal delivery facts from one synthetic broadcast. No worker or carrier action creates these rows.
 async function receipt(p: Practice, index: number, filtered = false) {
   const contact = randomUUID(),
-    phone = '+121255501' + String(index).padStart(2, '0');
+    phone = '+1' + String(212 + Math.floor(index/100)) + '55501' + String(index%100).padStart(2,'0');
   await db.tenant(p.workspace, async (sql) => {
     await sql.query('INSERT INTO sms_contacts(workspace_id,id,phone_e164) VALUES($1,$2,$3)', [
       p.workspace,
@@ -251,3 +255,131 @@ it('wakes at minimum age and graduates only the workspace with enough delivered 
     deliver.mockRestore();
   }
 });
+
+it('enforces a whole private deployment profile at its exact filter, volume and cohort boundaries', async () => {
+  const policy = readProbationPolicy(
+    process.env.FLOCKLETTER_TEXTING_PROBATION_POLICY ??
+      JSON.stringify({
+        ...settings,
+        probation_pause_filter_bps: 1000,
+        probation_suspend_filter_bps: 7500,
+        probation_pause_optout_bps: 1000,
+        probation_suspend_optout_bps: 7500,
+      }),
+  )!;
+  expect(() =>
+    readProbationPolicy(
+      JSON.stringify({ ...policy, probation_pause_optout_bps: policy.probation_suspend_optout_bps }),
+    ),
+  ).toThrow();
+  const configured = Texting.mock(db, { ...texting.options, probationPolicy: policy });
+  const p = await active('org_deployment_policy', {});
+  const definitions = (await configured.operator(
+    'platform.textingSettings',
+    { workspaceId: p.workspace },
+    operator,
+  )) as { key: string; privateDefault: boolean; platform: unknown }[];
+  expect(definitions.filter((d) => d.privateDefault)).toHaveLength(Object.keys(policy).length);
+  expect(definitions.filter((d) => d.privateDefault).every((d) => d.platform === null)).toBe(true);
+  const total = policy.probation_risk_minimum;
+  const pause = Math.ceil((total * policy.probation_pause_filter_bps) / 10000);
+  const suspend = Math.ceil((total * policy.probation_suspend_filter_bps) / 10000);
+  for (let n = 1; n < total; n++) await receipt(p, n, n <= pause);
+  await configured.tick(p.workspace);
+  expect(await state(p)).toBe('active');
+  await receipt(p, total);
+  await configured.tick(p.workspace);
+  expect(await state(p)).toBe('paused');
+  if (suspend > pause) {
+    await db.tenant(p.workspace, (sql) =>
+      sql.query(
+        `UPDATE sms_messages SET state='undelivered',reason='twilio_30007' WHERE id IN
+      (SELECT id FROM sms_messages WHERE state='delivered' LIMIT $1)`,
+        [suspend - pause],
+      ),
+    );
+    await configured.tick(p.workspace);
+    expect(await state(p)).toBe('suspended');
+  }
+  const opt = await active('org_private_optout', {});
+  const number = randomUUID(),
+    contacts: string[] = [];
+  await db.tenant(opt.workspace, (sql) =>
+    sql.query(
+      `INSERT INTO sms_numbers(workspace_id,id,carrier_brand_id,e164,provider_sid,messaging_service_sid,state)
+    VALUES($1,$2,$3,'+13125550198','PNfixture','MGfixture','active')`,
+      [opt.workspace, number, opt.brand],
+    ),
+  );
+  for (let n = 0; n < total - 1; n++) contacts.push(await receipt(opt, n));
+  const stop = async (i: number) =>
+    db.tenant(opt.workspace, (sql) =>
+      sql.query(
+        `INSERT INTO sms_inbound(workspace_id,id,number_id,from_e164,contact_id,body,provider_sid,classification,received_at)
+    SELECT $1,gen_random_uuid(),$2,phone_e164,id,'STOP',gen_random_uuid()::text,'stop',$4 FROM sms_contacts WHERE id=$3`,
+        [opt.workspace, number, contacts[i], new Date(start + 2000)],
+      ),
+    );
+  const stopPause = Math.ceil((total * policy.probation_pause_optout_bps) / 10000);
+  const stopSuspend = Math.ceil((total * policy.probation_suspend_optout_bps) / 10000);
+  for (let i = 0; i < stopPause; i++) await stop(i);
+  await configured.tick(opt.workspace);
+  expect(await state(opt)).toBe('active');
+  contacts.push(await receipt(opt, total));
+  await configured.tick(opt.workspace);
+  expect(await state(opt)).toBe('paused');
+  for (let i = stopPause; i < stopSuspend; i++) await stop(i);
+  await configured.tick(opt.workspace);
+  expect(await state(opt)).toBe('suspended');
+  const ramp = await active('org_private_ramp', {});
+  for (let n = 0; n < policy.probation_daily_limit; n++) await receipt(ramp, n);
+  const check = (at: number) =>
+    db.tenant(ramp.workspace, (sql) =>
+      probationHold(sql, ramp.workspace, ramp.company, null, policy, new Date(at)),
+    );
+  // Fixtures are all delivered in one broadcast. Count recipients individually at the UTC daily boundary.
+  await db.tenant(ramp.workspace, (sql) =>
+    sql.query('UPDATE sms_messages SET send_day=$1', [new Date(start).toISOString().slice(0, 10)]),
+  );
+  const allocate = (n: number, date: number) =>
+    db.tenant(ramp.workspace, async (sql) => {
+      await sql.query('UPDATE sms_messages SET send_day=NULL');
+      await sql.query(
+        'UPDATE sms_messages SET send_day=$1 WHERE id IN (SELECT id FROM sms_messages LIMIT $2)',
+        [new Date(date).toISOString().slice(0, 10), n],
+      );
+    });
+  await allocate(policy.probation_initial_daily_limit - 1, start);
+  expect(await check(start + 3600000)).toBeNull();
+  await allocate(policy.probation_initial_daily_limit, start);
+  expect((await check(start + 3600000))?.reason).toBe('probation_daily_limit');
+  const second = start + policy.probation_initial_days * day;
+  expect(await check(second)).toBeNull();
+  await allocate(policy.probation_daily_limit - 1, second);
+  expect(await check(second)).toBeNull();
+  await allocate(policy.probation_daily_limit, second);
+  expect((await check(second))?.reason).toBe('probation_daily_limit');
+  await db.tenant(ramp.workspace, async (sql) => {
+    await sql.query("UPDATE sms_carrier_brands SET profile=jsonb_set(profile,'{onboarding,probation}',$1)", [
+      JSON.stringify({ state: 'awaiting_canary', startsAt: new Date(start).toISOString() }),
+    ]);
+    await assignCanary(sql, ramp.company, ramp.send, policy, ramp.workspace);
+    const count = (
+      await sql.query(
+        "SELECT jsonb_array_length(profile#>'{onboarding,probation,members}') n FROM sms_carrier_brands",
+      )
+    ).rows[0]!.n;
+    expect(count).toBe(Math.min(policy.probation_daily_limit, policy.probation_canary_count));
+    const delivery = new Date(start + 2000);
+    await sql.query('UPDATE sms_messages SET updated_at=$1', [delivery]);
+    const end = +delivery + policy.probation_canary_minutes * 60000;
+    expect(
+      (await probationHold(sql, ramp.workspace, ramp.company, null, policy, new Date(end - 1)))?.reason,
+    ).toBe('probation_canary_pending');
+    await probationHold(sql, ramp.workspace, ramp.company, null, policy, new Date(end));
+    expect(
+      (await sql.query("SELECT profile#>>'{onboarding,probation,state}' s FROM sms_carrier_brands")).rows[0]!
+        .s,
+    ).toBe('active');
+  });
+}, 60000);

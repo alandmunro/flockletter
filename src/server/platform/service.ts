@@ -125,7 +125,7 @@ export class PlatformService {
    const target=(input as {workspaceId?:string|null}).workspaceId;
    // A workspace exercise may act only on its own workspace and never on platform-wide values.
    if(actor.exercise)requireCondition(target===actor.workspaceId,403,'exercise_workspace_only','The operator exercise is limited to your current workspace.');
-   return texting.operator(name as import('../../shared/texting-platform.js').TextingPlatformCommand,input,{userId:actor.userId,via});
+   return texting.operator(name as import('../../shared/texting-platform.js').TextingPlatformCommand,input,{userId:actor.userId,via,mfaAt:actor.exercise ? actor.mfaAt : actor.authentication==='required' ? actor.verifiedAt : undefined});
   }
   if(name==='platform.overview')return this.overview(actor);
   if(name==='platform.openCase'){

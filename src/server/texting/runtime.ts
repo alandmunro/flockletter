@@ -1,3 +1,7 @@
+import { reviewerSeats } from './practice-evidence.js';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { readProbationPolicy } from './probation-policy.js';
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import type { Database } from '../db.js';
@@ -47,7 +51,9 @@ export function createTexting(db: Database, config: Config, env: NodeJS.ProcessE
     const onboarding = z.enum(['off', 'capture', 'stripe_test']).parse(env.FLOCKLETTER_TEXTING_ONBOARDING ?? (config.environment === 'staging' ? 'capture' : 'off'));
     const stripe = onboarding === 'stripe_test' ? new StripeTestSetupPayment(env.FLOCKLETTER_TEXTING_SETUP_STRIPE_KEY ?? '',
       env.FLOCKLETTER_TEXTING_SETUP_STRIPE_WEBHOOK ?? '', env.FLOCKLETTER_TEXTING_SETUP_STRIPE_ACCOUNT ?? '', config.origin) : undefined;
-    return Texting.mock(db, { origin: config.origin, linkOrigin, ...options, onboardingCapture: onboarding !== 'off', onboardingStripe: stripe });
+    return Texting.mock(db, { origin: config.origin, linkOrigin, ...options, evidenceReviewers: reviewerSeats(env.FLOCKLETTER_TEXTING_EVIDENCE_REVIEWERS),
+      evidenceDirectory: config.environment === 'staging' ? join(tmpdir(),'flockletter-synthetic-texting-evidence') : undefined,
+      probationPolicy: readProbationPolicy(env.FLOCKLETTER_TEXTING_PROBATION_POLICY), onboardingCapture: onboarding !== 'off', onboardingStripe: stripe });
   }
   if (!secrets) throw Error('Live texting secrets were not loaded. Start the workflows with CustomerWorkflows.start().');
   const replyKey = secrets.get(replyForwardingKey)?.trim();

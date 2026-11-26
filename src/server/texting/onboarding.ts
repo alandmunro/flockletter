@@ -12,6 +12,9 @@ import { acceptEnrollmentPlan } from './commercial.js';
 import { hostedBusinessUrls, makeHostedPolicySnapshot } from '../../shared/texting-policy-pages.js';
 import { scanEnrollmentPages } from './website-preflight.js';
 import type { SetupReceipt, StripeTestSetupPayment } from './setup-payment.js';
+import { PracticeEvidence, saveEvidenceCase, type EvidenceCase, type EvidenceActor } from './practice-evidence.js';
+import { textingPlatformCommands } from '../../shared/texting-platform.js';
+import type { z } from 'zod';
 import { enrollmentNotices, restartPracticeProbation } from './enrollment-recovery.js';
 import { audit, once, requestHash, type Interface } from './storage.js';
 
@@ -54,7 +57,7 @@ type Enrollment = {
 };
 type Row = {
   id: string; dba_name: string | null; registration_id: string; state: string; legal_name: string; rejection_reason: string | null;
-  profile: Record<string, unknown> & { onboarding?: Enrollment; campaign?: { samples: string[] } };
+  profile: Record<string, unknown> & { onboarding?: Enrollment; practiceEvidenceCases?: Record<string,EvidenceCase>; campaign?: { samples: string[] } };
 };
 
 // These fixtures contain no business data and have no value as real identity documents.
@@ -109,13 +112,28 @@ export class TextingOnboarding {
     private readonly now: () => Date,
     private readonly stripe?: StripeTestSetupPayment,
     private readonly readPage?: (url: string) => Promise<string>,
+    readonly letters = new PracticeEvidence([]),
   ) {}
 
   private async row(sql: Sql, companyId: string) {
     const company = await sql.query('SELECT id FROM companies WHERE id=$1', [companyId]);
     requireCondition(company.rowCount, 404, 'not_found', 'This company is unavailable in this workspace.');
-    return (await sql.query<Row>(`SELECT b.id,b.dba_name,b.legal_name,b.profile,r.id registration_id,r.state,r.rejection_reason
-      FROM sms_carrier_brands b JOIN sms_registrations r ON r.carrier_brand_id=b.id WHERE b.company_id=$1`, [companyId])).rows[0];
+    const row = (
+      await sql.query<Row>(
+        `SELECT b.id,b.dba_name,b.legal_name,b.profile,r.id registration_id,r.state,r.rejection_reason
+      FROM sms_carrier_brands b JOIN sms_registrations r ON r.carrier_brand_id=b.id WHERE b.company_id=$1`,
+        [companyId],
+      )
+    ).rows[0];
+    // Prior staging revisions sent hosted sole proprietors to an EIN-letter review.
+    // The separate carrier/email/phone challenges remain mandatory.
+    if (
+      row?.profile.registrationType === 'sole_proprietor' &&
+      row.profile.onboarding?.review === 'hosted_ownership'
+    ) {
+      delete row.profile.onboarding.review;
+    }
+    return row;
   }
 
   private async view(sql: Sql, workspace: string, companyId: string, row: Row | undefined, user: string): Promise<OnboardingView> {
@@ -124,6 +142,9 @@ export class TextingOnboarding {
     const personal = owned && row ? current : undefined;
     const business = personal && row ? readBusiness(row) : null;
     const progress = personal && row ? await this.registration.progress(sql, workspace, row.registration_id) : null;
+    const review = personal?.review;
+    const c = personal?.evidence?.caseId && row?.profile.practiceEvidenceCases?.[personal.evidence.caseId];
+    const attached = c && await this.letters.available(c,this.now());
     return {
       available: true, blocked: !!row && !owned,
       signupReady: !row || (owned && ['draft','rejected'].includes(row.state))
@@ -134,8 +155,8 @@ export class TextingOnboarding {
       business: row && owned && ['draft', 'rejected'].includes(row.state) ? business : null,
       requiredChannels: channelsFor(business?.registrationType === 'sole_proprietor'),
       carrierVerified: personal?.challenges.carrier?.verified === true,
-      pageCheck: personal?.pendingScan ? null : personal?.pageCheck ?? null, review: personal?.review ?? null, evidence: personal?.evidence ?? null,
-      ...(row && personal && (personal.review === 'payer_mismatch' || personal.review === 'hosted_ownership') && {
+      pageCheck: personal?.pendingScan ? null : personal?.pageCheck ?? null, review: personal?.review ?? null, evidence: attached ? personal?.evidence ?? null : null,
+      ...(row && personal && row.profile.registrationType !== 'sole_proprietor' && (personal.review === 'payer_mismatch' || personal.review === 'hosted_ownership') && {
         evidenceFiles: { CP575: practiceLetter(workspace, row, personal.revision, 'CP575'), '147C': practiceLetter(workspace, row, personal.revision, '147C') },
       }),
       publicPages: business?.hostedPages ? { website: business.website, privacyPolicyUrl: business.privacyPolicyUrl, smsTermsUrl: business.smsTermsUrl } : null,
@@ -146,8 +167,9 @@ export class TextingOnboarding {
       checkoutMode: this.stripe ? 'stripe_test' : 'capture',
       setupFee: setupFeeFor(business?.plan), state: personal?.correction ? 'correction_required' : owned && current.review ? 'review'
         : owned && row?.state === 'rejected' && !current.submittedAt ? 'draft' : row?.state ?? 'not_started',
-      message: personal?.correction ? correctionMessages[personal.correction] : owned && current.review
-        ? reviewMessages[current.review]
+      message: personal?.correction ? correctionMessages[personal.correction] : review
+        ? row?.profile.registrationType === 'sole_proprietor' && review === 'payer_mismatch'
+          ? 'The payer details differ. Ask for a billing review or correction.' : reviewMessages[review]
         : row?.state === 'rejected' && owned && current.submittedAt ? rejectionMessage(row.rejection_reason) : null,
       samples: owned ? row?.profile.campaign?.samples ?? [] : [],
     };
@@ -216,25 +238,80 @@ export class TextingOnboarding {
         requireCondition(row && state?.owner === actor.userId, 404, 'enrollment_not_found', 'This enrollment is unavailable.');
         requireCondition(state.revision === input.expectedRevision, 409, 'revision_conflict', 'This enrollment changed. Reload it first.');
         requireCondition(!state.correction, 409, 'enrollment_correction_required', 'Save a corrected enrollment before continuing.');
+        if (name === 'sms.onboardingCorrect') {
+          requireCondition(
+            state.review &&
+              !state.submittedAt &&
+              ['draft', 'rejected'].includes(row.state) &&
+              state.payment?.state !== 'paid' &&
+              state.payment?.state !== 'pending',
+            409,
+            'correction_unavailable',
+            'This application cannot be reopened for editing.',
+          );
+          return this.review(
+            sql,
+            workspace,
+            input.companyId,
+            state.revision,
+            'request_correction',
+            actor.actorId,
+            via,
+            'Owner requested to correct business details.',
+          );
+        }
         if (name === 'sms.onboardingResume') {
           const { reason } = commands[name].schema.parse(raw);
           return restartPracticeProbation(sql, workspace, row.id, row.registration_id, actor.actorId, via, reason, this.now(), 'paused');
         }
         if (name === 'sms.onboardingEvidence') {
           const { document, contents } = commands[name].schema.parse(raw);
-          requireCondition(state.review === 'hosted_ownership' || state.review === 'payer_mismatch', 409, 'review_unavailable',
-            'A practice ownership letter is available for hosted-page and payer reviews.');
+          requireCondition(
+            row.profile.registrationType !== 'sole_proprietor' &&
+              (state.review === 'hosted_ownership' || state.review === 'payer_mismatch'),
+            409,
+            'review_unavailable',
+            'A practice ownership letter is available for hosted-page and payer reviews.',
+          );
           const expected = practiceLetter(workspace, row, state.revision, document);
-          requireCondition(contents === undefined || contents === expected, 422, 'practice_letter_mismatch',
-            'Use the practice letter downloaded for this company, letter type and enrollment revision.');
-          requireCondition(!state.evidence || state.evidence.document === document, 409, 'evidence_already_attached',
-            'A different practice letter is already attached to this review.');
+          requireCondition(
+            contents === undefined || contents === expected,
+            422,
+            'practice_letter_mismatch',
+            'Use the practice letter downloaded for this company, letter type and enrollment revision.',
+          );
+          const existing =
+            state.evidence?.caseId && row.profile.practiceEvidenceCases?.[state.evidence.caseId];
+          if (!existing || !(await this.letters.available(existing, this.now()))) delete state.evidence;
+          requireCondition(
+            !state.evidence || state.evidence.document === document,
+            409,
+            'evidence_already_attached',
+            'A different practice letter is already attached to this review.',
+          );
           if (!state.evidence) {
             const source = contents === undefined ? 'template' : 'upload';
             const fingerprint = requestHash(expected);
-            state.evidence = { document, fingerprint, source, attachedAt: this.now().toISOString() };
+            const c: EvidenceCase = {
+              id: randomUUID(),
+              workspace,
+              revision: state.revision,
+              document,
+              uploadedAt: this.now().toISOString(),
+              assigned: this.letters.seats[0] ?? null,
+            };
+            await this.letters.attach(c, expected);
+            await saveEvidenceCase(sql, row.id, c);
+            state.evidence = { caseId: c.id, document, fingerprint, source, attachedAt: c.uploadedAt };
             await this.record(sql, row, state);
-            await audit(sql, workspace, actor.actorId, via, 'onboarding.practice_evidence', row.id, null, { revision: state.revision, document, fingerprint, source });
+            await audit(sql, workspace, actor.actorId, via, 'onboarding.practice_evidence', row.id, null, {
+              caseId: state.evidence.caseId,
+              company: input.companyId,
+              revision: state.revision,
+              document,
+              fingerprint,
+              source,
+            });
           }
           return { attached: true };
         }
@@ -320,7 +397,7 @@ export class TextingOnboarding {
   private requireCheck(state: Enrollment, hosted: unknown) {
     requireCondition(!state.pendingScan && state.pageCheck && !state.pageCheck.issues.length && this.now().getTime() - Date.parse(state.pageCheck.checkedAt) < checkLifetime,
       409, 'website_check_required', 'Resolve the website checks and check the pages again before continuing.');
-    requireCondition(!state.review && (!hosted || state.hostedApproved), 409, 'onboarding_review', 'Resolve the enrollment review before continuing.');
+    requireCondition(!state.review && (!hosted || state.hostedApproved || state.challenges.carrier?.verified), 409, 'onboarding_review', 'Resolve the enrollment review before continuing.');
   }
 
   // The worker reads a single due revision per pass. A saved lease survives a restart during the fetch.
@@ -488,31 +565,181 @@ export class TextingOnboarding {
     });
   }
 
-  async review(sql: Sql, workspace: string, companyId: string, expectedRevision: number,
-    action: 'request_correction' | 'complete_probation' | 'accept_evidence' | 'lift_suspension', actor: string, via: Interface, reason: string) {
+  async review(
+    sql: Sql,
+    workspace: string,
+    companyId: string,
+    expectedRevision: number,
+    action: 'request_correction' | 'complete_probation' | 'accept_evidence' | 'lift_suspension',
+    actor: string,
+    via: Interface,
+    reason: string,
+    reviewer?: EvidenceActor,
+  ) {
     const row = await this.row(sql, companyId);
     const state = row?.profile.onboarding;
     requireCondition(row && state, 404, 'enrollment_not_found', 'This enrollment is unavailable.');
-    requireCondition(state.revision === expectedRevision, 409, 'revision_conflict', 'This enrollment changed. Reload it first.');
-    if (action === 'lift_suspension') return restartPracticeProbation(sql, workspace, row.id, row.registration_id, actor, via, reason, this.now(), 'suspended');
+    requireCondition(
+      state.revision === expectedRevision,
+      409,
+      'revision_conflict',
+      'This enrollment changed. Reload it first.',
+    );
+    if (action === 'lift_suspension')
+      return restartPracticeProbation(
+        sql,
+        workspace,
+        row.id,
+        row.registration_id,
+        actor,
+        via,
+        reason,
+        this.now(),
+        'suspended',
+      );
+    const c = state.evidence?.caseId && row.profile.practiceEvidenceCases?.[state.evidence.caseId];
     if (action === 'accept_evidence') {
-      requireCondition(state.evidence && (state.review === 'hosted_ownership' || state.review === 'payer_mismatch'), 409, 'evidence_unavailable', 'Review a practice letter for this revision. An ownership conflict requires corrected business details.');
+      requireCondition(
+        c && c.revision === state.revision && !c.closedAt && (await this.letters.available(c, this.now())),
+        409,
+        'evidence_unavailable',
+        'Attach a current practice original to this revision.',
+      );
+      requireCondition(reviewer, 403, 'evidence_reviewer_required', 'A named identity reviewer is required.');
+      this.letters.authorize(reviewer, c, this.now());
+      requireCondition(
+        c.viewedBy === reviewer.userId && this.now().getTime() - Date.parse(c.viewedAt ?? '') < 300_000,
+        409,
+        'evidence_view_required',
+        'Open this case’s current original before accepting it.',
+      );
+      requireCondition(
+        state.evidence && (state.review === 'hosted_ownership' || state.review === 'payer_mismatch'),
+        409,
+        'evidence_unavailable',
+        'Review a practice letter for this revision. An ownership conflict requires corrected business details.',
+      );
       if (row.profile.hostedPages) state.hostedApproved = true;
       delete state.review;
     } else if (action === 'request_correction') {
-      requireCondition(state.review, 409, 'review_unavailable', 'This enrollment does not need identity review.');
-      requireCondition(state.payment?.state !== 'paid' || state.review !== 'payer_mismatch', 409, 'checkout_reconciliation_required', 'Review the paid receipt and its evidence before resolving this mismatch.');
+      if (c && reviewer) this.letters.authorize(reviewer, c, this.now());
+      requireCondition(
+        state.review,
+        409,
+        'review_unavailable',
+        'This enrollment does not need identity review.',
+      );
+      requireCondition(
+        state.payment?.state !== 'paid' || state.review !== 'payer_mismatch',
+        409,
+        'checkout_reconciliation_required',
+        'Review the paid receipt and its evidence before resolving this mismatch.',
+      );
       state.correction = state.review;
       delete state.review;
       delete state.evidence;
       state.challenges = {};
     } else {
-      requireCondition(row.state === 'approved' && !['paused', 'suspended'].includes(state.probation?.state ?? ''), 409, 'registration_not_approved', 'The sender must be approved and clear of holds before ending probation.');
-      state.probation = { state: 'complete', startsAt: state.probation?.startsAt ?? this.now().toISOString(), overrideAt: this.now().toISOString() };
+      requireCondition(
+        row.state === 'approved' && !['paused', 'suspended'].includes(state.probation?.state ?? ''),
+        409,
+        'registration_not_approved',
+        'The sender must be approved and clear of holds before ending probation.',
+      );
+      state.probation = {
+        state: 'complete',
+        startsAt: state.probation?.startsAt ?? this.now().toISOString(),
+        overrideAt: this.now().toISOString(),
+      };
     }
     await this.record(sql, row, state);
-    await audit(sql, workspace, actor, via, 'onboarding.' + action, row.id, null, { revision: state.revision, reason });
+    if (c && !c.closedAt && (action === 'accept_evidence' || action === 'request_correction')) {
+      c.closedAt = this.now().toISOString();
+      c.outcome = action === 'accept_evidence' ? 'accepted' : 'correction';
+      await this.letters.schedule(c, this.now());
+      await saveEvidenceCase(sql, row.id, c);
+      await audit(sql, workspace, actor, via, 'onboarding.evidence_closed', row.id, null, {
+        caseId: c.id,
+        company: companyId,
+        revision: c.revision,
+        document: c.document,
+        outcome: c.outcome,
+        reason: action,
+      });
+    }
+    await audit(sql, workspace, actor, via, 'onboarding.' + action, row.id, null, {
+      revision: state.revision,
+      reason,
+    });
     return { reviewed: true };
+  }
+
+  async evidenceAction(
+    sql: Sql,
+    p: z.infer<(typeof textingPlatformCommands)['platform.textingEvidenceCase']['schema']>,
+    actor: EvidenceActor,
+  ) {
+    const row = await this.row(sql, p.companyId);
+    const c = row?.profile.practiceEvidenceCases?.[p.caseId],
+      now = this.now();
+    requireCondition(row && c, 404, 'evidence_unavailable', 'This case is unavailable.');
+    this.letters.authorize(actor, c, now, p.action === 'claim');
+    requireCondition(
+      await this.letters.available(c, now),
+      410,
+      'evidence_expired',
+      'This original has expired or is unavailable.',
+    );
+    const receipt = { caseId: c.id, company: p.companyId, revision: c.revision, document: c.document };
+    if (p.action === 'view') {
+      const contents = await this.letters.read(c, now);
+      c.viewedAt = now.toISOString();
+      c.viewedBy = actor.userId;
+      await saveEvidenceCase(sql, row.id, c);
+      await audit(
+        sql,
+        p.workspaceId,
+        actor.userId,
+        actor.via,
+        'onboarding.evidence_viewed',
+        row.id,
+        null,
+        receipt,
+      );
+      return { contents };
+    }
+    return once(sql, p.workspaceId, actor.userId, p.operationKey, ['evidence_action', p], async () => {
+      if (p.action === 'claim') {
+        c.assigned = actor.userId;
+        delete c.viewedAt;
+        delete c.viewedBy;
+      } else if (p.action === 'hold') {
+        const review = Date.parse(p.reviewAt ?? '');
+        requireCondition(
+          p.holdReason && review > +now && review <= +now + 30 * 86_400_000,
+          422,
+          'review_date_required',
+          'Choose a hold reason and a review date within 30 days.',
+        );
+        c.hold = { reason: p.holdReason, owner: actor.userId, reviewAt: new Date(review).toISOString() };
+      } else {
+        requireCondition(c.hold, 409, 'evidence_hold_missing', 'There is no active hold for this original.');
+        delete c.hold;
+      }
+      if (p.action === 'hold' || p.action === 'release_hold') await this.letters.schedule(c, now, p.action);
+      await saveEvidenceCase(sql, row.id, c);
+      await audit(
+        sql,
+        p.workspaceId,
+        actor.userId,
+        actor.via,
+        'onboarding.evidence_' + p.action,
+        row.id,
+        null,
+        { ...receipt, hold: c.hold, assigned: c.assigned },
+      );
+      return { updated: true };
+    });
   }
 
   private async save(sql: Sql, actor: Actor, via: Interface, companyId: string, row: Row | undefined, business: OnboardingBusiness) {
@@ -536,7 +763,7 @@ export class TextingOnboarding {
     const previous = row?.profile.onboarding;
     const revision = (previous?.revision ?? 0) + 1;
     const state: Enrollment = { revision, owner: actor.userId, acceptedAt: this.now().toISOString(), policyVersion, challenges: {} };
-    if (business.hostedPages) state.review = 'hosted_ownership';
+    if (business.hostedPages && business.registrationType !== 'sole_proprietor') state.review = 'hosted_ownership';
     if (previous?.payment?.state === 'paid' && row) {
       const original = readBusiness(row);
       requireCondition(original.ein.replace('-', '') === ein && original.legalName === business.legalName && original.street === street &&
@@ -549,6 +776,7 @@ export class TextingOnboarding {
     const hostedPolicy = signup && business.hostedPages ? makeHostedPolicySnapshot({ legalName: business.dbaName ?? business.legalName,
       publicContact: business.publicContact!, description: business.description!, signupUrl: signup, revision, acceptedAt: state.acceptedAt }) : undefined;
     const profile = {
+      ...(row?.profile.practiceEvidenceCases && {practiceEvidenceCases:row.profile.practiceEvidenceCases}),
       registrationType: business.registrationType, plan: business.plan, hostedPages: business.hostedPages, publicContact: business.publicContact,
       description: business.description, hostedPolicy, ein, website: business.website, privacyPolicyUrl: business.privacyPolicyUrl, smsTermsUrl: business.smsTermsUrl,
       businessType: business.businessType, vertical: business.vertical, campaign: campaign(business),

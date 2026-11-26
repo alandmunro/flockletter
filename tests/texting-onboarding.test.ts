@@ -38,7 +38,8 @@ const ids = new Map<string, string>();
 const settings = {
   carrier_daily_limit: 100, monthly_segment_allowance: 1000, probation_canary_count: 1,
   probation_canary_minutes: 1, probation_min_days: 2, probation_delivered_min: 2,
-  probation_initial_days: 1, probation_initial_daily_limit: 10, probation_daily_limit: 20,
+  probation_risk_window_days: 2, probation_risk_minimum: 9, probation_pause_optout_bps: 2500, probation_suspend_optout_bps: 4000,
+    probation_pause_filter_bps: 2500, probation_suspend_filter_bps: 4000, probation_initial_days: 1, probation_initial_daily_limit: 10, probation_daily_limit: 20,
 };
 const run = <T = unknown>(actor: Actor, name: CommandName, input: unknown = {}) => service.execute(name, input, actor) as Promise<T>;
 const mutation = (actor: Actor, name: CommandName, input: Record<string, unknown> = {}) =>
@@ -54,7 +55,7 @@ beforeAll(async () => {
   db = new Database(fixture.url);
   clock = Date.now() + 60_000;
   const checkOwner = async (user: string, workspace: string) => user === 'user_' + workspace;
-  texting = Texting.mock(db, { origin, linkOrigin: origin + '/l', isOwner: checkOwner, onboardingCapture: true, readEnrollmentPage, now: () => new Date(clock) });
+  texting = Texting.mock(db, { origin, linkOrigin: origin + '/l', isOwner: checkOwner, onboardingCapture: true, readEnrollmentPage, evidenceReviewers:[operator.userId,"backup-reviewer"], now: () => new Date(clock) });
   service = new CommandService(db, undefined, checkOwner);
   Object.assign(service, { customer: { texting, owns: () => false } });
   const audience = new CustomerAudience(db, { origin, mode: 'exercise', checkOwner, contactLimit: async () => 250, texting });
@@ -280,7 +281,7 @@ it('keeps domainless practice ownership in review until a bound synthetic letter
     hostedPages:true,description:'Fictional gardening updates.',publicContact:'help@example.test',website:'',smsTermsUrl:'',privacyPolicyUrl:''}});
   expect(await status(hosted)).toMatchObject({state:'review',review:'hosted_ownership',pageCheck:{issues:[]}});
   const review=()=>texting.operator('platform.textingOnboardingReview',{operationKey:randomUUID(),workspaceId:hosted.workspaceId,
-    companyId:ids.get(hosted.workspaceId),expectedRevision:1,action:'accept_evidence',reason:'Reviewed the attached synthetic ownership evidence.'},operator);
+    companyId:ids.get(hosted.workspaceId),expectedRevision:1,action:'accept_evidence',reason:'Reviewed the attached synthetic ownership evidence.'},{...operator,mfaAt:new Date(clock).toISOString()});
   await expect(review()).rejects.toMatchObject({code:'evidence_unavailable'});
   await expect(mutation(sole,'sms.onboardingEvidence',{companyId:ids.get(hosted.workspaceId),document:'CP575'})).rejects.toMatchObject({code:'not_found'});
   const template = (await status(hosted)).evidenceFiles!.CP575!;
@@ -296,6 +297,15 @@ it('keeps domainless practice ownership in review until a bound synthetic letter
   const finish=()=>mutation(hosted,'sms.onboardingFinish',{acceptedFee:4900,currency:'USD'});
   await expect(finish()).rejects.toMatchObject({code:'onboarding_review'});
   expect(await texting.operator('platform.textingRegistration',{workspaceId:hosted.workspaceId},operator)).toMatchObject({reviewQueue:[{reason:'hosted_ownership'}]});
+  const caseId=(await status(hosted)).evidence!.caseId!;
+  const viewParams={workspaceId:hosted.workspaceId,companyId:ids.get(hosted.workspaceId)!,caseId,action:'view',operationKey:randomUUID()};
+  await expect(texting.operator('platform.textingEvidenceCase',viewParams,operator)).rejects.toMatchObject({code:'operator_mfa_required'});
+  await expect(review()).rejects.toMatchObject({code:'evidence_view_required'});
+  const verified={...operator,mfaAt:new Date(clock).toISOString()};
+  await expect(texting.operator('platform.textingEvidenceCase',{...viewParams,workspaceId:secondHosted.workspaceId,companyId:ids.get(secondHosted.workspaceId)},verified)).rejects.toMatchObject({code:'evidence_unavailable'});
+  await expect(texting.operator('platform.textingEvidenceCase',viewParams,{...verified,userId:'unassigned'})).rejects.toMatchObject({code:'evidence_reviewer_required'});
+  await expect(texting.operator('platform.textingEvidenceCase',viewParams,{...verified,userId:'backup-reviewer'})).rejects.toMatchObject({code:'evidence_assignment_required'});
+  expect(await texting.operator('platform.textingEvidenceCase',viewParams,verified)).toEqual({contents:template});
   await review();
   expect(await finish()).toMatchObject({submitted:true});
   for(let pass=0;pass<7;pass++) await tick(hosted);
@@ -399,4 +409,91 @@ it('waits for the current page check before submission and ignores a late respon
   const current = await test.execute('sms.onboardingStatus',{companyId},racing,'ui') as OnboardingView;
   expect(current.pageCheck?.issues).toEqual([{page:'website',message:'Publish a readable business website page.'}]);
   expect(current.checkout).toBe('unpaid');
+});
+
+it('retains a held fictional letter, audits its deletion, and refuses an older restored receipt', async () => {
+  const owner = secondHosted,
+    workspace = owner.workspaceId,
+    companyId = ids.get(workspace)!;
+  const template = (await status(owner)).evidenceFiles!.CP575!;
+  await mutation(owner, 'sms.onboardingEvidence', { document: 'CP575', contents: template });
+  const caseId = (await status(owner)).evidence!.caseId!;
+  const action = (
+    name: 'view' | 'claim' | 'hold' | 'release_hold',
+    extra: Record<string, string> = {},
+    userId: string = operator.userId,
+  ) =>
+    texting.operator(
+      'platform.textingEvidenceCase',
+      { operationKey: randomUUID(), workspaceId: workspace, companyId, caseId, action: name, ...extra },
+      { ...operator, userId, mfaAt: new Date(clock).toISOString() },
+    );
+  const snapshot = await db.read(
+    workspace,
+    async (sql) =>
+      (await sql.query('SELECT profile FROM sms_carrier_brands WHERE company_id=$1', [companyId])).rows[0]!
+        .profile,
+  );
+  await action('claim', {}, 'backup-reviewer');
+  await expect(action('view')).rejects.toMatchObject({ code: 'evidence_assignment_required' });
+  await expect(
+    action(
+      'hold',
+      { holdReason: 'legal_hold', reviewAt: new Date(clock - 1).toISOString() },
+      'backup-reviewer',
+    ),
+  ).rejects.toMatchObject({ code: 'review_date_required' });
+  await action(
+    'hold',
+    { holdReason: 'legal_hold', reviewAt: new Date(clock + 86400000).toISOString() },
+    'backup-reviewer',
+  );
+  await mutation(owner, 'sms.onboardingCorrect');
+  expect(await status(owner)).toMatchObject({ state: 'correction_required' });
+  const initial = clock;
+  try {
+    clock += 31 * 86400000;
+    expect(await action('view', {}, 'backup-reviewer')).toEqual({ contents: template });
+    await action('release_hold', {}, 'backup-reviewer');
+    await expect(action('view', {}, 'backup-reviewer')).rejects.toMatchObject({ code: 'evidence_expired' });
+    await texting.tick(workspace);
+    const facts = await db.read(
+      workspace,
+      async (sql) =>
+        (
+          await sql.query(
+            `SELECT action,new_value FROM sms_audit WHERE new_value->>'caseId'=$1 ORDER BY at`,
+            [caseId],
+          )
+        ).rows,
+    );
+    expect(facts.map((f) => f.action)).toEqual(
+      expect.arrayContaining([
+        'onboarding.evidence_viewed',
+        'onboarding.evidence_hold',
+        'onboarding.evidence_closed',
+        'onboarding.evidence_deleted',
+      ]),
+    );
+    expect(JSON.stringify(facts)).not.toContain(template);
+    expect(facts.find((f) => f.action === 'onboarding.evidence_deleted').new_value).toMatchObject({
+      company: companyId,
+      document: 'CP575',
+      outcome: 'correction',
+    });
+    const stored = await db.read(
+      workspace,
+      async (sql) => (await sql.query('SELECT result FROM operations')).rows,
+    );
+    expect(stored.some((r) => JSON.stringify(r.result).includes('FLOCKLETTER STAGING PRACTICE'))).toBe(false);
+    // Restore the earlier metadata alone; it cannot recreate the original even if the clock is rolled back.
+    await db.tenant(workspace, (sql) =>
+      sql.query('UPDATE sms_carrier_brands SET profile=$1 WHERE company_id=$2', [snapshot, companyId]),
+    );
+    clock = initial;
+    await expect(action('view')).rejects.toMatchObject({ code: 'evidence_expired' });
+    expect((await status(owner)).evidence).toBeNull();
+  } finally {
+    clock = initial;
+  }
 });

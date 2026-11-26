@@ -17,7 +17,8 @@ export type Forward = (message: {
   id: string; to: string; subject: string; text: string;
 }) => Promise<'forwarded' | 'captured' | 'failed' | 'uncertain'>;
 export type DispatchAuthority = (sql: Sql, workspace: string, companyId: string, actorId: string) => Promise<boolean>;
-export type MessagingOptions = { practiceBilling?: boolean; annualClaim?:(sql:Sql,w:string,brand:string,id:string,now:Date,company:string)=>Promise<string|null>; db: Database; port: TwilioMessagingPort; seal: CredentialSeal; origin: string; forward?: Forward; canDispatch?: DispatchAuthority; now?: () => Date };
+export type MessagingOptions = {
+  probationPolicy?: import('./probation-policy.js').ProbationPolicy; practiceBilling?: boolean; annualClaim?:(sql:Sql,w:string,brand:string,id:string,now:Date,company:string)=>Promise<string|null>; db: Database; port: TwilioMessagingPort; seal: CredentialSeal; origin: string; forward?: Forward; canDispatch?: DispatchAuthority; now?: () => Date };
 
 const permanentStatusCodes = new Set(['30005', '30006', '21211', '21614', '21612']);
 const purposeNeedsWindow = new Set(['broadcast', 'confirmation']);
@@ -129,7 +130,7 @@ export class TextingMessaging {
       catch { return defer(new Date(now.getTime() + 5 * 60000), 'send_authority_unavailable'); }
       if (!authorized) return skip('send_authority_revoked');
     }
-    const settings = await readSettings(sql, workspace);
+    const settings = await readSettings(sql, workspace, this.options.probationPolicy);
     if (this.options.practiceBilling) {
       const plan = await practicePlanLimits(sql, workspace, now, settings.monthly_segment_allowance, row.created_at);
       if (plan.hold === 'texting_plan_cancelled') return skip(plan.hold);
@@ -225,7 +226,7 @@ export class TextingMessaging {
         await this.release(sql, current, true);
         await this.finishSend(sql, current.send_id);
       } else if (found.outcome === 'not_submitted') {
-        const settle = (await readSettings(sql, workspace)).reconcile_settle_minutes;
+        const settle = (await readSettings(sql, workspace, this.options.probationPolicy)).reconcile_settle_minutes;
         const since = (current.submitted_at ?? current.next_check_at).getTime();
         if (settle !== undefined && since + settle * 60000 <= this.now().getTime()) {
           // Confirmed absent after the settle time: the reserved segments go back and it may be admitted again.
@@ -271,7 +272,7 @@ export class TextingMessaging {
         if (params.ErrorCode && permanentStatusCodes.has(params.ErrorCode)) await this.permanentFailure(sql, workspace, row, params.ErrorCode === '30006' ? 'landline' : 'permanent_failure');
         else if (params.ErrorCode === '21610') await this.permanentFailure(sql, workspace, row, 'unsubscribed');
         else {
-          const limit = (await readSettings(sql, workspace)).consecutive_failure_limit ?? 3;
+          const limit = (await readSettings(sql, workspace, this.options.probationPolicy)).consecutive_failure_limit ?? 3;
           const failures = (await sql.query<{ n: number }>('UPDATE sms_contacts SET consecutive_temp_failures=consecutive_temp_failures+1 WHERE id=$1 RETURNING consecutive_temp_failures n', [row.contact_id])).rows[0]!.n;
           if (failures >= limit) await this.permanentFailure(sql, workspace, row, 'repeated_failures');
         }
