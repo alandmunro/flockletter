@@ -151,11 +151,11 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
       await control.query(`SELECT c.relname AS name,pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname IN ('flockletter_customer_jobs','flockletter_retention_control') AND c.relkind='r'`)
     ).rows;
-    expect(privateObjects.map(row=>row.name)).toEqual(expect.arrayContaining(['signup_routes','scopes','worker_instances','provisioning_budget',
+    expect(privateObjects.map(row=>row.name)).toEqual(expect.arrayContaining(['signup_routes','scopes','schema_migrations','worker_instances','provisioning_budget',
       'support_reply_routes','confirmation_routes','trial_namespaces','trial_claims','trial_attempts','authorizations','receipts',
       'platform_records','operations','approvals','approval_history','restore_quarantines','sending_state','sending_admissions','sending_account','resend_domain_claims','resend_sender_routes',
       'texting_settings','texting_setting_changes','texting_accounts','texting_number_routes','texting_short_names','texting_link_routes','texting_mock_state','gift_accounting','gift_funding_lots']));
-    expect(privateObjects).toHaveLength(30);
+    expect(privateObjects).toHaveLength(31);
     expect(privateObjects.every((row) => row.owner === 'flockletter_staging_migrator')).toBe(true);
     const schedulerFunctions = (
       await control.query(
@@ -235,6 +235,7 @@ it('inspects, provisions and replays a dedicated database as a non-superuser, wi
     await control.query(
       'ALTER TABLE audience_segment_members ADD CONSTRAINT earlier_segment_fk FOREIGN KEY (workspace_id,brand_id,subscriber_id) REFERENCES subscribers(workspace_id,brand_id,id)',
     );
+    await control.query("DELETE FROM flockletter_customer_jobs.schema_migrations WHERE name = '012_segment_contact_cleanup.sql'");
     const repaired = run('apply');
     expect(repaired.status, repaired.stderr).toBe(0);
     expect(
