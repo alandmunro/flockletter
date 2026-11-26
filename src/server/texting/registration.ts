@@ -257,7 +257,7 @@ export class TextingRegistration {
       const business = practiceSoleProprietor ? { companyType: 'sole_proprietor' } : twilioBusiness(brand.entity_type, p.businessType, p.vertical);
       if ('reason' in business) return { outcome: 'rejected', reason: business.reason };
       return platform.createCustomerProfile(account, op, {
-      legalName: brand.legal_name, dbaName: brand.dba_name, entityType: brand.entity_type, businessType: p.businessType as TwilioBusinessType, companyType: business.companyType, ein: p.ein, website: p.website, vertical: p.vertical,
+      legalName: brand.legal_name, dbaName: brand.dba_name, entityType: brand.entity_type, businessType: practiceSoleProprietor ? 'Sole Proprietor' : p.businessType as TwilioBusinessType, companyType: business.companyType, ein: p.ein, website: p.website, vertical: p.vertical,
       address: p.address, contact: p.contact, notificationEmail: notificationEmail ?? p.contact.email,
     } satisfies BusinessProfile, callbacks.registration);
     }

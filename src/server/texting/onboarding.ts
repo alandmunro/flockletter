@@ -98,7 +98,7 @@ function readBusiness(row: Row): OnboardingBusiness {
   const urls = { website: String(profile.website), privacyPolicyUrl: String(profile.privacyPolicyUrl), smsTermsUrl: String(profile.smsTermsUrl) };
   const result = commands['sms.onboardingSave'].schema.shape.business.parse({
     legalName: row.legal_name, ein: profile.ein ?? '', registrationType: profile.registrationType, dbaName: row.dba_name ?? undefined,
-    hostedPages: profile.hostedPages, publicContact: profile.publicContact, description: profile.description, plan: profile.plan, businessType: profile.businessType, vertical: profile.vertical,
+    hostedPages: profile.hostedPages, publicContact: profile.publicContact, description: profile.description, plan: profile.plan, businessType: profile.registrationType === 'sole_proprietor' ? undefined : profile.businessType, vertical: profile.vertical,
     ...(profile.hostedPages ? { website: '', privacyPolicyUrl: '', smsTermsUrl: '' } : urls),
     street: address.street, city: address.city, region: address.region, postalCode: address.postalCode,
     ...(profile.contact as object),
@@ -808,9 +808,11 @@ export class TextingOnboarding {
   }
 
   private async save(sql: Sql, actor: Actor, via: Interface, companyId: string, row: Row | undefined, business: OnboardingBusiness) {
-    const valid = twilioBusiness('private_profit', business.businessType, business.vertical);
-    requireCondition(!('reason' in valid), 422, 'business_type_mismatch',
-      'reason' in valid ? businessRefusals[valid.reason]! : '');
+    if (business.registrationType !== 'sole_proprietor') {
+      const valid = twilioBusiness('private_profit', business.businessType, business.vertical);
+      requireCondition(!('reason' in valid), 422, 'business_type_mismatch',
+        'reason' in valid ? businessRefusals[valid.reason]! : '');
+    }
     const hostname = (value: string) => new URL(value).hostname.toLowerCase().replace(/^www\./, '');
     const signup = business.hostedPages ? await signupPage(sql, companyId, this.origin) : null;
     if (business.hostedPages) {
@@ -846,7 +848,7 @@ export class TextingOnboarding {
       ...(row?.profile.practiceEvidenceCases && {practiceEvidenceCases:row.profile.practiceEvidenceCases}),
       registrationType: business.registrationType, plan: business.plan, hostedPages: business.hostedPages, publicContact: business.publicContact,
       description: business.description, hostedPolicy, ein, website: business.website, privacyPolicyUrl: business.privacyPolicyUrl, smsTermsUrl: business.smsTermsUrl,
-      businessType: business.businessType, vertical: business.vertical, campaign: enrollmentCampaign(business, helpContact),
+      businessType: business.registrationType === 'sole_proprietor' ? undefined : business.businessType, vertical: business.vertical, campaign: enrollmentCampaign(business, helpContact),
       address: { street, city, region, postalCode, country: 'US' }, contact: { firstName, lastName, email, phone, title }, onboarding: state,
     };
     const id = row?.id ?? randomUUID();

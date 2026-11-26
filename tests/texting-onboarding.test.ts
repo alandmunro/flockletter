@@ -312,7 +312,7 @@ async function practiceVerify(actor: Actor, channel: string) {
 
 it('completes an authorized setup once and requires a separate carrier verification for the practice sole proprietor', async () => {
   await mutation(sole,'sms.onboardingSave',{expectedRevision:null,accepted: true, nameConfirmed: true,business:{...business,
-    registrationType:'sole_proprietor',legalName:'Robin Garden',ein:'',plan:'text_300',phone:'+12125550140'}});
+    businessType:undefined,registrationType:'sole_proprietor',legalName:'Robin Garden',ein:'',plan:'text_300',phone:'+12125550140'}});
   await practiceVerify(sole,'email');
   await practiceVerify(sole,'phone');
   const finish = (amount=4900, monthly=1900) => mutation(sole,'sms.onboardingFinish',{

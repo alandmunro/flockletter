@@ -3,10 +3,10 @@ import { operationKey, type Api } from './api.js';
 import { practiceTextPlans, textPlanId, type TextPlan, type PracticePlanStatus } from '../shared/texting-commercial.js';
 
 const usd = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
-export function TextingPlanChoice({ plan, onChange }: { plan: TextPlan | undefined; onChange: (plan: TextPlan) => void }) {
+export function TextingPlanChoice({ plan, onChange, lowVolumeOnly }: { lowVolumeOnly?: boolean; plan: TextPlan | undefined; onChange: (plan: TextPlan) => void }) {
   return <label>Practice texting plan<select required value={plan ?? ''} onChange={e => onChange(textPlanId.parse(e.target.value))}>
     <option value="" disabled>Choose a plan</option>
-    {textPlanId.options.map(id => <option key={id} value={id}>
+    {textPlanId.options.filter(id => !lowVolumeOnly || id !== 'text_2500').map(id => <option key={id} value={id}>
       {practiceTextPlans[id].name} · {usd(practiceTextPlans[id].monthly)}/month · {usd(practiceTextPlans[id].setup)} setup
     </option>)}
   </select><span className="help">Staging simulates these fees. Each message segment counts toward your plan.</span></label>;

@@ -292,13 +292,13 @@ function BusinessForm({ initial, draft, busy, save, saveDraft }: {
   const preview = policyPreview(business.dbaName || business.legalName, business.publicContact ?? '', business.description ?? '');
   const submit = (event: FormEvent) => { event.preventDefault(); if (accepted && nameConfirmed) save({ ...business,
     ...(hosted ? { website:'', privacyPolicyUrl:'', smsTermsUrl:'' } : { publicContact:undefined, description:undefined }),
-    ...(sole ? {ein:'', dbaName:undefined} : {}) }, version); };
+    ...(sole ? {ein:'', dbaName:undefined, businessType:undefined} : {}) }, version); };
   return <form onSubmit={submit} onChange={e => { setSaved(false); if (!(e.target instanceof HTMLInputElement && ['acceptEnrollment', 'confirmLegalName'].includes(e.target.name))) setAccepted(false); }}><fieldset disabled={busy}>
     <legend>Registered US business details</legend>
-    <label>Registration type<select value={sole ? 'sole_proprietor' : 'ein'} onChange={e=>{setNameConfirmed(false);setBusiness(value => ({...value,registrationType:e.target.value as 'ein'|'sole_proprietor', ...(e.target.value==='sole_proprietor' && value.plan==='text_2500' ? {plan:'text_300'}:{})}));}}>
+    <label>Registration type<select value={sole ? 'sole_proprietor' : 'ein'} onChange={e=>{setNameConfirmed(false);setBusiness(value => ({...value,registrationType:e.target.value as 'ein'|'sole_proprietor', businessType:value.businessType ?? 'Limited Liability Corporation', ...(e.target.value==='sole_proprietor' && value.plan==='text_2500' ? {plan:'text_300'}:{})}));}}>
       <option value="ein">US business with an EIN</option><option value="sole_proprietor">Sole proprietor without an EIN · practice</option></select></label>
     {!sole && <label>DBA or trade name (optional)<input maxLength={120} value={business.dbaName ?? ''} onChange={e=>set('dbaName',e.target.value||undefined)} /></label>}
-    <TextingPlanChoice plan={business.plan} onChange={plan=>set('plan',plan)} />
+    <TextingPlanChoice lowVolumeOnly={sole} plan={business.plan} onChange={plan=>set('plan',plan)} />
     {sole && business.plan==='text_2500' && <p role="alert">Sole proprietors can choose a low-volume plan only.</p>}
     <label><input type="checkbox" checked={hosted} onChange={e=>{set('hostedPages',e.target.checked);setAccepted(false);}} /> Publish practice business and policy pages</label>
     {hosted && <><label>Public support email<input type="email" required maxLength={120} value={business.publicContact ?? ''} onChange={e=>set('publicContact',e.target.value)} /></label>
@@ -308,9 +308,9 @@ function BusinessForm({ initial, draft, busy, save, saveDraft }: {
         {...(field === 'ein' ? { pattern: '[0-9]{2}-?[0-9]{7}', title: 'Enter nine digits, with an optional hyphen after the first two.' } : {})}
         onChange={event => { if (field === 'legalName' || field === 'ein') setNameConfirmed(false); set(field, field === 'region' ? event.target.value.toUpperCase() : event.target.value); }} />
     </label>)}
-    <label>Business type<select value={business.businessType} onChange={event => set('businessType', event.target.value as OnboardingBusiness['businessType'])}>
+    {!sole && <label>Business type<select value={business.businessType} onChange={event => set('businessType', event.target.value as OnboardingBusiness['businessType'])}>
       {twilioBusinessTypes.filter(value => value !== 'Non-profit Corporation').map(value => <option key={value}>{value}</option>)}
-    </select></label>
+    </select></label>}
     <label>Industry<select value={business.vertical} onChange={event => set('vertical', event.target.value as OnboardingBusiness['vertical'])}>
       {twilioIndustries.map(value => <option value={value} key={value}>{value.replaceAll('_', ' ').toLowerCase()}</option>)}
     </select></label>

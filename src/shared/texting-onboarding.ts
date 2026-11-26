@@ -24,7 +24,7 @@ export const onboardingBusiness = z.strictObject({
   hostedPages: z.boolean().optional(),
   publicContact: z.email().max(120).optional(),
   description: text(300).optional(),
-  businessType: z.enum(twilioBusinessTypes),
+  businessType: z.enum(twilioBusinessTypes).optional(),
   vertical: z.enum(twilioIndustries),
   website: z.union([https, z.literal('')]),
   privacyPolicyUrl: z.union([https, z.literal('')]),
@@ -42,7 +42,10 @@ export const onboardingBusiness = z.strictObject({
   const issue = (field: string, message: string) => ctx.addIssue({ code: 'custom', path: [field], message });
   if (value.registrationType === 'sole_proprietor') {
     if (value.ein || value.dbaName || value.plan === 'text_2500') issue('registrationType', 'Use the EIN registration for DBAs and Standard plans.');
-  } else if (!value.ein) issue('ein', 'Enter the EIN on the business registration.');
+  } else {
+    if (!value.ein) issue('ein', 'Enter the EIN on the business registration.');
+    if (!value.businessType) issue('businessType', 'Choose the legal structure of the registered business.');
+  }
   if (value.hostedPages) {
     if (!value.publicContact || !value.description) issue('publicContact', 'Supply a public contact and business description to publish practice pages.');
   } else {
