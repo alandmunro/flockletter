@@ -27,6 +27,7 @@ const mockAction = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('brand'), registrationId: z.uuid(), status: z.enum(['APPROVED', 'FAILED', 'SUSPENDED']) }).strict(),
   z.object({ kind: z.literal('campaign'), registrationId: z.uuid(), status: z.enum(['VERIFIED', 'FAILED', 'SUSPENDED']) }).strict(),
   z.object({ kind: z.literal('inbound'), from: z.string().regex(/^\+1\d{10}$/), to: z.string().regex(/^\+1\d{10}$/), body: z.string().min(1).max(320) }).strict(),
+  z.object({ kind: z.literal('release_held_broadcast'), sendId: z.uuid(), reason }).strict(),
   z.object({ kind: z.literal('deliver') }).strict(),
 ]);
 export const textingPlatformCommands = {

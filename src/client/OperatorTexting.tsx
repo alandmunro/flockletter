@@ -7,7 +7,7 @@ import type { PlatformApi } from './platform-api.js';
 type Setting = { key: string; kind: string; privateDefault?: boolean; min?: number; max?: number; required: string; description: string; platform: { value: unknown; revision: number } | null; workspace: { value: unknown; revision: number } | null };
 type CohortCount = { first: boolean; state: string; reason: string | null; texts: number; attempts: number };
 type Registration = { mode: string; settingsNeeded?: string[]; reviewQueue?: {id:string;company:string;reason:string;since:string}[]; registrations: { id: string; company_id: string; legal_name: string; state: string; revision: number; rejection_reason: string | null; carrier_brand_id: string;
-  evidenceCases?:ReviewerCase[]; onboardingRevision?: number | null; onboardingReview?: string | null; evidenceDocument?:string | null; evidenceSource?: string | null; evidenceFingerprint?: string | null; probationState?: string | null; firstBroadcast?: CohortCount[];
+  evidenceCases?:ReviewerCase[]; onboardingRevision?: number | null; onboardingReview?: string | null; evidenceDocument?:string | null; evidenceSource?: string | null; evidenceFingerprint?: string | null; probationState?: string | null; firstBroadcast?: CohortCount[]; mockReleaseSendId?: string;
   steps: { step: string; state: string; attempts: number; operationKey: string; reason: string | null }[] }[]; numbers: { e164: string; state: string }[] };
 
 export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformApi; workspaceId: string; onError: (message: string) => void }) {
@@ -64,6 +64,10 @@ export function OperatorTexting({ api, workspaceId, onError }: { api: PlatformAp
         <ul>{r.steps.map(s => <li key={s.step}>{s.step.replaceAll('_', ' ')}: {s.state}{s.attempts ? ` (${s.attempts} call${s.attempts > 1 ? 's' : ''})` : ''}{s.reason ? ' · ' + s.reason : ''} <code>{s.operationKey}</code></li>)}</ul>
         {r.evidenceCases?.map(item=><TextingEvidenceCase key={workspaceId+'/'+item.id+'/'+item.assignedToMe} item={item} workspaceId={workspaceId} companyId={r.company_id} api={api} run={run} busy={busy} />)}
         <div className="button-row">
+          {reg.mode === 'mock' && r.mockReleaseSendId && <button className="btn secondary" disabled={busy || reason.trim().length < 12}
+            onClick={() => void run(() => api.call('platform.textingMock', { operationKey: operationKey(), workspaceId,
+              action: { kind: 'release_held_broadcast', sendId: r.mockReleaseSendId, reason } }))}>
+            End practice probation and release the two held texts</button>}
           {!r.onboardingRevision && ['draft', 'rejected'].includes(r.state) && <button className="btn" disabled={busy || reason.trim().length < 12} onClick={() => void run(() => api.call('platform.textingSubmit', { operationKey: operationKey(), workspaceId, registrationId: r.id, reason }))}>Submit registration</button>}
           {r.evidenceDocument && r.onboardingRevision && ['hosted_ownership','payer_mismatch'].includes(r.onboardingReview ?? '') && <>
             <p>Practice evidence · {r.evidenceDocument} · enrollment revision {r.onboardingRevision}

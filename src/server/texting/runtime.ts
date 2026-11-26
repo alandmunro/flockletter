@@ -52,6 +52,7 @@ export function createTexting(db: Database, config: Config, env: NodeJS.ProcessE
     const stripe = onboarding === 'stripe_test' ? new StripeTestSetupPayment(env.FLOCKLETTER_TEXTING_SETUP_STRIPE_KEY ?? '',
       env.FLOCKLETTER_TEXTING_SETUP_STRIPE_WEBHOOK ?? '', env.FLOCKLETTER_TEXTING_SETUP_STRIPE_ACCOUNT ?? '', config.origin) : undefined;
     return Texting.mock(db, { origin: config.origin, linkOrigin, ...options, evidenceReviewers: reviewerSeats(env.FLOCKLETTER_TEXTING_EVIDENCE_REVIEWERS),
+      mockBroadcastRelease: config.environment === 'staging' && onboarding === 'capture' ? env.FLOCKLETTER_TEXTING_MOCK_BROADCAST_RELEASE : undefined,
       evidenceDirectory: config.environment === 'staging' ? join(tmpdir(),'flockletter-synthetic-texting-evidence') : undefined,
       probationPolicy: readProbationPolicy(env.FLOCKLETTER_TEXTING_PROBATION_POLICY), onboardingCapture: onboarding !== 'off', onboardingStripe: stripe });
   }

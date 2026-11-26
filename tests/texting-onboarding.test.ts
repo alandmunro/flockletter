@@ -244,6 +244,58 @@ it('resumes the verified and paid owner flow, isolates EIN claims and holds a fa
 });
 
 
+it('releases only the two original unattempted texts under an exact, single-use mock grant', async () => {
+  const workspace = a.workspaceId, company = ids.get(workspace)!;
+  // The preceding ordinary restart cancelled its remainder and suppressed its permanently failed number.
+  const extra = await run<{ contactId: string }>(a, 'sms.addContact', {
+    operationKey: randomUUID(), companyId: company, phone: '+12125550128',
+  });
+  await db.tenant(workspace, sql => sql.query("UPDATE sms_consents SET state='opted_in' WHERE contact_id=$1", [extra.contactId]));
+  const draft = await run<{ id: string; revision: number }>(a, 'sms.draft', {
+    operationKey: randomUUID(), companyId: company, body: (await status(a)).samples[0],
+  });
+  const review = await run<{ digest: string }>(a, 'sms.review', { id: draft.id, expectedRevision: draft.revision });
+  await run(a, 'sms.confirm', { id: draft.id, expectedRevision: draft.revision, digest: review.digest, operationKey: randomUUID() });
+  await texting.operator('platform.textingMock', { workspaceId: workspace, operationKey: randomUUID(),
+    action: { kind: 'fault', target: 'send', faults: ['failed'] } }, operator);
+  await tick(a);
+  clock += 65000;
+  await tick(a);
+  const rows = () => db.read(workspace, async sql => (await sql.query<{
+    id: string; state: string; attempts: number; provider_sid: string | null;
+  }>('SELECT id,state,attempts,provider_sid FROM sms_messages WHERE send_id=$1 ORDER BY id', [draft.id])).rows);
+  const before = await rows();
+  expect(before.map(m => [m.state,m.attempts])).toEqual([['failed',1],['pending',0],['pending',0]]);
+  const release = { workspaceId: workspace, operationKey: randomUUID(),
+    action: { kind: 'release_held_broadcast', sendId: draft.id, reason: 'Owner approved this one synthetic broadcast.' } };
+  const granted = Texting.mock(db, { ...texting.options, mockBroadcastRelease: workspace+'/'+draft.id });
+  const call = (service: Texting, request = release) => service.operator('platform.textingMock', request, operator);
+  await expect(call(texting)).rejects.toMatchObject({ code: 'mock_release_not_granted' });
+  await expect(call(granted, { ...release, workspaceId: b.workspaceId })).rejects.toMatchObject({ code: 'mock_release_not_granted' });
+  await expect(call(granted, { ...release, action: { ...release.action, sendId: randomUUID() } }))
+    .rejects.toMatchObject({ code: 'mock_release_not_granted' });
+  const other = await run<{id:string}>(a, 'sms.draft', {
+    operationKey: randomUUID(), companyId: company, body: (await status(a)).samples[0],
+  });
+  await db.tenant(workspace, sql=>sql.query("UPDATE sms_sends SET state='scheduled' WHERE id=$1", [other.id]));
+  await expect(call(granted)).rejects.toMatchObject({code:'mock_release_unavailable'});
+  expect(await rows()).toEqual(before);
+  await db.tenant(workspace, sql=>sql.query("UPDATE sms_sends SET state='cancelled' WHERE id=$1", [other.id]));
+  expect(await Promise.all([call(granted), call(granted)])).toEqual([{released:2},{released:2}]);
+  await expect(call(granted, { ...release, operationKey: randomUUID() })).rejects.toMatchObject({ code: 'mock_release_unavailable' });
+  expect(await rows()).toEqual(before);
+  for (let pass=0; pass<3; pass++) await tick(a);
+  const after = await rows();
+  expect(after[0]).toEqual(before[0]);
+  expect(after.slice(1).map(m=>[m.id,m.state,m.attempts])).toEqual(before.slice(1).map(m=>[m.id,'delivered',1]));
+  for (const message of after) expect(await texting.mock!.messaging.sends(message.id)).toBe(1);
+  expect(await status(a)).toMatchObject({probation:'complete'});
+  const audits=await db.read(workspace,async sql=>(await sql.query(
+    "SELECT target,actor_id,interface,new_value FROM sms_audit WHERE action='probation.mock_broadcast_released'")).rows);
+  expect(audits).toMatchObject([{ target:draft.id,actor_id:'operator:'+operator.userId,interface:operator.via,
+    new_value:{reason:release.action.reason,preservedFailed:before[0]!.id,released:before.slice(1).map(m=>m.id)} }]);
+});
+
 async function practiceVerify(actor: Actor, channel: string) {
   const { captureCode } = await mutation(actor, 'sms.onboardingChallenge', {channel}) as {captureCode: string};
   expect(await mutation(actor,'sms.onboardingVerify',{channel,code:captureCode})).toEqual({verified:true});
