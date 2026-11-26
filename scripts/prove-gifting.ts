@@ -72,6 +72,15 @@ try {
   await gift.getByRole('button', { name: 'Claim gift' }).click();
   await gift.getByRole('link', { name: 'View simulated reward' }).click();
   await gift.getByText('sample-5', { exact: true }).waitFor();
+  await gift.goBack();
+  await gift.getByRole('link', { name: 'View simulated reward' }).waitFor();
+  await page.getByRole('combobox', { name: 'Recipient' }).selectOption({ label: '2 · offered' });
+  await page.getByRole('button', { name: 'Get recipient link' }).click();
+  const nextOffer = await page.getByRole('link', { name: 'Open simulated gift' }).getAttribute('href');
+  assert(nextOffer);
+  await gift.goto(new URL(nextOffer, origin).href);
+  await gift.getByRole('button', { name: 'Claim gift' }).waitFor();
+  assert.equal(await gift.getByRole('link', { name: 'View simulated reward' }).count(), 0);
   await page.getByRole('button', { name: 'Advance to expiry' }).click();
   await page.getByText(/99 expired/).waitFor();
   await page.getByRole('button', { name: 'Close and refund unused credit' }).click();
