@@ -50,6 +50,7 @@ function enrollmentNotice(action: string, value: unknown): string | null {
     case 'registration.call': return facts?.state === 'rejected' ? 'The carrier rejected a registration step. Review the corrections in Texting.' : null;
     case 'registration.number_status': return facts?.state === 'reserved' ? 'Your number needs carrier attention.' : null;
     case 'onboarding.review': return 'Ownership or payer evidence needs review.';
+    case 'onboarding.practice_receipt_voided': return 'Your simulated setup payment was voided. Correct the business details and verify the application again.';
     case 'onboarding.request_correction': return 'An operator requested a correction to your enrollment.';
     case 'onboarding.accept_evidence': return 'Your practice evidence was accepted. Continue enrollment.';
     case 'probation.canary_paused': case 'probation.risk_paused': return 'Sending paused. Review the first broadcast and recent delivery results.';

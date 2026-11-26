@@ -93,6 +93,18 @@ describe('live adapter business profile', () => {
     const account: AccountCredentials = { accountSid: 'AC' + '4'.repeat(32), keySid: 'SK' + '5'.repeat(32), keySecret: 'synthetic', authToken: 'synthetic' };
     await expect(platform.status('brand', account, 'BN' + '8'.repeat(32))).resolves.toEqual({ outcome: 'accepted', value: { status: 'APPROVED' } });
   });
+  it('reads structured brand and campaign rejection codes without retaining the provider’s private descriptions', async () => {
+    const key = 'AC' + 'a'.repeat(32);
+    const response = {status:'FAILED', campaign_status:'FAILED', failure_reason:'private application data',
+      errors:[{error_code:30795, error_description:'private business details'},{error_code:'30908'}, {error_code:30795}]};
+    const platform = new TwilioHttpPlatform({ user:'SK'+'a'.repeat(32),secret:'fixture',accountSid:key },
+      {secondaryProfile:'RN'+'1'.repeat(32),a2pProfile:'RN'+'2'.repeat(32),primaryProfileSid:'BU'+'3'.repeat(32)},
+      async () => new Response(JSON.stringify(response),{status:200}));
+    const account:AccountCredentials = {accountSid:key,keySid:'SK'+'a'.repeat(32),keySecret:'fixture',authToken:'fixture'};
+    for (const kind of ['brand','campaign'] as const) {
+      expect(await platform.status(kind,account,'fixture','service')).toEqual({outcome:'accepted',value:{status:'FAILED',reason:'30795,30908'}});
+    }
+  });
   it('keeps short names and shortens long ones the same way every time', () => {
     expect(twilioName('sms-reg/abc/1/number')).toBe('sms-reg/abc/1/number');
     const long = 'sms-reg/b01f8848-5818-4d53-b554-1e89fd55dc58/1/customer_profile/address';

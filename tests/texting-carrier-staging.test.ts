@@ -50,8 +50,9 @@ async function draft(workspace: string, sole = false, another = false) {
       ? randomUUID()
       : (await sql.query<{ id: string }>('SELECT id FROM companies')).rows[0]!.id;
     if (another)
-      await sql.query("INSERT INTO companies(workspace_id,id,name) VALUES($1,$2,'Second company fixture')", [
+      await sql.query("INSERT INTO companies(workspace_id,id,name) VALUES($1,$2,'Practice company ' || $3::text)", [
         workspace,
+        company,
         company,
       ]);
     const brand = randomUUID(),
@@ -367,4 +368,345 @@ it('recovers a legacy pending callback beyond the first thousand acknowledged en
   expect(recovered.map((c) => c.id)).toEqual([id]);
   await mock.done(recovered[0]!);
   expect(await new TwilioMockState(db).pending(accountSid)).toEqual([]);
+});
+
+const minute = 60_000;
+async function watchdog(r: Draft) {
+  for (const [key, value] of [
+    ['registration_poll_minutes', 5],
+    ['registration_review_minutes', 10],
+  ] as const)
+    await texting.operator(
+      'platform.textingSetSetting',
+      {
+        workspaceId: r.workspace,
+        operationKey: randomUUID(),
+        key,
+        value,
+        expectedRevision: 0,
+        reason: 'Local test of registration recovery.',
+      },
+      operator,
+    );
+}
+const queue = async (r: Draft) => {
+  const result = (await texting.operator(
+    'platform.textingRegistration',
+    { workspaceId: r.workspace },
+    operator,
+  )) as { reviewQueue: { id: string; reason: string; since: Date }[] };
+  return result.reviewQueue;
+};
+const progress = (r: Draft) =>
+  db.read(r.workspace, (sql) => texting.registration.progress(sql, r.workspace, r.id));
+
+it('preserves review age across unchanged polls and resumes immediately when an approval callback was lost', async () => {
+  const r = await draft('org_watchdog_age');
+  await watchdog(r);
+  await submit(r);
+  const first = clock;
+  expect(await texting.registration.tick(r.workspace)).toEqual(new Date(first + 5 * minute));
+  const baseline = { stage: 'brand_pending', since: new Date(first).toISOString() };
+  const account = (await db.read(r.workspace, (sql) => texting.registration.account(sql, r.workspace)))!;
+  const reg = await row(r);
+  const url = texting.registration.callbacks(r.workspace).registration;
+  const pending = {
+    AccountSid: account.accountSid,
+    ResourceType: 'brand',
+    ResourceSid: reg.brand_sid!,
+    Status: 'PENDING',
+  };
+  expect(await progress(r)).toEqual({ ...baseline, stalled: false });
+  clock += 5 * minute;
+  await texting.webhook('registration', url, pending, twilioSignature(url, pending, account.authToken));
+  await texting.webhook('registration', url, pending, twilioSignature(url, pending, account.authToken));
+  await texting.registration.tick(r.workspace);
+  expect(await progress(r)).toEqual({ ...baseline, stalled: false });
+  clock += 5 * minute;
+  await texting.registration.tick(r.workspace);
+  expect(await progress(r)).toEqual({ ...baseline, stalled: true });
+  expect(await queue(r)).toEqual([
+    expect.objectContaining({ id: r.id, reason: 'registration_stalled', since: new Date(first) }),
+  ]);
+
+  await texting.mock!.platform.decide(
+    'brand',
+    account,
+    reg.brand_sid!,
+    'APPROVED',
+    texting.registration.callbacks(r.workspace).registration,
+  );
+  for (const pending of await texting.mock!.state.pending(account.accountSid))
+    await texting.mock!.state.done(pending);
+  clock += 5 * minute;
+  expect(await texting.registration.tick(r.workspace)).toEqual(new Date(clock));
+  expect((await row(r)).brand_status).toBe('APPROVED');
+  await texting.registration.tick(r.workspace);
+  expect(await progress(r)).toEqual({
+    stage: 'campaign_pending',
+    since: new Date(clock).toISOString(),
+    stalled: false,
+  });
+  expect(await queue(r)).toEqual([]);
+  expect(await texting.mock!.platform.creates(account.accountSid, 'brand', operationKey(r.id, 1, 'brand'))).toBe(
+    1,
+  );
+  const campaign = (await row(r)).campaign_sid!;
+  await texting.mock!.platform.decide('campaign', account, campaign, 'VERIFIED', url);
+  for (const callback of await texting.mock!.state.pending(account.accountSid))
+    await texting.mock!.state.done(callback);
+  clock += 5 * minute;
+  expect(await texting.registration.tick(r.workspace)).toEqual(new Date(clock));
+  expect(await progress(r)).toMatchObject({ stage: 'number_pending', stalled: false });
+  await texting.registration.tick(r.workspace);
+  expect(
+    await texting.mock!.platform.creates(account.accountSid, 'campaign', operationKey(r.id, 1, 'campaign')),
+  ).toBe(1);
+  expect(await texting.mock!.platform.creates(account.accountSid, 'number', operationKey(r.id, 1, 'number'))).toBe(
+    1,
+  );
+});
+
+it('recovers a lost number callback after restart from the matching signed decision and rejects mismatched evidence', async () => {
+  const r = await draft('org_watchdog_number');
+  await watchdog(r);
+  await submit(r);
+  await texting.registration.tick(r.workspace);
+  await decision(r, 'brand', 'APPROVED');
+  await texting.registration.tick(r.workspace);
+  await decision(r, 'campaign', 'VERIFIED');
+  clock += minute;
+  await texting.registration.advance(r.workspace, r.id); // reserve
+  expect(await progress(r)).toMatchObject({ stage: 'number_pending', since: new Date(clock).toISOString() });
+  clock += minute;
+  await texting.registration.advance(r.workspace, r.id); // attach
+  const attached = clock;
+  expect(await progress(r)).toMatchObject({ stage: 'number_pending', since: new Date(attached).toISOString() });
+  const account = (await db.read(r.workspace, (sql) => texting.registration.account(sql, r.workspace)))!;
+  const callback = (await texting.mock!.state.pending(account.accountSid)).find((c) => !!c.body)!;
+  await texting.mock!.state.done(callback); // transport lost the one delivery
+  const restarted = Texting.mock(db, {
+    origin,
+    linkOrigin: origin,
+    onboardingCapture: true,
+    isOwner: async () => true,
+    now: () => new Date(clock),
+  });
+  const event = JSON.parse(callback.body!)[0];
+  const wrong = JSON.stringify([
+    { ...event, id: 'CE-mismatched-test', data: { ...event.data, phonenumbersid: 'PN' + '0'.repeat(32) } },
+  ]);
+  const url = origin + '/api/v1/texting/twilio/carrier-events?bodySHA256=' + bodyDigest(wrong);
+  const lookup = vi.spyOn(restarted.mock!.platform, 'capturedNumberReceipt');
+  lookup.mockResolvedValueOnce({ url, body: wrong, signature: twilioSignature(url, {}, account.authToken) });
+  lookup.mockResolvedValueOnce({ url: callback.url, body: callback.body!, signature: 'invalid' });
+  const readNumber = async () =>
+    (await db.read(r.workspace, (sql) => sql.query('SELECT state FROM sms_numbers'))).rows[0]!.state;
+  clock = attached + 5 * minute;
+  await restarted.tick(r.workspace);
+  expect(await readNumber()).toBe('reserved');
+  clock += 5 * minute;
+  await restarted.tick(r.workspace);
+  expect(await readNumber()).toBe('reserved');
+  expect(await queue(r)).toEqual([
+    expect.objectContaining({ reason: 'registration_stalled', since: new Date(attached) }),
+  ]);
+  clock += 5 * minute;
+  expect(await restarted.tick(r.workspace)).toEqual(new Date(clock));
+  expect(await readNumber()).toBe('active');
+  await restarted.tick(r.workspace);
+  expect((await row(r)).state).toBe('approved');
+  expect(await queue(r)).toEqual([]);
+  expect(await texting.mock!.platform.creates(account.accountSid, 'number', operationKey(r.id, 1, 'number'))).toBe(
+    1,
+  );
+  expect(
+    (
+      await db.read(r.workspace, (sql) =>
+        sql.query("SELECT 1 FROM sms_audit WHERE action='registration.number_status'"),
+      )
+    ).rowCount,
+  ).toBe(1);
+});
+
+it('preserves a missed mock rejection during automatic approval until polling recovers it', async () => {
+  const r = await draft('org_watchdog_rejection');
+  await watchdog(r);
+  await submit(r);
+  await texting.registration.tick(r.workspace);
+  const account = (await db.read(r.workspace, (sql) => texting.registration.account(sql, r.workspace)))!;
+  const sid = (await row(r)).brand_sid!;
+  await texting.mock!.platform.decide(
+    'brand',
+    account,
+    sid,
+    'FAILED',
+    texting.registration.callbacks(r.workspace).registration,
+    { errorCode: '30799' },
+  );
+  for (const cb of await texting.mock!.state.pending(account.accountSid)) await texting.mock!.state.done(cb);
+  await db.tenant(r.workspace, (sql) =>
+    sql.query(
+      "UPDATE sms_carrier_brands SET profile=jsonb_set(profile,'{onboarding,submittedAt}',to_jsonb($2::text)) WHERE id=$1",
+      [r.brand, new Date(clock).toISOString()],
+    ),
+  );
+  clock += minute;
+  expect(await texting.tick(r.workspace)).toEqual(new Date(clock + 4 * minute));
+  expect((await row(r)).brand_status).toBe('PENDING');
+  expect(await texting.mock!.platform.status('brand', account, sid)).toMatchObject({
+    value: { status: 'FAILED' },
+  });
+  clock += 4 * minute;
+  await texting.tick(r.workspace);
+  expect(await row(r)).toMatchObject({
+    state: 'rejected',
+    brand_status: 'FAILED',
+    rejection_reason: 'brand: 30799',
+    campaign_sid: null,
+  });
+  expect(await texting.mock!.state.pending(account.accountSid)).toEqual([]);
+});
+
+it('leaves stored self-service applications alone when capture is disabled', async () => {
+  const r = await draft('org_watchdog_capture_disabled');
+  await watchdog(r);
+  await submit(r);
+  await texting.registration.tick(r.workspace);
+  const off = Texting.mock(db, {
+    origin,
+    linkOrigin: origin,
+    isOwner: async () => true,
+    now: () => new Date(clock),
+  });
+  const lookup = vi.spyOn(off.mock!.platform, 'status');
+  clock += 6 * minute;
+  await off.registration.tick(r.workspace);
+  expect(lookup).not.toHaveBeenCalled();
+  expect(await row(r)).toMatchObject({ state: 'brand_pending', campaign_sid: null });
+});
+
+it('runs one chosen draft scenario per company and records the source of each number activation', async () => {
+  const lost = await draft('org_armed_scenarios');
+  const rejected = await draft(lost.workspace, false, true);
+  const unaffected = await draft(lost.workspace, false, true);
+  const foreign = await draft('org_foreign_scenario');
+  const arm = (r: Draft, scenario: 'lose_number_notice' | 'reject_campaign_terms', scope = r.workspace) =>
+    texting.operator(
+      'platform.textingMock',
+      {
+        workspaceId: scope,
+        operationKey: randomUUID(),
+        action: {
+          kind: 'registration_scenario',
+          registrationId: r.id,
+          scenario,
+          reason: 'Exercise this synthetic registration path.',
+        },
+      },
+      operator,
+    );
+  await expect(arm(lost, 'lose_number_notice')).rejects.toMatchObject({ code: 'registration_poll_required' });
+  await watchdog(lost);
+  await expect(arm(foreign, 'reject_campaign_terms', lost.workspace)).rejects.toMatchObject({
+    code: 'registration_unavailable',
+  });
+  await Promise.all([arm(lost, 'lose_number_notice'), arm(lost, 'lose_number_notice')]);
+  await expect(arm(lost, 'reject_campaign_terms')).rejects.toMatchObject({ code: 'scenario_already_chosen' });
+  await arm(rejected, 'reject_campaign_terms');
+  for (const r of [lost, rejected, unaffected]) {
+    await submit(r);
+    await db.tenant(r.workspace, (sql) =>
+      sql.query(
+        "UPDATE sms_carrier_brands SET profile=jsonb_set(profile,'{onboarding,submittedAt}',to_jsonb($2::text)) WHERE id=$1",
+        [r.brand, new Date(clock).toISOString()],
+      ),
+    );
+  }
+  await expect(arm(unaffected, 'lose_number_notice')).rejects.toMatchObject({ code: 'scenario_requires_draft' });
+  const ticks = async (n: number) => {
+    for (let i = 0; i < n; i++) {
+      clock += 6000;
+      await texting.tick(lost.workspace);
+    }
+  };
+  await ticks(6);
+  const report = async () => {
+    const data = (await texting.operator(
+      'platform.textingRegistration',
+      { workspaceId: lost.workspace },
+      operator,
+    )) as {
+      registrations: {
+        id: string;
+        state: string;
+        mockScenario: string | null;
+        numberActivationSource: string | null;
+      }[];
+    };
+    return data.registrations;
+  };
+  expect(await report()).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: lost.id,
+        state: 'campaign_pending',
+        mockScenario: 'lose_number_notice',
+        numberActivationSource: null,
+      }),
+      expect.objectContaining({
+        id: rejected.id,
+        state: 'rejected',
+        mockScenario: 'reject_campaign_terms',
+        rejection_reason: 'campaign: 30934',
+      }),
+      expect.objectContaining({
+        id: unaffected.id,
+        state: 'approved',
+        mockScenario: null,
+        numberActivationSource: 'callback',
+      }),
+    ]),
+  );
+  const reg = await row(rejected);
+  expect(
+    (
+      await db.read(rejected.workspace, (sql) =>
+        sql.query(
+          `SELECT 1 FROM sms_audit WHERE target=$1 AND interface='webhook'
+    AND action='registration.campaign_status' AND new_value->>'status'='FAILED'`,
+          [rejected.id],
+        ),
+      )
+    ).rowCount,
+  ).toBe(1);
+  await submit(rejected); // The corrected campaign gets an ordinary review.
+  clock += 5 * minute;
+  await ticks(5);
+  expect(await report()).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: lost.id, state: 'approved', numberActivationSource: 'lookup' }),
+      expect.objectContaining({ id: rejected.id, state: 'approved', numberActivationSource: 'callback' }),
+    ]),
+  );
+  expect((await row(rejected)).campaign_sid).toBe(reg.campaign_sid);
+  expect(
+    (
+      await db.read(lost.workspace, (sql) =>
+        sql.query(
+          `SELECT action,interface FROM sms_audit WHERE target=$1 AND
+    action IN ('mock.registration_scenario','mock.number_notice_omitted','registration.number_status') ORDER BY at,id`,
+          [lost.id],
+        ),
+      )
+    ).rows,
+  ).toEqual([
+    { action: 'mock.registration_scenario', interface: 'operator_api' },
+    { action: 'mock.number_notice_omitted', interface: 'worker' },
+    { action: 'registration.number_status', interface: 'worker' },
+  ]);
+  const number = await row(lost);
+  expect(
+    await texting.mock!.platform.creates(number.account_sid!, 'number', operationKey(lost.id, 1, 'number')),
+  ).toBe(1);
 });

@@ -14,7 +14,7 @@ const metadata = z.object({
   revision: z.string().regex(/^[1-9]\d{0,9}$/),
 });
 export type SetupTarget = { workspace: string; registration: string; revision: number; plan?: TextPlan; attempt?: number };
-export type SetupPayer = { name: string | null; street: string | null; region: string | null; postalCode: string | null; country: string | null };
+export type SetupPayer = { name: string | null; street: string | null; city: string | null; region: string | null; postalCode: string | null; country: string | null };
 export type SetupReceipt = { paidAt?:string; target: SetupTarget; outcome: 'paid' | 'declined'; amount: number; eventId: string; sessionId: string; payer: SetupPayer };
 
 export class StripeTestSetupPayment {
@@ -74,7 +74,7 @@ export class StripeTestSetupPayment {
       outcome: declined ? 'declined' : 'paid', amount: session.amount_total,
       ...(Number.isSafeInteger(event.created) && event.created>0 ? {paidAt:new Date(event.created*1000).toISOString()} : {}),
       eventId: event.id, sessionId: session.id,
-      payer: { name: details?.business_name ?? details?.name ?? null, street: address?.line1 ?? null,
+      payer: { name: details?.business_name ?? details?.name ?? null, street: address?.line1 ? [address.line1, address.line2].filter(Boolean).join(' ') : null, city: address?.city ?? null,
         region: address?.state ?? null, postalCode: address?.postal_code ?? null, country: address?.country ?? null },
     };
   }

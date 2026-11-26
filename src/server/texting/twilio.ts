@@ -31,7 +31,9 @@ export interface TwilioPlatformPort {
   correctCampaign?(account: AccountCredentials, op: string, serviceSid: string, brandSid: string, campaignSid: string, input: CampaignInput): Promise<Result<ProvisionFacts>>;
   buyNumber(account: AccountCredentials, op: string, serviceSid: string, areaCode: string | null): Promise<Result<ProvisionFacts>>;
   /** Live numbers are attached by immutable SID after the purchase is recorded. */
-  attachNumber?(account: AccountCredentials, serviceSid: string, numberSid: string): Promise<Result<true>>;
+  attachNumber?(account: AccountCredentials, serviceSid: string, numberSid: string, mockNotice?: 'omit'): Promise<Result<true>>;
+  /** Staging only: reread the original captured carrier decision after its delivery was missed. */
+  capturedNumberReceipt?(account: AccountCredentials, serviceSid: string, numberSid: string): Promise<{ url: string; body: string; signature: string } | null>;
   /** Reconciles an uncertain create. `accepted` means the resource exists. */
   find(kind: ProvisionKind, account: AccountCredentials | null, op: string, parentSid?: string, workspace?: string): Promise<Result<ProvisionFacts & { account?: AccountCredentials }>>;
   status(kind: 'brand' | 'campaign', account: AccountCredentials, sid: string, parentSid?: string): Promise<Result<{ status: string; reason?: string }>>;

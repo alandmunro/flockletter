@@ -1,3 +1,4 @@
+import { registrationCodes } from './registration-errors.js';
 import { releaseMockBroadcast } from './mock-broadcast-release.js';
 import { textingReport } from './reports.js';
 import { textingReportCommands, type PracticeReportCommand } from '../../shared/texting-reports.js';
@@ -15,7 +16,7 @@ import { lockWorkspace } from '../workspace-lock.js';
 import { AppError, requireCondition } from '../errors.js';
 import type { Actor } from '../service.js';
 import { safeLink } from '../content.js';
-import { blockedCharacters, composeBroadcast, formatBroadcast, encodeText, findLinks, isTextingSetting, maxSegments, plainText, smsConsentPolicyVersion, smsConsentWording, confirmationText,
+import { blockedCharacters, composeBroadcast, formatBroadcast, encodeText, findLinks, isTextingSetting, maxSegments, plainText, smsConsentPolicyVersion, smsConsentWording, pastClientConsentWording, confirmationText,
   textingCommands, textingSettingKeys, textingSettingValue, textingSettings, normalizeUsPhone, type ConsentState, type TextingCommand, type TextingSettingKey } from '../../shared/texting.js';
 import { textingPlatformCommands, type TextingPlatformCommand } from '../../shared/texting-platform.js';
 import { audit, once, readSettings, requestHash, requireSettings, sendingSettings, validZone, type Interface } from './storage.js';
@@ -24,7 +25,7 @@ import { TextingMessaging, businessName, queueText, sendingNumber, setConsent, t
 import { CredentialSeal, verifyTwilioSignature, type AccountCredentials, type TwilioMessagingPort, type TwilioPlatformPort } from './twilio.js';
 import { TwilioMockMessaging, TwilioMockPlatform, TwilioMockState } from './twilio-mock.js';
 import { textingOnboardingCommands, type TextingOnboardingCommand } from '../../shared/texting-onboarding.js';
-import { TextingOnboarding } from './onboarding.js';
+import { TextingOnboarding, voidablePracticeReceipt, type EnrollmentPayment } from './onboarding.js';
 import { receiveCarrierEvents } from './twilio-events.js';
 import { PracticeEvidence, sweepEvidence, type EvidenceCase } from './practice-evidence.js';
 import { advancePracticeProbation, assignCanary, needsProbationSettings, probationGaps } from './probation.js';
@@ -34,6 +35,7 @@ export type TextingMode = 'off' | 'mock' | 'live';
 export type TextingOptions = {
   evidenceReviewers?: readonly string[]; evidenceDirectory?: string;
   mockBroadcastRelease?: string;
+  mockRegistrationPolicy?: import('./probation-policy.js').MockRegistrationPolicy;
   probationPolicy?: import('./probation-policy.js').ProbationPolicy;
   mode: TextingMode; origin: string; linkOrigin: string; seal: CredentialSeal;
   platform: TwilioPlatformPort; port: TwilioMessagingPort; liveAccount?: AccountCredentials;
@@ -51,14 +53,16 @@ type Recipient = { id: string; phone_e164: string; name: string | null };
 
 export class Texting {
   readonly registration: TextingRegistration;
+  private readonly defaults: import('./storage.js').SettingValues;
   readonly messaging: TextingMessaging;
   readonly onboarding?: TextingOnboarding;
   readonly practiceBilling?: PracticeTextBilling;
   readonly mock?: { state: TwilioMockState; platform: TwilioMockPlatform; messaging: TwilioMockMessaging };
   constructor(readonly db: Database, readonly options: TextingOptions) {
-    this.registration = new TextingRegistration({ db, platform: options.platform, seal: options.seal, origin: options.origin,
+    this.defaults = { ...options.probationPolicy, ...(options.mode === 'mock' && options.onboardingCapture && !options.onboardingStripe ? options.mockRegistrationPolicy : {}) };
+    this.registration = new TextingRegistration({ defaults: this.defaults, db, platform: options.platform, seal: options.seal, origin: options.origin,
       onboardingCapture: options.onboardingCapture, ...(options.liveAccount ? { liveAccount: options.liveAccount } : {}), ...(options.now ? { now: options.now } : {}) });
-    this.messaging = new TextingMessaging({ probationPolicy: options.probationPolicy, practiceBilling: options.port instanceof TwilioMockMessaging, db, port: options.port, seal: options.seal, origin: options.origin, ...(options.forward ? { forward: options.forward } : {}), ...(options.canDispatch ? { canDispatch: options.canDispatch } : {}), ...(options.now ? { now: options.now } : {}) });
+    this.messaging = new TextingMessaging({ defaults: this.defaults, practiceBilling: options.port instanceof TwilioMockMessaging, db, port: options.port, seal: options.seal, origin: options.origin, ...(options.forward ? { forward: options.forward } : {}), ...(options.canDispatch ? { canDispatch: options.canDispatch } : {}), ...(options.now ? { now: options.now } : {}) });
     if (options.platform instanceof TwilioMockPlatform && options.port instanceof TwilioMockMessaging) this.mock = { state: options.platform.state, platform: options.platform, messaging: options.port };
     if (this.mock) this.practiceBilling = new PracticeTextBilling(db, () => this.now(), options.origin);
     if (this.mock && options.onboardingCapture) this.onboarding = new TextingOnboarding(db, this.registration, options.origin, () => this.now(), options.onboardingStripe, options.readEnrollmentPage, new PracticeEvidence(options.evidenceReviewers ?? [], options.evidenceDirectory));
@@ -126,7 +130,7 @@ export class Texting {
     return (await sql.query<{ short_name: string | null; short_name_changed_at: Date | null; notification_email: string | null; time_zone: string; phone_field: boolean; birthday_field: boolean; anniversary_field: boolean; anniversary_label: string; name_field: boolean; phone_only_signup: boolean; revision: number }>('SELECT * FROM sms_workspace_profile')).rows[0] ?? null;
   }
   private async status(sql: Sql, w: string, actor: Actor) {
-    const settings = await readSettings(sql, w, this.options.probationPolicy);
+    const settings = await readSettings(sql, w, this.defaults);
     const profile = actor.kind === 'session' && actor.owner ? await this.profile(sql) : null;
     const companies = (await sql.query<{ id: string; name: string; carrier_brand_id: string | null; registration: string | null; registration_state: string | null; e164: string | null; number_state: string | null; probation_state: string | null; enrolled: boolean }>(`
       SELECT c.id,c.name,b.id carrier_brand_id,r.id registration,r.state registration_state,n.e164,n.state number_state,
@@ -137,7 +141,9 @@ export class Texting {
         EXISTS (SELECT 1 FROM company_brands cb WHERE cb.company_id=c.id)
         AND NOT EXISTS (SELECT 1 FROM company_brands cb WHERE cb.company_id=c.id AND NOT cb.brand_id=ANY($1))
       ) ORDER BY c.name`, [actor.brandIds])).rows;
-    const limits = this.practiceBilling ? await practicePlanLimits(sql, w, this.now(), settings.monthly_segment_allowance) : { allowance: settings.monthly_segment_allowance, hold: null };
+    const limits = this.practiceBilling ? await practicePlanLimits(sql, w, this.now(), settings) : { allowance: settings.monthly_segment_allowance, daily: settings.carrier_daily_limit, hold: null };
+    settings.monthly_segment_allowance = limits.allowance;
+    settings.carrier_daily_limit = limits.daily;
     const usage = (await sql.query<{ segments_used: number; segments_reserved: number }>(`SELECT segments_used,segments_reserved FROM sms_usage WHERE period_month=$1::date`, [this.now().toISOString().slice(0, 8) + '01'])).rows[0];
     let plan = this.onboarding && !this.options.onboardingStripe && actor.kind === 'session' && actor.owner ? await practicePlanStatus(sql, w, this.now()) : null;
     if (plan && !await this.options.isOwner(actor.userId, w).catch(() => false)) plan = null;
@@ -156,7 +162,10 @@ export class Texting {
         number: company.e164, numberState: company.number_state, sendingHold, canSend: active && !sendingHold };
     });
     const missing = textingSettingKeys.filter(key => ['sending', 'always'].includes(textingSettings[key].required) && settings[key] === undefined);
-    if (settings.reconcile_settle_minutes === undefined && (await sql.query(`SELECT 1 FROM sms_registration_steps s JOIN sms_registrations r ON r.id=s.registration_id AND r.revision=s.revision WHERE s.state='uncertain' LIMIT 1`)).rowCount) missing.push('reconcile_settle_minutes');
+    if ((await sql.query(`SELECT 1 FROM sms_registration_steps s JOIN sms_registrations r ON r.id=s.registration_id AND r.revision=s.revision
+      JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id WHERE s.state='uncertain'
+      AND flockletter_customer_jobs.texting_setting($1,'reconcile_settle_minutes') IS NULL
+      AND (NOT b.profile ? 'onboarding' OR $2::int IS NULL) LIMIT 1`, [w,this.defaults.reconcile_settle_minutes ?? null])).rowCount) missing.push('reconcile_settle_minutes');
     return { mode: this.options.mode, onboardingAvailable: !!this.onboarding, practicePlan: plan, profile: profile ? { shortName: profile.short_name, notificationEmail: profile.notification_email, timeZone: profile.time_zone,
         phoneField: profile.phone_field, birthdayField: profile.birthday_field, anniversaryField: profile.anniversary_field, anniversaryLabel: profile.anniversary_label, nameField: profile.name_field, phoneOnlySignup: profile.phone_only_signup, revision: profile.revision } : null,
       companies: sendingCompanies,
@@ -169,7 +178,7 @@ export class Texting {
     requireCondition(profile.revision === p.expectedRevision, 409, 'revision_conflict', 'These settings changed. Reload and try again.');
     if (p.timeZone !== undefined) requireCondition(validZone(p.timeZone) && /^America\/|^Pacific\/Honolulu$/.test(p.timeZone), 422, 'invalid_time_zone', 'Choose a US time zone.');
     if (p.shortName !== undefined && p.shortName !== profile.short_name) {
-      const settings = requireSettings(await readSettings(sql, w, this.options.probationPolicy), ['short_name_change_days', 'short_name_hold_days']);
+      const settings = requireSettings(await readSettings(sql, w, this.defaults), ['short_name_change_days', 'short_name_hold_days']);
       const recent = (await sql.query<{ recent: boolean }>('SELECT coalesce(short_name_changed_at>clock_timestamp()-make_interval(days=>$1),false) recent FROM sms_workspace_profile', [settings.short_name_change_days])).rows[0]!.recent;
       requireCondition(!recent,
         409, 'short_name_recently_changed', `The short name can change once every ${settings.short_name_change_days} days.`);
@@ -287,7 +296,7 @@ export class Texting {
   }
   /** The exact confirmation shown before anything sends (FL-SMS-008/009/012, PAC-3). */
   private async snapshot(sql: Sql, w: string, send: SendRow, forConfirm: boolean) {
-    const settings = await readSettings(sql, w, this.options.probationPolicy);
+    const settings = await readSettings(sql, w, this.defaults);
     const profile = await this.profile(sql);
     const business = await businessName(sql, send.company_id);
     const { links, problems } = await this.linkProblems(sql, send.company_id, send.body);
@@ -307,7 +316,9 @@ export class Texting {
     const usage = (await sql.query<{ used: number; reserved: number; queued: number }>(`SELECT coalesce((SELECT segments_used FROM sms_usage WHERE period_month=$2::date),0)::int used,
       coalesce((SELECT segments_reserved FROM sms_usage WHERE period_month=$2::date),0)::int reserved,
       coalesce((SELECT sum(segments) FROM sms_messages WHERE state='pending' AND send_id IS DISTINCT FROM $1),0)::int queued`, [send.id, period])).rows[0]!;
-    const limits = this.practiceBilling ? await practicePlanLimits(sql, w, this.now(), settings.monthly_segment_allowance) : { allowance: settings.monthly_segment_allowance, hold: null };
+    const limits = this.practiceBilling ? await practicePlanLimits(sql, w, this.now(), settings) : { allowance: settings.monthly_segment_allowance, daily: settings.carrier_daily_limit, hold: null };
+    settings.monthly_segment_allowance = limits.allowance;
+    settings.carrier_daily_limit = limits.daily;
     const allowance = limits.allowance ?? null, daily = settings.carrier_daily_limit ?? null;
     const remaining = allowance === null ? null : Math.max(0, allowance - usage.used - usage.reserved - usage.queued);
     const digest = createHash('sha256').update(JSON.stringify({ send: send.id, revision: send.revision, body: send.body, recipients: perRecipient })).digest('hex');
@@ -331,8 +342,8 @@ export class Texting {
     const snap = await this.snapshot(sql, w, send, true);
     requireCondition(snap.digest === p.digest, 409, 'review_changed', 'Recipients or the text changed since review. Review it again.');
     requireCondition(!snap.gaps.length, 409, 'send_not_ready', 'This text cannot be sent yet: ' + snap.gaps.join(', ') + '.', );
-    const allSettings = await readSettings(sql, w, this.options.probationPolicy);
-    const settings = requireSettings(allSettings, sendingSettings);
+    const allSettings = await readSettings(sql, w, this.defaults);
+    const settings = requireSettings(allSettings, ['link_life_days']); // snapshot() already validated all effective sending limits under this lock.
     const scheduledAt = p.scheduledAt ? new Date(p.scheduledAt) : null;
     if (scheduledAt) requireCondition(scheduledAt.getTime() > this.now().getTime() && scheduledAt.getTime() < this.now().getTime() + 90 * 86400000, 422, 'invalid_schedule', 'Schedule within the next 90 days.');
     const profile = (await this.profile(sql))!;
@@ -378,7 +389,7 @@ export class Texting {
     return company.company_id;
   }
   private async verifyPhone(sql: Sql, w: string, actor: Actor, via: Interface, phone: string) {
-    const settings = requireSettings(await readSettings(sql, w, this.options.probationPolicy), ['member_code_minutes', 'member_code_attempts']);
+    const settings = requireSettings(await readSettings(sql, w, this.defaults), ['member_code_minutes', 'member_code_attempts']);
     const company = await this.anyNumber(sql, actor);
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     await sql.query(`INSERT INTO sms_member_phones(workspace_id,user_id,phone_e164,code_digest,code_expires_at,code_attempts,verified_at) VALUES($1,$2,$3,$4,clock_timestamp()+make_interval(mins=>$5),0,NULL)
@@ -389,7 +400,7 @@ export class Texting {
     return { sent: true, expiresInMinutes: settings.member_code_minutes };
   }
   private async confirmPhone(sql: Sql, w: string, actor: Actor, via: Interface, code: string) {
-    const settings = requireSettings(await readSettings(sql, w, this.options.probationPolicy), ['member_code_attempts']);
+    const settings = requireSettings(await readSettings(sql, w, this.defaults), ['member_code_attempts']);
     const row = (await sql.query<{ code_digest: string | null; fresh: boolean; code_attempts: number }>('SELECT code_digest,coalesce(code_expires_at>clock_timestamp(),false) fresh,code_attempts FROM sms_member_phones WHERE user_id=$1 FOR UPDATE', [actor.userId])).rows[0];
     requireCondition(row?.code_digest && row.fresh && row.code_attempts < settings.member_code_attempts, 409, 'code_expired', 'Request a new code.');
     const ok = timingSafeEqual(Buffer.from(row.code_digest), Buffer.from(this.codeDigest(w, actor.userId, code)));
@@ -399,7 +410,7 @@ export class Texting {
     return { verified: true };
   }
   private async testSend(sql: Sql, w: string, actor: Actor, via: Interface, id: string, expectedRevision: number) {
-    const settings = requireSettings(await readSettings(sql, w, this.options.probationPolicy), ['test_texts_per_day']);
+    const settings = requireSettings(await readSettings(sql, w, this.defaults), ['test_texts_per_day']);
     const send = await this.send(sql, actor, id, expectedRevision);
     requireCondition(send.kind === 'broadcast', 409, 'not_a_draft', 'Choose a draft text.');
     const phone = (await sql.query<{ phone_e164: string; verified_at: Date | null }>('SELECT phone_e164,verified_at FROM sms_member_phones WHERE user_id=$1', [actor.userId])).rows[0];
@@ -458,15 +469,18 @@ export class Texting {
     if (this.options.mode === 'off') return null;
     const company = (await sql.query<{ company_id: string }>('SELECT company_id FROM company_brands WHERE brand_id=$1', [brandId])).rows[0];
     if (!company || (!preview && !await sendingNumber(sql, company.company_id))) return null;
-    const links = (await sql.query<{ sms_terms_url: string | null; privacy_policy_url: string | null }>(`SELECT profile->>'smsTermsUrl' sms_terms_url, profile->>'privacyPolicyUrl' privacy_policy_url
+    const links = (await sql.query<{ sms_terms_url: string | null; privacy_policy_url: string | null; confirmation: string | null }>(`SELECT profile->>'smsTermsUrl' sms_terms_url, profile->>'privacyPolicyUrl' privacy_policy_url, profile #>> '{onboarding,campaignReview,payload,optInMessage}' AS confirmation
       FROM sms_carrier_brands WHERE company_id=$1 AND sms_terms_confirmed_at IS NOT NULL AND privacy_policy_confirmed_at IS NOT NULL`, [company.company_id])).rows[0];
     if (preview && !links?.sms_terms_url) return null;
-    const settings = await readSettings(sql, w, this.options.probationPolicy);
+    const settings = await readSettings(sql, w, this.defaults);
     if (settings.contact_monthly_limit === undefined || settings.unconfirmed_expiry_days === undefined) return null;
     const business = await businessName(sql, company.company_id);
     // A brand whose campaign covers stay texts shows (and records) the wider checkbox wording.
-    const stayTexts = (await sql.query<{ stay: boolean | null }>(`SELECT (profile->'campaign'->>'stayTexts')::boolean stay FROM sms_carrier_brands WHERE company_id=$1`, [company.company_id])).rows[0]?.stay === true;
-    return { companyId: company.company_id, wording: smsConsentWording(business, settings.contact_monthly_limit, stayTexts), policyVersion: smsConsentPolicyVersion(stayTexts), business, expiryDays: settings.unconfirmed_expiry_days,
+    const program = (await sql.query<{ stay: boolean | null; past_clients: boolean }>(`SELECT
+      profile ? 'onboarding' AND profile->>'vertical'='REAL_ESTATE' AS past_clients, (profile->'campaign'->>'stayTexts')::boolean stay FROM sms_carrier_brands WHERE company_id=$1`, [company.company_id])).rows[0];
+    const wording = program?.past_clients ? pastClientConsentWording(business, settings.contact_monthly_limit) : smsConsentWording(business, settings.contact_monthly_limit, program?.stay === true);
+    const policyVersion = program?.past_clients ? 'sms-consent-past-client-v1' : smsConsentPolicyVersion(program?.stay === true);
+    return { companyId: company.company_id, wording, policyVersion, business, confirmation: links?.confirmation ?? confirmationText(business), expiryDays: settings.unconfirmed_expiry_days,
       smsTermsUrl: links?.sms_terms_url ?? null, privacyPolicyUrl: links?.privacy_policy_url ?? null };
   }
   /**
@@ -505,7 +519,7 @@ export class Texting {
         text = 'needs_start';
       } else if (current !== 'opted_in') {
         await setConsent(sql, w, offer.companyId, contactId, 'pending_confirmation', 'checkbox_opt_in', 'signup_page', 'subscriber', 'signup_page', { wording: offer.wording, wordingDigest, policyVersion: offer.policyVersion, pendingDays: offer.expiryDays });
-        await queueText(sql, w, { companyId: offer.companyId, contactId, purpose: 'confirmation', to: phone!, body: confirmationText(offer.business) });
+        await queueText(sql, w, { companyId: offer.companyId, contactId, purpose: 'confirmation', to: phone!, body: offer.confirmation });
         text = 'confirmation_sent';
       } else text = 'already_subscribed';
     } else if (contactId && offer) {
@@ -533,7 +547,7 @@ export class Texting {
     const probation = this.onboarding ? await this.db.tenant(workspace, async sql => {
       await lockWorkspace(sql, workspace);
       const expiry = await sweepEvidence(sql, workspace, this.onboarding!.letters, this.now());
-      const policyDue = await advancePracticeProbation(sql, workspace, await readSettings(sql, workspace, this.options.probationPolicy), this.now());
+      const policyDue = await advancePracticeProbation(sql, workspace, await readSettings(sql, workspace, this.defaults), this.now());
       return expiry && (!policyDue || expiry < policyDue) ? expiry : policyDue;
     }) : null;
     const messages = await this.messaging.tick(workspace);
@@ -544,8 +558,8 @@ export class Texting {
   private async advanceOnboardingCapture(workspace: string) {
     const mock = this.mock!;
     const work = await this.db.read(workspace, async sql => {
-      const rows = (await sql.query<{ brand_sid: string | null; campaign_sid: string | null; state: string; checked: Date }>(`
-        SELECT r.brand_sid,r.campaign_sid,r.state,s.updated_at checked FROM sms_registrations r
+      const rows = (await sql.query<{ brand_sid: string | null; campaign_sid: string | null; state: string; checked: Date; scenario: string | null }>(`
+        SELECT r.brand_sid,r.campaign_sid,r.state,s.updated_at checked,s.facts->>'mockScenario' scenario FROM sms_registrations r
         JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id
         JOIN sms_registration_steps s ON s.registration_id=r.id AND s.revision=r.revision
           AND s.step=CASE WHEN r.state='brand_pending' THEN 'brand' ELSE 'campaign' END AND s.state='done'
@@ -560,8 +574,10 @@ export class Texting {
       if (at <= this.now()) {
         const kind = row.state === 'brand_pending' ? 'brand' : 'campaign';
         const sid = kind === 'brand' ? row.brand_sid : row.campaign_sid;
-        if (sid) await mock.platform.decide(kind, work.account, sid, kind === 'brand' ? 'APPROVED' : 'VERIFIED', this.registration.callbacks(workspace).registration);
-        earliest = this.now();
+        const termsError = kind === 'campaign' && row.scenario === 'reject_campaign_terms';
+        const status = kind === 'brand' ? 'APPROVED' : termsError ? 'FAILED' : 'VERIFIED';
+        if (sid && await mock.platform.decide(kind, work.account, sid, status, this.registration.callbacks(workspace).registration,
+          { onlyWhilePending: true, ...(termsError && { errorCode: '30934' }) })) earliest = this.now();
       } else if (!earliest || at < earliest) earliest = at;
     }
     if (earliest && earliest <= this.now()) await this.deliverMockCallbacks(work.account.accountSid);
@@ -620,11 +636,11 @@ export class Texting {
             WHERE s.step='campaign' AND s.provider_sid=$1`, [params.ResourceSid ?? ''])).rows[0];
           if (current?.corrected && current.operation_key !== correction) return { ignored: true };
         }
-        return { applied: await this.registration.status(sql, workspace, type, params.ResourceSid ?? '', params.Status ?? '', params.FailureReason ?? null, 'webhook') };
+        return { applied: await this.registration.status(sql, workspace, type, params.ResourceSid ?? '', params.Status ?? '', registrationCodes(params.ErrorCode) ?? registrationCodes(params.FailureReason) ?? null, 'webhook') };
       }
       const route = (await sql.query<{ workspace_id: string; number_id: string }>('SELECT * FROM flockletter_customer_jobs.texting_route_number($1)', [params.To ?? ''])).rows[0];
       if (!route || route.workspace_id !== workspace) return { ignored: true };
-      return this.messaging.inbound(sql, workspace, route.number_id, params, await readSettings(sql, workspace, this.options.probationPolicy));
+      return this.messaging.inbound(sql, workspace, route.number_id, params, await readSettings(sql, workspace, this.defaults));
     });
     await this.wake(workspace);
     return result;
@@ -655,7 +671,7 @@ export class Texting {
       case 'platform.textingSettings': {
         const w = input.workspaceId ?? '';
         const rows = (await this.db.pool.query<{ key: string; workspace_id: string | null; value: unknown; revision: number; updated_at: Date }>('SELECT * FROM flockletter_customer_jobs.texting_settings_list($1)', [w])).rows;
-        return textingSettingKeys.map(key => ({ key, ...textingSettings[key], privateDefault: !!this.options.probationPolicy && Object.hasOwn(this.options.probationPolicy,key), platform: rows.find(r => r.key === key && !r.workspace_id) ?? null, workspace: rows.find(r => r.key === key && r.workspace_id) ?? null }));
+        return textingSettingKeys.map(key => ({ key, ...textingSettings[key], privateDefault: Object.hasOwn(this.defaults,key), platform: rows.find(r => r.key === key && !r.workspace_id) ?? null, workspace: rows.find(r => r.key === key && r.workspace_id) ?? null }));
       }
       case 'platform.textingSettingHistory':
         return (await this.db.pool.query('SELECT * FROM flockletter_customer_jobs.texting_setting_history($1,$2)', [input.workspaceId ?? '', 100])).rows;
@@ -761,14 +777,17 @@ export class Texting {
       case 'platform.textingRegistration': {
         const w = input.workspaceId!;
         return this.db.read(w, async sql => {
-          const regs = (await sql.query<RegistrationRow & { company_id: string; legal_name: string; cases:Record<string,EvidenceCase> | null; firstSend:string | null; probationState:string | null }>(`
+          const regs = (await sql.query<RegistrationRow & { company_id: string; legal_name: string; onboardingRevision: number | null; onboardingReview: string | null; identity: string | null; submittedAt: string | null; setupPayment: EnrollmentPayment | null; cases:Record<string,EvidenceCase> | null; firstSend:string | null; probationState:string | null }>(`
             SELECT r.*,b.company_id,b.legal_name,b.profile->'practiceEvidenceCases' cases,b.profile#>'{onboarding,revision}' "onboardingRevision",
               b.profile#>>'{onboarding,review}' "onboardingReview",b.profile#>>'{onboarding,evidence,document}' "evidenceDocument",
+              b.profile->>'registrationType' identity,b.profile#>>'{onboarding,submittedAt}' "submittedAt",b.profile#>'{onboarding,payment}' "setupPayment",
               b.profile#>>'{onboarding,evidence,source}' "evidenceSource",b.profile#>>'{onboarding,evidence,fingerprint}' "evidenceFingerprint",b.profile#>>'{onboarding,probation,state}' "probationState",
               b.profile#>>'{onboarding,probation,sendId}' "firstSend"
             FROM sms_registrations r JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id ORDER BY r.created_at`)).rows;
           const steps = (await sql.query<StepRow>('SELECT * FROM sms_registration_steps ORDER BY created_at')).rows;
           const numbers = (await sql.query('SELECT id,carrier_brand_id AS "carrierBrandId",e164,state FROM sms_numbers')).rows;
+          const scenarios = this.mock && this.onboarding ? (await sql.query<{target:string;scenario:string}>(`
+            SELECT target,new_value->>'scenario' scenario FROM sms_audit WHERE action='mock.registration_scenario'`)).rows : [];
           const firstBroadcast = this.mock ? (await sql.query<{
             company_id: string; first: boolean; state: string; reason: string | null; texts: number; attempts: number;
           }>(`SELECT b.company_id, (b.profile#>'{onboarding,probation,members}') ? m.id::text AS first,
@@ -778,7 +797,8 @@ export class Texting {
             WHERE b.workspace_id=$1 AND m.purpose='broadcast'
             GROUP BY b.company_id, first, m.state, m.reason ORDER BY first DESC, m.state, m.reason`, [w])).rows : [];
           // An uncertain step is only retried after the settle time; without it the step waits for the operator (fail closed).
-          const { registration_review_minutes: reviewMinutes, reconcile_settle_minutes: settle } = await readSettings(sql, w, this.options.probationPolicy);
+          const configured = await readSettings(sql, w);
+          const reviewMinutes = configured.registration_review_minutes ?? this.defaults.registration_review_minutes;
           const reviewQueue = this.onboarding ? (await sql.query<{id:string; company:string; reason:string; since:Date}>(`SELECT r.id,b.legal_name company,
             COALESCE(b.profile#>>'{onboarding,review}',CASE WHEN b.profile#>>'{onboarding,probation,state}' IN ('paused','suspended')
               THEN 'probation_'||(b.profile#>>'{onboarding,probation,state}') WHEN r.state='suspended' THEN 'carrier_suspended'
@@ -790,12 +810,21 @@ export class Texting {
             AND ((b.profile#>>'{onboarding,review}') IS NOT NULL OR recovery.reason IS NOT NULL OR b.profile#>>'{onboarding,probation,state}' IN ('paused','suspended')
               OR r.state='suspended' OR (r.state IN ('provisioning','brand_pending','campaign_pending') AND $1::int IS NOT NULL
                 AND r.updated_at <= $2::timestamptz - make_interval(mins=>$1))) ORDER BY r.updated_at,r.id LIMIT 50`, [reviewMinutes ?? null, this.now()])).rows : [];
-          const settingsNeeded = steps.some(s => s.state === 'uncertain' && regs.some(r => r.id === s.registration_id && r.revision === s.revision)) && settle === undefined ? ['reconcile_settle_minutes'] : [];
-          return { mode: this.options.mode, settingsNeeded, reviewQueue, registrations: regs.map(({cases,firstSend,...r}) => ({ ...r,
+          const needsSettle = configured.reconcile_settle_minutes === undefined && steps.some(s =>
+            s.state === 'uncertain' && regs.some(r => r.id === s.registration_id && r.revision === s.revision &&
+              (!r.onboardingRevision || this.defaults.reconcile_settle_minutes === undefined)));
+          const settingsNeeded = needsSettle ? ['reconcile_settle_minutes'] : [];
+          return { mode: this.options.mode, settingsNeeded, reviewQueue, registrations: regs.map(({cases,firstSend,identity,submittedAt,setupPayment,...r}) => ({ ...r,
+            ...(this.onboarding && {canReturnForCorrection:!!r.onboardingReview && !(r.onboardingReview === 'payer_mismatch' && setupPayment?.state === 'paid')}),
+            ...(this.onboarding && !this.options.onboardingStripe && {voidableReceipt:voidablePracticeReceipt(r.id,r.state,identity,r.onboardingReview,r.onboardingRevision,submittedAt,setupPayment)}),
             ...(this.mock && this.onboarding && firstSend && r.probationState === 'paused' && this.options.mockBroadcastRelease === w + '/' + firstSend && { mockReleaseSendId: firstSend }),
             ...(this.onboarding?.letters.seats.includes(operator.userId) && { evidenceCases: Object.values(cases ?? {}).filter(c=>!c.deletedAt)
               .map(c=>({id:c.id,revision:c.revision,document:c.document,assignedToMe:c.assigned===operator.userId,
                 hold:c.hold ? {reason:c.hold.reason,reviewAt:c.hold.reviewAt} : null,closed:!!c.closedAt})) }),
+            ...(this.mock && this.onboarding && r.onboardingRevision && {
+              mockScenario: scenarios.find(item => item.target === r.id)?.scenario ?? null,
+              numberActivationSource: steps.find(step => step.registration_id === r.id && step.revision === r.revision && step.step === 'number')?.facts.numberActivationSource ?? null,
+            }),
             ...(this.mock && { firstBroadcast: firstBroadcast.filter(group => group.company_id === r.company_id) }),
             steps: steps.filter(s => s.registration_id === r.id && s.revision === r.revision)
             .map(s => ({ step: s.step, state: s.state, attempts: s.attempts, operationKey: s.operation_key, reason: (s as unknown as { reason: string | null }).reason, nextCheckAt: s.next_check_at })) })), numbers };
@@ -814,7 +843,7 @@ export class Texting {
         requireCondition(this.onboarding, 503, 'sms_onboarding_unavailable', 'Practice self-service texting setup is unavailable.');
         const p = textingPlatformCommands[name].schema.parse(raw);
         const result = await write(p.workspaceId, sql => this.onboarding!.review(sql, p.workspaceId, p.companyId,
-          p.expectedRevision, p.action, actor, operator.via, p.reason,operator));
+          p.expectedRevision, p.action, actor, operator.via, p.reason,operator,p.expectedReceipt));
         await this.wake(p.workspaceId);
         return result;
       }
@@ -828,6 +857,8 @@ export class Texting {
         requireCondition(this.mock, 409, 'mock_only', 'Mock actions run only with the mock Twilio client.');
         const p = textingPlatformCommands['platform.textingMock'].schema.parse(raw);
         const a = p.action;
+        if (a.kind === 'registration_scenario') return write(p.workspaceId, sql => this.registration.armMockScenario(sql,p.workspaceId,
+          a.registrationId,a.scenario,actor,operator.via,a.reason));
         if (a.kind === 'release_held_broadcast') {
           requireCondition(this.onboarding && this.options.mockBroadcastRelease === p.workspaceId + '/' + a.sendId,
             403, 'mock_release_not_granted', 'This broadcast has no staging release authorization.');
@@ -858,7 +889,10 @@ export class Texting {
         requireCondition(reg, 404, 'not_found', 'This registration is unavailable.');
         const type = a.kind === 'brand' ? 'brand' : 'campaign', sid = type === 'brand' ? reg.brand_sid : reg.campaign_sid;
         requireCondition(sid, 409, 'not_filed', `The ${type} has not been filed yet.`);
-        await this.mock!.platform.decide(type, account, sid, a.status as never, this.registration.callbacks(p.workspaceId).registration);
+        requireCondition(!a.errorCode || a.status === 'FAILED', 422, 'unexpected_rejection_code', 'Use a rejection code only for a failed mock registration.');
+        const decided = await this.mock!.platform.decide(type, account, sid, a.status, this.registration.callbacks(p.workspaceId).registration,
+          {errorCode:a.errorCode,onlyWhilePending:!!a.errorCode});
+        requireCondition(decided, 409, 'mock_decision_unavailable', 'This mock filing has already advanced or is unavailable.');
         return { decided: true, delivered: await this.deliverMockCallbacks(account.accountSid) };
       }
     }

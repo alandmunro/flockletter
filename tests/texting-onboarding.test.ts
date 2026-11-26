@@ -16,7 +16,12 @@ const owner = (workspaceId: string): Actor => ({
   workspaceId, userId: 'user_' + workspaceId, actorId: 'user:' + workspaceId, kind: 'session', owner: true, scopes: ['read'], brandIds: null,
 });
 const a = owner('org_onboarding_a'), b = owner('org_onboarding_b'), c = owner('org_onboarding_stripe');
+const legacy = owner('org_v1_enrollment');
 const sole = owner('org_onboarding_sole'), hosted = owner('org_onboarding_hosted'), secondHosted = owner('org_onboarding_hosted_other');
+const voidOrg = owner('org_onboarding_sole_void');
+const payerOrg = owner('org_onboarding_city_hold'), correctionOrg = owner('org_onboarding_carrier_correction');
+const originalDba = owner('org_onboarding_original_dba'), streamOrg = owner('org_onboarding_failed_event');
+const sameOwnerDba = owner('org_onboarding_cedar_dba'), duplicateDba = owner('org_onboarding_duplicate_dba'), foreignDba = owner('org_onboarding_foreign_dba');
 const retryOrg = owner('org_retrying_enrollment'), draftOrg = owner('org_private_draft'), racing = owner('org_check_lease');
 const business = {
   legalName: 'Robin’s Garden LLC', ein: '00-0072321', businessType: 'Limited Liability Corporation', vertical: 'RETAIL',
@@ -28,19 +33,20 @@ const business = {
 const readEnrollmentPage = async (url: string) => {
   const canonical = new URL(url);
   const page = canonical.origin + canonical.pathname.replace('/signup/', '/business/');
-  const links = `<a href="${business.privacyPolicyUrl}">Privacy</a><a href="${business.smsTermsUrl}">Terms</a><a href="${page}/privacy">Hosted privacy</a><a href="${page}/sms-terms">Hosted terms</a>`;
+  const links = `<a href="${business.privacyPolicyUrl}">Privacy</a><a href="${business.smsTermsUrl}">Terms</a><a href="${business.smsTermsUrl}/updated">Updated terms</a><a href="${page}/privacy">Hosted privacy</a><a href="${page}/sms-terms">Hosted terms</a>`;
   return `<p>Business news. We do not share mobile opt-in data for marketing. Frequency varies. Msg and data rates may apply. Reply STOP to opt out and HELP for help.</p><input type="checkbox" name="smsConsent">${links}`;
 };
 const operator = { userId: 'operator', via: 'operator_api' } as const;
 let fixture: Awaited<ReturnType<typeof startDatabase>>, db: Database, service: CommandService, texting: Texting;
 let clock = 0;
 const ids = new Map<string, string>();
-const settings = {
-  carrier_daily_limit: 100, monthly_segment_allowance: 1000, probation_canary_count: 1,
+const probationPolicy = {
+  probation_canary_count: 1,
   probation_canary_minutes: 1, probation_min_days: 2, probation_delivered_min: 2,
   probation_risk_window_days: 2, probation_risk_minimum: 9, probation_pause_optout_bps: 2500, probation_suspend_optout_bps: 4000,
     probation_pause_filter_bps: 2500, probation_suspend_filter_bps: 4000, probation_initial_days: 1, probation_initial_daily_limit: 10, probation_daily_limit: 20,
 };
+const settings = { carrier_daily_limit: 100, monthly_segment_allowance: 1000, ...probationPolicy };
 const run = <T = unknown>(actor: Actor, name: CommandName, input: unknown = {}) => service.execute(name, input, actor) as Promise<T>;
 const mutation = (actor: Actor, name: CommandName, input: Record<string, unknown> = {}) =>
   run(actor, name, { companyId: ids.get(actor.workspaceId), operationKey: randomUUID(), expectedRevision: 1, ...input });
@@ -59,7 +65,7 @@ beforeAll(async () => {
   service = new CommandService(db, undefined, checkOwner);
   Object.assign(service, { customer: { texting, owns: () => false } });
   const audience = new CustomerAudience(db, { origin, mode: 'exercise', checkOwner, contactLimit: async () => 250, texting });
-  for (const actor of [a, b, c, sole, hosted, secondHosted, retryOrg, draftOrg, racing]) {
+  for (const actor of [a, b, c, sole, hosted, secondHosted, retryOrg, draftOrg, racing, voidOrg, streamOrg, originalDba, payerOrg, correctionOrg, sameOwnerDba, duplicateDba, foreignDba, legacy]) {
     await run(actor, 'workspace.initialize', { operationKey: randomUUID(), name: 'Synthetic workspace', brandName: 'Garden' });
     const context = await db.read(actor.workspaceId, async sql => ({
       company: (await sql.query<{ id: string }>('SELECT id FROM companies')).rows[0]!.id,
@@ -86,7 +92,7 @@ it('opens one Stripe test checkout intent and accepts only a matching signed pai
   const open = vi.spyOn(payment, 'open').mockResolvedValue({ id: 'cs_test_synthetic', url: 'https://checkout.stripe.com/test' });
   const cmd = (name: Parameters<Texting['execute']>[0], input: Record<string, unknown> = {}) =>
     testService.execute(name, { operationKey: randomUUID(), companyId, expectedRevision: 1, ...input }, c, 'api');
-  await cmd('sms.onboardingSave', { business: { ...business, ein: '00-0072322' }, accepted: true, expectedRevision: null });
+  await cmd('sms.onboardingSave', { business: { ...business, ein: '00-0072322' }, accepted: true, nameConfirmed: true, expectedRevision: null });
   for (const channel of ['email', 'phone']) {
     const { captureCode } = await cmd('sms.onboardingChallenge', { channel }) as { captureCode:string };
     await cmd('sms.onboardingVerify', { channel, code:captureCode });
@@ -101,7 +107,7 @@ it('opens one Stripe test checkout intent and accepts only a matching signed pai
     const payload = JSON.stringify({ id: eventId, type, livemode: false, account: 'acct_synthetic', data: { object: {
       id: 'cs_test_synthetic', livemode: false, mode: 'payment', payment_status: 'paid', amount_total: 4900, currency: 'usd',
       client_reference_id: target.registration, metadata: { ...target, revision: String(target.revision), purpose: 'flockletter_texting_setup' },
-      customer_details: { business_name: business.legalName, address: { line1: business.street, state: business.region, postal_code: business.postalCode, country: 'US' } },
+      customer_details: { business_name: business.legalName, address: { line1: business.street, city:business.city, state: business.region, postal_code: business.postalCode, country: 'US' } },
       ...session,
     } } });
     const signature = stripe.webhooks.generateTestHeaderString({ payload, secret: signed ? secret : 'whsec_wrong' });
@@ -125,7 +131,7 @@ it('opens one Stripe test checkout intent and accepts only a matching signed pai
   await expect(send({id:'cs_test_second',metadata:{...metadata,plan:'text_1000'}},true,'checkout.session.completed','evt_wrong_plan')).rejects.toMatchObject({code:'checkout_mismatch'});
   const latest = {id:'cs_test_second',metadata};
   await Promise.all([send(latest, true, 'checkout.session.completed','evt_new'), send(latest, true, 'checkout.session.completed','evt_new')]);
-  await expect(cmd('sms.onboardingSave',{business:{...business,ein:'00-0072322',plan:'text_1000'},accepted:true})).rejects.toMatchObject({code:'paid_enrollment_locked'});
+  await expect(cmd('sms.onboardingSave',{business:{...business,ein:'00-0072322',plan:'text_1000'},accepted: true, nameConfirmed: true})).rejects.toMatchObject({code:'paid_enrollment_locked'});
   await send({...latest, payment_status:'unpaid'}, true,'checkout.session.async_payment_failed','evt_stale_failure');
   await expect(cmd('sms.onboardingSubmit')).resolves.toEqual({ submitted: true });
   const verified = await db.read(c.workspaceId, sql => sql.query("SELECT 1 FROM sms_audit WHERE action='onboarding.checkout_verified'"));
@@ -135,7 +141,7 @@ afterAll(async () => { await db?.close(); await fixture?.stop(); });
 
 it('resumes the verified and paid owner flow, isolates EIN claims and holds a failed first broadcast cohort', async () => {
   for (const actor of [a, b]) {
-    await mutation(actor, 'sms.onboardingSave', { expectedRevision: null, business, accepted: true });
+    await mutation(actor, 'sms.onboardingSave', { expectedRevision: null, business, accepted: true, nameConfirmed: true });
     expect(await status(actor)).toMatchObject({ revision: 1, state: 'draft', business: { legalName: business.legalName } });
     await expect(mutation(actor, 'sms.onboardingPay')).rejects.toMatchObject({ code: 'identity_unverified' });
     for (const channel of ['email', 'phone']) {
@@ -162,10 +168,13 @@ it('resumes the verified and paid owner flow, isolates EIN claims and holds a fa
   expect(correction).toMatchObject({state:'correction_required',message:expect.stringContaining('EIN')});
   expect(JSON.stringify(correction)).not.toContain('Private operator investigation note');
   await expect(mutation(b,'sms.onboardingChallenge',{channel:'email'})).rejects.toMatchObject({code:'enrollment_correction_required'});
-  await mutation(b,'sms.onboardingSave',{accepted:true,business:{...business,ein:'00-0900812'}});
+  await mutation(b,'sms.onboardingSave',{accepted: true, nameConfirmed: true,business:{...business,ein:'00-0900812'}});
   expect(await status(b)).toMatchObject({state:'draft',revision:2,message:null,verified:{email:false,phone:false}});
 
-  const submit = () => mutation(a, 'sms.onboardingSubmit');
+  const reviewed = (await status(a)).campaignReview!;
+  const otherReview = (await status(b)).campaignReview!;
+  await expect(mutation(a, 'sms.onboardingSubmit', { reviewedCampaign: otherReview.digest })).rejects.toMatchObject({ code: 'campaign_review_changed' });
+  const submit = () => mutation(a, 'sms.onboardingSubmit', { reviewedCampaign: reviewed.digest });
   expect(await Promise.all([submit(), submit()])).toEqual([{ submitted: true }, { submitted: true }]);
   for (let i = 0; i < 5; i++) await tick(a);
   expect(await status(a)).toMatchObject({ state: 'approved', checkout: 'paid' });
@@ -302,7 +311,7 @@ async function practiceVerify(actor: Actor, channel: string) {
 }
 
 it('completes an authorized setup once and requires a separate carrier verification for the practice sole proprietor', async () => {
-  await mutation(sole,'sms.onboardingSave',{expectedRevision:null,accepted:true,business:{...business,
+  await mutation(sole,'sms.onboardingSave',{expectedRevision:null,accepted: true, nameConfirmed: true,business:{...business,
     registrationType:'sole_proprietor',legalName:'Robin Garden',ein:'',plan:'text_300',phone:'+12125550140'}});
   await practiceVerify(sole,'email');
   await practiceVerify(sole,'phone');
@@ -319,6 +328,26 @@ it('completes an authorized setup once and requires a separate carrier verificat
   expect(view.notices.filter(n=>n.message === 'Registration approved. Your assigned number is active.')).toHaveLength(1);
   const sender = () => run(sole, 'sms.status');
   expect(await sender()).toMatchObject({companies:[{registration:'approved',numberState:'active',canSend:false,sendingHold:'texting_setting_required'}]});
+  // A deployment policy plus the activated plan is sufficient for normal review, confirmation and worker admission.
+  const daytime = new Date(clock);
+  daytime.setUTCDate(daytime.getUTCDate() + 1);
+  daytime.setUTCHours(18, 0, 0, 0);
+  const automatic = Texting.mock(db, { ...texting.options, now: () => daytime, probationPolicy,
+    mockRegistrationPolicy: {mock_low_volume_daily_limit:8, mock_standard_daily_limit:16, mock_sole_proprietor_daily_limit:4,
+      registration_poll_minutes:5, registration_review_minutes:20, reconcile_settle_minutes:3} });
+  const direct = (name: Parameters<Texting['execute']>[0], input: unknown) => automatic.execute(name, input, sole, 'ui');
+  expect(await direct('sms.status', {})).toMatchObject({companies:[{canSend:true}], usage:{allowance:300}});
+  const companyId = ids.get(sole.workspaceId)!;
+  const { contactId } = await direct('sms.addContact', {operationKey:randomUUID(), companyId, phone:'+12125550158'}) as { contactId:string };
+  await db.tenant(sole.workspaceId, sql => sql.query("UPDATE sms_consents SET state='opted_in' WHERE contact_id=$1", [contactId]));
+  const draft = await direct('sms.draft', {operationKey:randomUUID(), companyId, body:view.samples[0]}) as { id:string; revision:number };
+  const target = {id:draft.id, expectedRevision:draft.revision};
+  const review = await direct('sms.review', target) as {digest:string; gaps:string[]};
+  expect(review.gaps).toEqual([]);
+  await direct('sms.confirm', {...target, operationKey:randomUUID(), digest:review.digest});
+  for (let i = 0; i < 3; i++) await automatic.tick(sole.workspaceId);
+  expect(await db.read(sole.workspaceId, async sql => (await sql.query('SELECT state,attempts FROM sms_messages WHERE send_id=$1', [draft.id])).rows))
+    .toEqual([{state:'delivered',attempts:1}]);
   for (const [key, value] of Object.entries(settings)) {
     await texting.operator('platform.textingSetSetting', {workspaceId:sole.workspaceId,operationKey:randomUUID(),key,value,expectedRevision:0,
       reason:'Synthetic workspace sending-readiness exercise.'},operator);
@@ -329,7 +358,7 @@ it('completes an authorized setup once and requires a separate carrier verificat
 });
 
 it('keeps domainless practice ownership in review until a bound synthetic letter is accepted',async()=>{
-  await mutation(hosted,'sms.onboardingSave',{expectedRevision:null,accepted:true,business:{...business,ein:'00-9400041',
+  await mutation(hosted,'sms.onboardingSave',{expectedRevision:null,accepted: true, nameConfirmed: true,business:{...business,ein:'00-9400041',
     hostedPages:true,description:'Fictional gardening updates.',publicContact:'help@example.test',website:'',smsTermsUrl:'',privacyPolicyUrl:''}});
   expect(await status(hosted)).toMatchObject({state:'review',review:'hosted_ownership',pageCheck:{issues:[]}});
   const review=()=>texting.operator('platform.textingOnboardingReview',{operationKey:randomUUID(),workspaceId:hosted.workspaceId,
@@ -339,7 +368,7 @@ it('keeps domainless practice ownership in review until a bound synthetic letter
   const template = (await status(hosted)).evidenceFiles!.CP575!;
   await expect(mutation(hosted,'sms.onboardingEvidence',{document:'147C',contents:template})).rejects.toMatchObject({code:'practice_letter_mismatch'});
   await expect(mutation(hosted,'sms.onboardingEvidence',{document:'CP575',contents:template.replace('revision: 1','revision: 2')})).rejects.toMatchObject({code:'practice_letter_mismatch'});
-  await mutation(secondHosted,'sms.onboardingSave',{expectedRevision:null,accepted:true,business:{...business,ein:'00-9400042',hostedPages:true,
+  await mutation(secondHosted,'sms.onboardingSave',{expectedRevision:null,accepted: true, nameConfirmed: true,business:{...business,ein:'00-9400042',hostedPages:true,
     description:'Fictional second garden.',publicContact:'care@example.test',website:'',smsTermsUrl:'',privacyPolicyUrl:''}});
   const other = (await status(secondHosted)).evidenceFiles!.CP575!;
   await expect(mutation(hosted,'sms.onboardingEvidence',{document:'CP575',contents:other})).rejects.toMatchObject({code:'practice_letter_mismatch'});
@@ -383,7 +412,7 @@ it('binds browser draft access to the authenticated owner, company and editable 
   const multiOwner = Texting.mock(db, {origin,linkOrigin:origin+'/l',isOwner:async()=>true,onboardingCapture:true,readEnrollmentPage});
   const otherAccess = await multiOwner.execute('sms.onboardingDraftAccess',{companyId:company,expectedRevision:null,operationKey:randomUUID()},other,'ui');
   expect(otherAccess).not.toEqual(one);
-  await mutation(draftOrg,'sms.onboardingSave',{expectedRevision:null,accepted:true,business});
+  await mutation(draftOrg,'sms.onboardingSave',{expectedRevision:null,accepted: true, nameConfirmed: true,business});
   await expect(cmd(draftOrg,company,null)).rejects.toMatchObject({code:'revision_conflict'});
   expect((await cmd(draftOrg,company,1)).key).not.toBe(one.key);
   await expect(multiOwner.execute('sms.onboardingDraftAccess',{companyId:company,expectedRevision:1,operationKey:randomUUID()},other,'ui'))
@@ -398,7 +427,7 @@ it('retries temporary page failures without a browser, recovers a lost lease and
   });
   const service = Texting.mock(db,{origin,linkOrigin:origin+'/l',onboardingCapture:true,isOwner:async()=>true,now:()=>new Date(clock),readEnrollmentPage:read});
   const companyId = ids.get(retryOrg.workspaceId)!;
-  const save = (revision: number | null) => service.execute('sms.onboardingSave',{companyId,expectedRevision:revision,operationKey:randomUUID(),business,accepted:true},retryOrg,'ui');
+  const save = (revision: number | null) => service.execute('sms.onboardingSave',{companyId,expectedRevision:revision,operationKey:randomUUID(),business,accepted: true, nameConfirmed: true},retryOrg,'ui');
   const readView = () => service.execute('sms.onboardingStatus',{companyId},retryOrg,'ui') as Promise<OnboardingView>;
   const worker = () => service.tick(retryOrg.workspaceId);
   await save(null);
@@ -444,7 +473,7 @@ it('waits for the current page check before submission and ignores a late respon
     }});
   const companyId = ids.get(racing.workspaceId)!;
   const ctx = { companyId, expectedRevision:1, operationKey:randomUUID() };
-  await test.execute('sms.onboardingSave',{...ctx,expectedRevision:null,accepted:true,business},racing,'ui');
+  await test.execute('sms.onboardingSave',{...ctx,expectedRevision:null,accepted: true, nameConfirmed: true,business},racing,'ui');
   for (const channel of ['email','phone']) {
     const response = await test.execute('sms.onboardingChallenge',{...ctx,operationKey:randomUUID(),channel},racing,'ui') as {captureCode:string};
     await test.execute('sms.onboardingVerify',{...ctx,operationKey:randomUUID(),channel,code:response.captureCode},racing,'ui');
@@ -562,4 +591,196 @@ it('retains a held fictional letter, audits its deletion, and refuses an older r
   } finally {
     clock = initial;
   }
+});
+
+it('records the simulated fee once, compares the fictional billing city, and holds a mismatched payer before carrier submission', async () => {
+  const applicant = { ...business, ein:'00-3800001' };
+  await mutation(payerOrg,'sms.onboardingSave',{expectedRevision:null,business:applicant,accepted:true,nameConfirmed:true});
+  await practiceVerify(payerOrg,'email'); await practiceVerify(payerOrg,'phone');
+  const practicePayer = { name:business.legalName, street:business.street, city:'Different city',region:business.region,postalCode:business.postalCode,country:'US' };
+  const request = { operationKey:randomUUID(), acceptedFee:4900,currency:'USD',practicePayer };
+  const finish = () => mutation(payerOrg,'sms.onboardingFinish',request);
+  expect(await finish()).toMatchObject({paid:true,submitted:false,review:'payer_mismatch'});
+  expect(await finish()).toMatchObject({paid:true,submitted:false,review:'payer_mismatch'});
+  expect(await status(payerOrg)).toMatchObject({state:'review',checkout:'paid',review:'payer_mismatch'});
+  await expect(mutation(payerOrg,'sms.onboardingSubmit')).rejects.toMatchObject({code:'onboarding_review'});
+  const facts = await db.read(payerOrg.workspaceId, async sql => ({
+    paid:(await sql.query("SELECT 1 FROM sms_audit WHERE action='onboarding.checkout_capture' AND new_value->>'state'='paid'")).rowCount,
+    accounts:(await sql.query('SELECT account_sid FROM sms_registrations')).rows[0]?.account_sid,
+    audit:JSON.stringify((await sql.query('SELECT new_value FROM sms_audit')).rows),
+  }));
+  expect(facts.paid).toBe(1); expect(facts.accounts).toBeNull(); expect(facts.audit).not.toContain(practicePayer.city);
+});
+
+it('allows a second DBA of the same owner, and distinguishes a duplicate DBA from a conflicting EIN owner', async () => {
+  const multi = Texting.mock(db, {...texting.options,isOwner:async()=>true});
+  const file = async (account:Actor, user:Actor, dbaName:string) => {
+    const actor = {...account,userId:user.userId,actorId:user.actorId};
+    const cmd = (name:Parameters<Texting['execute']>[0], data:object={}) => multi.execute(name,{
+      companyId:ids.get(account.workspaceId),expectedRevision:1,operationKey:randomUUID(),...data,
+    },actor,'ui');
+    await cmd('sms.onboardingSave',{expectedRevision:null,business:{...business,ein:'00-3800002',dbaName},accepted:true,nameConfirmed:true});
+    for (const channel of ['email','phone']) {
+      const {captureCode} = await cmd('sms.onboardingChallenge',{channel}) as {captureCode:string};
+      await cmd('sms.onboardingVerify',{channel,code:captureCode});
+    }
+    await cmd('sms.onboardingPay');
+    return multi.execute('sms.onboardingStatus',{companyId:ids.get(account.workspaceId)},actor,'ui');
+  };
+  expect(await file(originalDba,originalDba,'Cedar Garden')).toMatchObject({checkout:'paid',review:null});
+  expect(await file(sameOwnerDba,originalDba,'Second Garden')).toMatchObject({checkout:'paid',review:null});
+  expect(await file(duplicateDba,originalDba,'CEDAR GARDEN')).toMatchObject({checkout:'unpaid',review:'dba_conflict'});
+  expect(await file(foreignDba,foreignDba,'Third Garden')).toMatchObject({checkout:'unpaid',review:'ein_conflict'});
+});
+
+it('lets the owner fix a rejected campaign and reach approval on the same payment and carrier campaign', async () => {
+  const applicant = {...business,ein:'00-3800003',dbaName:'Cedar Garden'};
+  await mutation(correctionOrg,'sms.onboardingSave',{expectedRevision:null,business:applicant,accepted:true,nameConfirmed:true});
+  await practiceVerify(correctionOrg,'email'); await practiceVerify(correctionOrg,'phone');
+  await mutation(correctionOrg,'sms.onboardingFinish',{acceptedFee:4900,currency:'USD'});
+  await texting.registration.tick(correctionOrg.workspaceId);
+  const read = () => db.read(correctionOrg.workspaceId,async sql => (await sql.query('SELECT id,state,brand_sid,campaign_sid,revision,rejection_reason FROM sms_registrations')).rows[0]!);
+  const reg = await read();
+  const decision = (kind:'brand'|'campaign', status:string, errorCode?:string) => texting.operator('platform.textingMock',{
+    workspaceId:correctionOrg.workspaceId,operationKey:randomUUID(),action:{kind,registrationId:reg.id,status,errorCode},
+  },operator);
+  await decision('brand','APPROVED'); await texting.registration.tick(correctionOrg.workspaceId);
+  const original = await read();
+  expect(original.campaign_sid).toMatch(/^QE/);
+  await decision('campaign','FAILED','30934');
+  expect(await status(correctionOrg)).toMatchObject({state:'rejected',message:expect.stringContaining('public URL of the SMS program terms')});
+  await expect(mutation(correctionOrg,'sms.onboardingSubmit')).rejects.toMatchObject({code:'registration_correction_required'});
+  await mutation(correctionOrg, 'sms.onboardingSave',{business:{...applicant,smsTermsUrl:applicant.smsTermsUrl+'/updated'},accepted:true,nameConfirmed:true});
+  expect(await status(correctionOrg)).toMatchObject({state:'draft',revision:2,resubmission:true,checkout:'paid'});
+  for (const channel of ['phone','email']) {
+    const {captureCode} = await mutation(correctionOrg,'sms.onboardingChallenge',{channel,expectedRevision:2}) as {captureCode:string};
+    await mutation(correctionOrg,'sms.onboardingVerify',{channel,code:captureCode,expectedRevision:2});
+  }
+  await mutation(correctionOrg,'sms.onboardingSubmit',{expectedRevision:2}); await texting.registration.tick(correctionOrg.workspaceId);
+  expect(await read()).toMatchObject({state:'campaign_pending',brand_sid:original.brand_sid,campaign_sid:original.campaign_sid,revision:2});
+  for(let n=0;n<6;n++) await tick(correctionOrg);
+  expect(await status(correctionOrg)).toMatchObject({state:'approved',checkout:'paid'});
+  const slips = await db.read(correctionOrg.workspaceId,sql=>sql.query("SELECT 1 FROM sms_audit WHERE action='onboarding.checkout_capture' AND new_value->>'state'='paid'"));
+  expect(slips.rowCount).toBe(1);
+});
+
+it('extracts the actionable code from a later signed brand failure event without storing its private description', async () => {
+  const workspace = streamOrg.workspaceId;
+  await mutation(streamOrg,'sms.onboardingSave',{expectedRevision:null,business:{...business,ein:'00-3800004'},accepted:true,nameConfirmed:true});
+  await practiceVerify(streamOrg,'phone'); await practiceVerify(streamOrg,'email');
+  await mutation(streamOrg,'sms.onboardingFinish',{acceptedFee:4900,currency:'USD'});
+  await texting.registration.tick(workspace);
+  const {sid,account} = await db.read(workspace,async sql=>({
+    sid:(await sql.query('SELECT brand_sid FROM sms_registrations')).rows[0]!.brand_sid as string,
+    account:(await texting.registration.account(sql,workspace))!,
+  }));
+  const notify = async (errors?:unknown[]) => {
+    const body = Buffer.from(JSON.stringify([{id:randomUUID(),time:new Date(clock).toISOString(),
+      type:'com.twilio.messaging.compliance.brand-registration.brand-unverified',
+      data:{accountsid:account.accountSid,brandsid:sid,brandregistrationerrors:errors},
+    }]));
+    const url = origin+'/api/v1/texting/twilio/events?bodySHA256='+createHash('sha256').update(body).digest('hex');
+    await texting.carrierEvents(url,body,twilioSignature(url,{},account.authToken));
+  };
+  await notify();
+  await notify([{registrationerrorcode:30795,registrationerrordescription:'Fictional private identity details'}]);
+  expect(await status(streamOrg)).toMatchObject({state:'rejected',message:expect.stringContaining('EIN and legal name')});
+  const reg = await db.read(workspace,sql=>sql.query('SELECT rejection_reason FROM sms_registrations'));
+  expect(reg.rows[0]?.rejection_reason).toBe('brand: 30795');
+});
+
+it('keeps a submitted legacy enrollment on its saved samples and uses its public HELP contact', async () => {
+  const details = { ...business, ein: '00-0900742', hostedPages: true, publicContact: 'public@practice.example.test',
+    description: 'Seasonal updates.', website: '', privacyPolicyUrl: '', smsTermsUrl: '' };
+  await mutation(legacy, 'sms.onboardingSave', { expectedRevision: null, business: details, accepted: true, nameConfirmed: true });
+  const samples = ['A legacy sample about seasonal news.', 'A legacy sample about new hours.'];
+  await db.tenant(legacy.workspaceId, sql => sql.query(`UPDATE sms_carrier_brands SET help_contact=$1,
+    profile=jsonb_set((profile #- '{onboarding,nameConfirmation}') || jsonb_build_object('campaign',$2::jsonb),'{onboarding,policyVersion}','"sms-enrollment-v1"')`,
+    [details.email, JSON.stringify({ description: 'The owner previously accepted these seasonal announcements.', samples, useCase: 'LOW_VOLUME' })]));
+  const old = (await status(legacy)).campaignReview;
+  expect(old?.samples).toEqual(samples);
+  expect(old?.helpMessage).toContain(details.publicContact);
+  await mutation(legacy, 'sms.onboardingEvidence', { document: '147C' });
+  const reviewer = { ...operator, mfaAt: new Date(clock).toISOString() };
+  await texting.operator('platform.textingEvidenceCase', { workspaceId: legacy.workspaceId, companyId: ids.get(legacy.workspaceId),
+    caseId: (await status(legacy)).evidence!.caseId, action: 'view', operationKey: randomUUID() }, reviewer);
+  await texting.operator('platform.textingOnboardingReview', { operationKey: randomUUID(), workspaceId: legacy.workspaceId,
+    companyId: ids.get(legacy.workspaceId), expectedRevision: 1, action: 'accept_evidence', reason: 'Practice ownership review of the previous version.' },
+    reviewer);
+  for (const channel of ['email','phone']) {
+    const { captureCode } = await mutation(legacy, 'sms.onboardingChallenge', { channel }) as { captureCode: string };
+    await mutation(legacy, 'sms.onboardingVerify', { channel, code: captureCode });
+  }
+  await mutation(legacy, 'sms.onboardingPay');
+  await mutation(legacy, 'sms.onboardingSubmit');
+  // Older workers could already have a submitted revision without a stored copy of the filing.
+  await db.tenant(legacy.workspaceId, sql => sql.query("UPDATE sms_carrier_brands SET profile=profile #- '{onboarding,campaignReview}'"));
+  expect((await status(legacy)).campaignReview).toBeUndefined();
+  const filed = vi.spyOn(texting.mock!.platform, 'submitCampaign');
+  try {
+    for (let n = 0; n < 6; n++) await tick(legacy);
+    expect(await status(legacy)).toMatchObject({ state: 'approved', samples });
+    const payload = filed.mock.calls[0]![4];
+    expect(payload.samples).toEqual(samples);
+    expect(payload.helpMessage).toContain(details.publicContact);
+    expect(payload.helpMessage).not.toContain(details.email);
+    expect(payload.optOutMessage).toContain('Reply START to resubscribe');
+    await db.tenant(legacy.workspaceId, async sql => {
+      const brand = (await sql.query<{ id: string }>('SELECT id FROM brands')).rows[0]!.id;
+      const number = (await sql.query<{ id: string }>('SELECT id FROM sms_numbers')).rows[0]!.id;
+      const offer = await texting.smsOffer(sql, legacy.workspaceId, brand);
+      const phone = '+12125550124';
+      await texting.recordSignup(sql, legacy.workspaceId, brand, null, { phone, smsConsent: true, wordingShown: offer!.wording });
+      await texting.messaging.inbound(sql, legacy.workspaceId, number, { From: phone, Body: 'HELP', MessageSid: 'SM-legacy-help' }, { help_words: ['HELP'] });
+      await texting.messaging.inbound(sql, legacy.workspaceId, number, { From: phone, Body: 'STOP', MessageSid: 'SM-legacy-stop' }, { opt_out_words: ['STOP'] });
+      expect((await sql.query("SELECT e.state FROM sms_consents e JOIN sms_contacts c ON c.id=e.contact_id WHERE c.phone_e164=$1", [phone])).rows[0]).toEqual({ state: 'opted_out' });
+      expect((await sql.query("SELECT rendered_body FROM sms_messages WHERE purpose='help' AND to_e164=$1",[phone])).rows[0]).toEqual({ rendered_body: payload.helpMessage });
+    });
+  } finally { filed.mockRestore(); }
+});
+
+it('voids only the exact paid simulated sole-proprietor mismatch and requires fresh verification and payment', async () => {
+  const workspaceId = voidOrg.workspaceId, companyId = ids.get(workspaceId)!;
+  const applicant = {...business, registrationType:'sole_proprietor',ein:'',legalName:'Example Sole Owner',phone:'+12125550179'};
+  const save = (revision:number|null) => mutation(voidOrg,'sms.onboardingSave',
+    {expectedRevision:revision,accepted:true,nameConfirmed:true,business:applicant});
+  await save(null);
+  for (const channel of ['phone','email','carrier']) await practiceVerify(voidOrg,channel);
+  const oldKey = randomUUID();
+  const checkout = () => mutation(voidOrg,'sms.onboardingPay',{operationKey:oldKey,practicePayer:{
+    name:applicant.legalName,street:applicant.street,city:'Fictional other city',region:applicant.region,postalCode:applicant.postalCode,country:'US',
+  }});
+  expect(await checkout()).toMatchObject({paid:true,review:'payer_mismatch'});
+  const info = async (api = texting) => (await api.operator('platform.textingRegistration',{workspaceId},operator) as
+    {registrations:{voidableReceipt?:string|null}[]}).registrations[0]!;
+  const expectedReceipt = (await info()).voidableReceipt!;
+  expect(expectedReceipt).toMatch(/^[0-9a-f]{64}$/);
+  const request = { workspaceId, companyId, expectedRevision:1, operationKey:randomUUID(), action:'void_practice_receipt', expectedReceipt, reason:'Return this fictional receipt for correction.' };
+  const review = (patch:Record<string,unknown>={}, api=texting) => api.operator('platform.textingOnboardingReview',{...request,...patch},operator);
+  await expect(review({expectedReceipt:'0'.repeat(64)})).rejects.toMatchObject({code:'practice_void_unavailable'});
+  await expect(review({expectedRevision:2})).rejects.toMatchObject({code:'revision_conflict'});
+  await expect(review({companyId:ids.get(a.workspaceId)})).rejects.toMatchObject({code:'not_found'});
+  const stripe = Texting.mock(db,{...texting.options,onboardingStripe:new StripeTestSetupPayment('sk_test_fixture','whsec_fixture','acct_fixture',origin)});
+  expect((await info(stripe)).voidableReceipt).toBeUndefined();
+  await expect(review({},stripe)).rejects.toMatchObject({code:'practice_void_unavailable'});
+  expect(await Promise.all([review(),review()])).toEqual([{voided:true,revision:2},{voided:true,revision:2}]);
+  expect((await info()).voidableReceipt).toBeNull();
+  expect(await status(voidOrg)).toMatchObject({revision:2,state:'correction_required',checkout:'unpaid',verified:{phone:false,email:false},carrierVerified:false});
+  await checkout(); // The old idempotent result must not restore the payment.
+  expect((await status(voidOrg)).checkout).toBe('unpaid');
+  await expect(mutation(voidOrg,'sms.onboardingSubmit',{expectedRevision:2})).rejects.toMatchObject({code:'enrollment_correction_required'});
+  const events = await db.read(workspaceId,async sql => (await sql.query("SELECT actor_id,old_value,new_value FROM sms_audit WHERE action='onboarding.practice_receipt_voided'")).rows);
+  expect(events).toMatchObject([{actor_id:'operator:operator',old_value:{amount:4900,currency:'USD',revision:1},new_value:{revision:2,reason:request.reason}}]);
+  await save(2);
+  await expect(mutation(voidOrg,'sms.onboardingSubmit',{expectedRevision:3})).rejects.toMatchObject({code:'identity_unverified'});
+  for (const channel of ['phone','email','carrier']) {
+    const {captureCode} = await mutation(voidOrg,'sms.onboardingChallenge',{expectedRevision:3,channel}) as {captureCode:string};
+    await mutation(voidOrg,'sms.onboardingVerify',{expectedRevision:3,channel,code:captureCode});
+  }
+  await expect(mutation(voidOrg,'sms.onboardingSubmit',{expectedRevision:3})).rejects.toMatchObject({code:'setup_payment_required'});
+  expect(await db.read(workspaceId,async sql=>(await sql.query('SELECT account_sid FROM sms_registrations')).rows[0]?.account_sid)).toBeNull();
+  expect(await mutation(voidOrg,'sms.onboardingFinish',{expectedRevision:3,acceptedFee:4900,currency:'USD'})).toEqual({submitted:true});
+  await expect(review({operationKey:randomUUID(),expectedRevision:3})).rejects.toMatchObject({code:'practice_void_unavailable'});
+  const receipt = await db.read(workspaceId,async sql=>(await sql.query("SELECT profile#>>'{onboarding,payment,receipt}' receipt FROM sms_carrier_brands")).rows[0]?.receipt);
+  expect(receipt).not.toBe(events[0]?.old_value.receipt);
 });

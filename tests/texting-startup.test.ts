@@ -106,3 +106,14 @@ it('both production entry points start the workflows through CustomerWorkflows.s
     expect(source, file).not.toMatch(/new CustomerWorkflows\(/);
   }
 });
+
+it('validates private mock enrollment defaults without activating a carrier or paid setup', async () => {
+  const {readMockRegistrationPolicy} = await import('../src/server/texting/probation-policy.js');
+  const policy = {mock_low_volume_daily_limit:6,mock_standard_daily_limit:12,mock_sole_proprietor_daily_limit:3,
+    registration_poll_minutes:5,registration_review_minutes:15,reconcile_settle_minutes:5};
+  expect(readMockRegistrationPolicy(undefined)).toBeUndefined();
+  expect(readMockRegistrationPolicy(JSON.stringify(policy))).toEqual(policy);
+  for (const invalid of [{}, {...policy, mock_low_volume_daily_limit:13}, {...policy, registration_review_minutes:5}, {...policy, arbitrary:true}]) {
+    expect(() => readMockRegistrationPolicy(JSON.stringify(invalid))).toThrow();
+  }
+});

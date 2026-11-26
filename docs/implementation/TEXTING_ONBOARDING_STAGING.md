@@ -49,6 +49,28 @@ For a future live release, set up Twilio Event Streams for the appropriate subac
 
 The local mock exercises account provisioning, sole-proprietor verification, DBA identity and registration recovery. Real business, phone, domain and payer verification, approved handling of actual identity documents, provider acceptance of hosted pages and DBAs, signed carrier events on real numbers and live resubmission access still require a provider pilot. Record FL-AT-045 carrier approval and opted-in delivery before a live owner pilot.
 
+## Automated enrollment and recovery checks
+
+Texting identifies the missing signup prerequisite for the selected company. The owner can enable the optional mobile field in Texting or open Audience on the appropriate brand to publish its signup page. Subscriber consent remains a separate choice.
+
+For mock capture, configure the private `FLOCKLETTER_TEXTING_MOCK_REGISTRATION_POLICY` JSON object on staging. It takes the three `mock_sole_proprietor_daily_limit`, `mock_low_volume_daily_limit`, and `mock_standard_daily_limit` settings, plus `registration_poll_minutes`, `registration_review_minutes`, and `reconcile_settle_minutes`. Use the operator console for audited overrides. Configure polling to occur before the overdue-review interval. Removing the deployment setting restores the ordinary configured operator limits. Existing mock receipts and accepted agreements remain available.
+
+After a captured plan and number activate, the workspace receives the plan's monthly segment allowance and the daily limit for its approved mock registration tier. A lower operator ceiling still applies, including a zero monthly allowance. Multiple active senders share the most restrictive applicable daily tier. A sender whose tier cannot be established needs an explicit operator limit. Number activation, probation, spend caps and opt-in are separate checks.
+
+| Design case | What to verify with the mock carrier |
+| --- | --- |
+| ONB-4, ONB-5, ONB-8 | The owner confirms the legal name and sees the campaign description, signup flow, samples, and confirmation, HELP and STOP wording. Confirm the worker files the reviewed wording. Watch brand, campaign and number milestones on the open page. |
+| IDV-3, IDV-4, WA-05-AT02 | Compare the synthetic payer's full address and name. A mismatch holds submission. Distinguish a different owner claiming the same EIN from a duplicate trade name under the same owner. An ownership collision cannot transfer an EIN. |
+| ONB-3, ONB-10, WA-05-AT01 | After a missed notification, let the scheduled worker find the existing carrier decision. For a number, require the signed receipt bound to the original account, service and number. Repeated pending checks do not reset the wait shown in the operator queue. |
+| ONB-7, REG-5 | Correct a rejected campaign through the customer form. Verify the mapped correction, the existing eligible campaign identity and one setup receipt across resubmission. |
+| REG-4, ONB-2 | Once the number is active and the captured plan and private settings permit sending, confirm **Ready to send** without entering limits separately for the new workspace. |
+
+To rehearse a lost activation or a rejection, save the registration first. On the staging operator page, select that company’s draft, enter the exercise reason and choose the scenario before the owner submits. The scenario applies once to that registration revision. Let the worker run. The lost-notification case should show a reserved number until the scheduled lookup confirms its signed receipt. A normal activation should say it was confirmed by carrier notification. In the rejection case, the owner should see the SMS terms correction and be able to submit a corrected revision.
+
+For a sole proprietor whose captured payer details conflict, the operator can void the specific simulated receipt and return the application for correction. The owner must save again, verify all three new codes and complete a fresh practice checkout. The prior receipt cannot fund submission. The void applies only to mock capture.
+
+Actual control of the applicant’s email and phone, real payer evidence, real sole-proprietor verification, Twilio acceptance of DBAs and hosted pages, and approval and delivery for the owner's actual businesses remain external evidence for WA-05-AT04 and FL-AT-045.
+
 ## Evidence
 
 On November 25, 2026, the fresh Juniper and Alder synthetic workspaces each submitted a registration to the mock carrier on hosted staging at `83cdf5c85fdc529bcdbad96fff93ab8e4e6f19b5`. With Texting left open, each **Companies and numbers** row advanced from **Provisioning** through **Brand pending** and **Campaign pending** to **Approved**, then showed its own mock number and **Ready to send**. Juniper reached approval about 23 seconds after submission and Alder about 28 seconds. Both runs used the worker's own responses throughout, with no page reload or manual status refresh. [Staging deployment](https://github.com/alandmunro/flockletter/actions/runs/45679350263)

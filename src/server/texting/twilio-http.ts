@@ -1,3 +1,4 @@
+import { registrationCodes } from './registration-errors.js';
 // The real Twilio adapter. Plain fetch, bounded bodies, zod on every response. Twilio has no idempotency
 // keys, so each created resource carries the operation key in FriendlyName and an uncertain create is
 // settled by listing, never by a second POST. Live calls run only in `live` mode after operator approval.
@@ -227,10 +228,11 @@ export class TwilioHttpPlatform implements TwilioPlatformPort {
     const url = kind === 'brand' ? `${messaging}/a2p/BrandRegistrations/${resource}` : `${messaging}/Services/${parentSid}/Compliance/Usa2p/${resource}`;
     const r = await request(this.call, this.auth(account), 'GET', url).catch(() => null);
     if (!r || r.status !== 200) return { outcome: 'unknown' };
-    const parsed = z.object({ status: z.string().optional(), campaign_status: z.string().nullable().optional(), failure_reason: z.string().nullable().optional() }).safeParse(r.json); // Twilio sends `errors: null` on an approved brand; it is not read.
+    const parsed = z.object({ status: z.string().optional(), campaign_status: z.string().nullable().optional(), failure_reason: z.string().nullable().optional(), errors: z.unknown() }).safeParse(r.json);
     if (!parsed.success) return { outcome: 'unknown' };
     const status = (kind === 'brand' ? parsed.data.status : parsed.data.campaign_status) ?? 'PENDING';
-    return { outcome: 'accepted', value: { status: status.toUpperCase(), ...(parsed.data.failure_reason ? { reason: parsed.data.failure_reason.slice(0, 300) } : {}) } };
+    const reason = registrationCodes(parsed.data.errors) ?? registrationCodes(parsed.data.failure_reason);
+    return { outcome: 'accepted', value: { status: status.toUpperCase(), ...(reason && {reason}) } };
   }
 }
 

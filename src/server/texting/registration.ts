@@ -1,25 +1,30 @@
+import { registrationCodes } from './registration-errors.js';
 // FL-SMS-004: the registration state machine. Operators drive it now; self-serve onboarding reuses it later.
 // Every provider call is preceded by a committed intent row (`calling`) with a stable operation key.
 // An uncertain call is only ever looked up. A missing resource is retried only after the operator's settle time.
+import type { ReviewedCampaign } from './enrollment-campaign.js';
+import type { MockRegistrationScenario } from '../../shared/texting-mock.js';
 import { randomUUID } from 'node:crypto';
 import type { Database, Sql } from '../db.js';
 import { lockWorkspace } from '../workspace-lock.js';
-import { requireCondition } from '../errors.js';
-import { registrationSteps, type CampaignUseCase, type RegistrationState, type RegistrationStep } from '../../shared/texting.js';
+import { AppError, requireCondition } from '../errors.js';
+import { plainText, registrationSteps, type CampaignUseCase, type RegistrationState, type RegistrationStep } from '../../shared/texting.js';
 import { businessRefusals, twilioBusiness, type TwilioBusinessType } from '../../shared/texting-business.js';
 import { audit, readSettings, requestHash, type Interface } from './storage.js';
+import { receiveCarrierEvents } from './twilio-events.js';
 import { registrationRank, type AccountCredentials, type BusinessProfile, type CampaignInput, type CredentialSeal, type ProvisionFacts, type RegistrationTier, type Result, type TwilioPlatformPort } from './twilio.js';
 
 export type StepRow = { registration_id: string; revision: number; step: RegistrationStep; operation_key: string; state: string; attempts: number; next_check_at: Date | null; provider_sid: string | null; facts: ProvisionFacts & Record<string, unknown>; operator_approval_id: string | null; updated_at: Date };
 export type RegistrationRow = { id: string; carrier_brand_id: string; state: RegistrationState; revision: number; rejection_reason: string | null; account_sid: string | null; customer_profile_sid: string | null; brand_sid: string | null; messaging_service_sid: string | null; campaign_sid: string | null; brand_status: string | null; campaign_status: string | null; status_checked_at: Date | null };
 type BrandRow = { id: string; company_id: string; legal_name: string; dba_name: string | null; entity_type: string; profile: Record<string, unknown>; help_contact: string };
-type EnrollmentFacts = { plan?: string; challenges?: { carrier?: { verified?: boolean } } };
+type EnrollmentFacts = { campaignReview?: ReviewedCampaign; plan?: string; challenges?: { carrier?: { verified?: boolean } } };
 function enrollmentTier(brand: BrandRow): RegistrationTier {
   if (brand.entity_type === 'sole_proprietor') return 'sole_proprietor';
   const plan = (brand.profile.onboarding as EnrollmentFacts | undefined)?.plan ?? brand.profile.plan;
   return plan === 'text_2500' ? 'standard' : 'low_volume';
 }
 export type RegistrationOptions = {
+  defaults?: import('./storage.js').SettingValues;
   db: Database; platform: TwilioPlatformPort; seal: CredentialSeal; origin: string;
   /** Live phase 2 binds the existing staging subaccount (from Bitwarden) instead of creating one. */
   liveAccount?: AccountCredentials;
@@ -47,17 +52,38 @@ export class TextingRegistration {
     return row ? this.options.seal.open(row.credentials, workspace) : null;
   }
   async progress(sql: Sql, workspace: string, registrationId: string) {
-    const r = (await sql.query<{ state: RegistrationState; updated_at: Date; campaign_status: string | null; recovery: boolean }>(
-      `SELECT r.state,r.updated_at,r.campaign_status,EXISTS(SELECT 1 FROM sms_registration_steps s WHERE s.registration_id=r.id
+    const r = (await sql.query<{ state: RegistrationState; updated_at: Date; campaign_status: string | null; brand_status: string | null; recovery: boolean }>(
+      `SELECT r.state,r.updated_at,r.campaign_status,r.brand_status,EXISTS(SELECT 1 FROM sms_registration_steps s WHERE s.registration_id=r.id
         AND s.revision=r.revision AND s.state='uncertain' AND s.reason IN ('subaccount_lookup_review','subaccount_credentials_review')) recovery
        FROM sms_registrations r WHERE r.id=$1`, [registrationId])).rows[0];
     if (!r) return null;
     if (r.recovery) return { stage:'carrier_recovery', stalled:true, since:r.updated_at.toISOString() };
-    const stage = r.state === 'campaign_pending' && ['VERIFIED','APPROVED'].includes(r.campaign_status ?? '') ? 'number_pending' : r.state;
-    const threshold = (await readSettings(sql, workspace)).registration_review_minutes;
+    const stage = r.state === 'campaign_pending' && ['VERIFIED','APPROVED'].includes(r.campaign_status ?? '') ? 'number_pending'
+      : r.state === 'brand_pending' && ['VERIFIED','APPROVED'].includes(r.brand_status ?? '') ? 'brand_approved' : r.state;
+    const threshold = (await readSettings(sql, workspace, this.options.defaults)).registration_review_minutes;
     const stalled = threshold !== undefined && ['provisioning','brand_pending','campaign_pending'].includes(r.state) &&
       this.now().getTime() - r.updated_at.getTime() >= threshold * 60_000;
     return { stage, stalled, since: r.updated_at.toISOString() };
+  }
+  private async mockScenario(sql: Sql, id: string) {
+    return (await sql.query<{scenario: MockRegistrationScenario; revision: number}>(`SELECT new_value->>'scenario' scenario,
+      (new_value->>'revision')::int revision FROM sms_audit WHERE target=$1 AND action='mock.registration_scenario' LIMIT 1`,[id])).rows[0];
+  }
+  async armMockScenario(sql: Sql, workspace: string, id: string, scenario: MockRegistrationScenario, actor: string, via: Interface, reason: string) {
+    requireCondition(this.options.platform.mode === 'mock' && this.options.onboardingCapture, 409, 'mock_only', 'Choose a practice enrollment.');
+    const reg = (await sql.query<RegistrationRow>(`SELECT r.* FROM sms_registrations r JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id
+      WHERE r.id=$1 AND b.profile ? 'onboarding' FOR UPDATE OF r`, [id])).rows[0];
+    requireCondition(reg, 404, 'registration_unavailable', 'This practice enrollment is unavailable.');
+    const previous = await this.mockScenario(sql,id);
+    if (previous) {
+      requireCondition(previous.scenario === scenario, 409, 'scenario_already_chosen', 'A different scenario was already chosen for this enrollment.');
+      return previous;
+    }
+    requireCondition(reg.state === 'draft', 409, 'scenario_requires_draft', 'Choose the practice scenario before submitting the enrollment.');
+    if (scenario === 'lose_number_notice') requireCondition((await readSettings(sql,workspace,this.options.defaults)).registration_poll_minutes,
+      409, 'registration_poll_required', 'Configure registration polling before exercising a lost activation notice.');
+    await audit(sql,workspace,actor,via,'mock.registration_scenario',id,null,{scenario,revision:reg.revision,reason});
+    return {scenario,revision:reg.revision};
   }
   /** Operator submit or resubmit after correction: a new revision gets fresh operation keys. */
   async submit(sql: Sql, workspace: string, registrationId: string, actor: string, via: Interface, onboarding = false) {
@@ -94,17 +120,20 @@ export class TextingRegistration {
     const keepBrand = onboarding && sameProfile && ['VERIFIED','APPROVED'].includes(reg.brand_status ?? '');
     const keepCampaign = keepBrand && ['VERIFIED','APPROVED'].includes(reg.campaign_status ?? '');
     const state = keepCampaign ? 'campaign_pending' : 'provisioning';
-    await sql.query(`UPDATE sms_registrations SET state=$6,revision=$2,rejection_reason=NULL,updated_at=clock_timestamp(),
+    await sql.query(`UPDATE sms_registrations SET state=$6,revision=$2,rejection_reason=NULL,updated_at=$7,
       brand_sid=CASE WHEN $3 THEN NULL ELSE brand_sid END,brand_status=CASE WHEN $3 THEN NULL ELSE brand_status END,
       campaign_sid=CASE WHEN $4 THEN NULL ELSE campaign_sid END,campaign_status=CASE WHEN $4 THEN NULL ELSE campaign_status END,
       customer_profile_sid=CASE WHEN $5 THEN NULL ELSE customer_profile_sid END,status_checked_at=NULL WHERE id=$1`,
     [reg.id, revision, revision !== reg.revision && !keepBrand, revision !== reg.revision && !keepCampaign, revision !== reg.revision && !sameProfile,
-      state]);
+      state, this.now()]);
+    const selected = onboarding && reg.state === 'draft' ? await this.mockScenario(sql,reg.id) : undefined;
     for (const step of registrationSteps) {
       const prior = previousSteps.find(s => s.step === step && s.state === 'done');
       const reuse = prior && (['subaccount','messaging_service','number'].includes(step)
         || (step === 'customer_profile' && sameProfile) || (step === 'brand' && keepBrand) || (step === 'campaign' && keepCampaign));
       const facts: Record<string, unknown> = reuse ? { ...prior.facts } : {};
+      if (selected?.revision === revision && ((selected.scenario === 'lose_number_notice' && step === 'number')
+        || (selected.scenario === 'reject_campaign_terms' && step === 'campaign'))) facts.mockScenario = selected.scenario;
       if (onboarding && step === 'customer_profile') facts.identityDigest = identityDigest;
       if (step === 'campaign' && keepBrand) {
         const previous = previousSteps.find(s => s.step === 'campaign');
@@ -247,15 +276,21 @@ export class TextingRegistration {
       const optIn = signupUrl ? ` Sign-up page: ${signupUrl}. The SMS box appears there once this campaign's number is active; until then the same form with the SMS box can be viewed at ${signupUrl}?preview=sms.` : '';
       const policies = p.privacyPolicyUrl && p.smsTermsUrl ? ` SMS terms: ${p.smsTermsUrl}. Privacy policy: ${p.privacyPolicyUrl}.` : '';
       const stay = wording?.stayTexts ? ` The same checkbox also covers texts about the subscriber's own booked stays (arrival details, check-in and checkout reminders). Stay texts go only to subscribers who opted in this way and confirmed with YES.` : '';
-      const input: CampaignInput = {
+      const consentAudience = brand.profile.onboarding && p.vertical === 'REAL_ESTATE'
+        ? 'Past clients opt in to home care and closing anniversary texts' : 'Customers opt in';
+      const replyName = brand.profile.onboarding ? plainText(name) : name;
+      const publicHelp = brand.profile.onboarding ? plainText(typeof brand.profile.publicContact === 'string' ? brand.profile.publicContact : brand.help_contact) : brand.help_contact;
+      const frozen = platform.mode === 'mock' ? (brand.profile.onboarding as EnrollmentFacts | undefined)?.campaignReview : undefined;
+      if (frozen && frozen.signupUrl !== signupUrl) return { outcome: 'rejected', reason: 'signup_page_missing' };
+      const input: CampaignInput = frozen?.payload ?? {
       useCase: wording?.useCase ?? 'MARKETING',
       ...(p.privacyPolicyUrl ? { privacyPolicyUrl: p.privacyPolicyUrl } : {}), ...(p.smsTermsUrl ? { termsUrl: p.smsTermsUrl } : {}),
       description: wording?.description ?? `${name} sends marketing texts (offers, events and updates) to customers who opted in on ${name}'s Flockletter-hosted sign-up page.`,
-      messageFlow: `Customers opt in on ${name}'s hosted sign-up page by checking an optional, unchecked SMS box that shows the program name, message frequency, "Msg & data rates may apply", STOP and HELP instructions, and links to the privacy policy and SMS terms. They then reply YES to a confirmation text before any other message.${stay}${optIn}${policies}`,
+      messageFlow: `${consentAudience} on ${name}'s hosted sign-up page by checking an optional, unchecked SMS box that shows the program name, message frequency, "Msg & data rates may apply", STOP and HELP instructions, and links to the privacy policy and SMS terms. They then reply YES to a confirmation text before any other message.${stay}${optIn}${policies}`,
       samples: wording?.samples ?? [`${name}: This week only, 15% off in store. Reply STOP to opt out.`, `${name}: Our spring hours start Monday, 9am-6pm. Reply STOP to opt out.`],
-      optInMessage: `${name}: Reply YES to confirm you want texts from us. Msg & data rates may apply. Reply STOP to opt out.`,
-      optOutMessage: `${name}: You are unsubscribed and will receive no more texts. Reply START to resubscribe.`,
-      helpMessage: `${name}: For help contact ${brand.help_contact}. Reply STOP to opt out.`, hasLinks: true };
+      optInMessage: `${replyName}: Reply YES to confirm you want texts from us. Msg & data rates may apply. Reply STOP to opt out.`,
+      optOutMessage: `${replyName}: You are unsubscribed and will receive no more texts. Reply START to resubscribe.`,
+      helpMessage: `${replyName}: For help contact ${publicHelp}. Reply STOP to opt out.`, hasLinks: true };
       if (typeof step.facts.correctsSid === 'string' && platform.mode === 'mock' && platform.correctCampaign)
         return platform.correctCampaign(account, op, facts('messaging_service')!.sid, facts('brand')!.sid, step.facts.correctsSid, input);
       return platform.submitCampaign(account, op, facts('messaging_service')!.sid, facts('brand')!.sid, input);
@@ -268,9 +303,10 @@ export class TextingRegistration {
       await lockWorkspace(sql, workspace);
       const current = (await sql.query<StepRow>('SELECT * FROM sms_registration_steps WHERE operation_key=$1 FOR UPDATE', [step.operation_key])).rows[0]!;
       if (current.state === 'done' || current.state === 'rejected') return 'progress';
-      const reg = (await sql.query<RegistrationRow>('SELECT * FROM sms_registrations WHERE id=$1 FOR UPDATE', [step.registration_id])).rows[0]!;
+      const reg = (await sql.query<RegistrationRow & { enrollment: boolean }>(`SELECT r.*,b.profile ? 'onboarding' enrollment FROM sms_registrations r
+        JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id WHERE r.id=$1 FOR UPDATE OF r`, [step.registration_id])).rows[0]!;
       if (reg.revision !== step.revision) return null;
-      const settings = await readSettings(sql, workspace);
+      const settings = await readSettings(sql, workspace, reg.enrollment ? this.options.defaults : undefined);
       let next: { state: string; reason?: string | null; at?: Date | null };
       if (result.outcome === 'accepted' && result.value) {
         const { account, ...value } = result.value;
@@ -279,7 +315,7 @@ export class TextingRegistration {
         }
         await sql.query(`UPDATE sms_registration_steps SET state='done',provider_sid=$2,facts=facts||$3::jsonb,reason=NULL,next_check_at=NULL,updated_at=clock_timestamp() WHERE operation_key=$1`, [step.operation_key, value.sid, JSON.stringify(value)]);
         const column = { subaccount: 'account_sid', customer_profile: 'customer_profile_sid', brand: 'brand_sid', messaging_service: 'messaging_service_sid', campaign: 'campaign_sid', number: null }[step.step];
-        if (column) await sql.query(`UPDATE sms_registrations SET ${column}=$2,updated_at=clock_timestamp() WHERE id=$1`, [reg.id, value.sid]);
+        if (column) await sql.query(`UPDATE sms_registrations SET ${column}=$2,updated_at=$3 WHERE id=$1`, [reg.id, value.sid, now]);
         if (step.step === 'brand') await sql.query(`UPDATE sms_registrations SET state='brand_pending',brand_status=coalesce(brand_status,$2) WHERE id=$1 AND state IN ('provisioning','brand_pending')`, [reg.id, (value.status ?? 'PENDING').toUpperCase()]);
         if (step.step === 'campaign') await sql.query(`UPDATE sms_registrations SET state='campaign_pending',campaign_status=coalesce(campaign_status,$2) WHERE id=$1 AND state IN ('provisioning','brand_pending','campaign_pending')`, [reg.id, (value.status ?? 'IN_PROGRESS').toUpperCase()]);
         if (step.step === 'number' && value.e164) {
@@ -288,7 +324,10 @@ export class TextingRegistration {
           const service = (await sql.query<{ provider_sid: string }>(`SELECT provider_sid FROM sms_registration_steps WHERE registration_id=$1 AND revision=$2 AND step='messaging_service'`, [reg.id, reg.revision])).rows[0]!;
           const inserted = (await sql.query<{ id: string }>(`INSERT INTO sms_numbers(workspace_id,id,carrier_brand_id,e164,provider_sid,messaging_service_sid,state) VALUES($1,$2,$3,$4,$5,$6,$7)
             ON CONFLICT(e164) DO NOTHING RETURNING id`, [workspace, numberId, brand.id, value.e164, value.sid, service.provider_sid, this.options.platform.mode === 'mock' && !brand.onboarding ? 'active' : 'reserved'])).rows[0];
-          if (inserted) await sql.query('SELECT flockletter_customer_jobs.texting_bind_number($1,$2,$3)', [workspace, value.e164, inserted.id]);
+          if (inserted) {
+            await sql.query('SELECT flockletter_customer_jobs.texting_bind_number($1,$2,$3)', [workspace, value.e164, inserted.id]);
+            await sql.query('UPDATE sms_registrations SET updated_at=$2 WHERE id=$1', [reg.id, now]);
+          }
         }
         next = { state: 'done' };
       } else if (result.outcome === 'rejected') {
@@ -329,7 +368,7 @@ export class TextingRegistration {
           WHERE n.carrier_brand_id=$1 AND n.messaging_service_sid=$4 AND n.state<>'released'`,
         [reg.carrier_brand_id,reg.id,reg.revision,reg.messaging_service_sid])).rows[0];
       if (number?.state === 'active') {
-        await sql.query(`UPDATE sms_registrations SET state='approved',updated_at=clock_timestamp() WHERE id=$1`, [reg.id]);
+        await sql.query(`UPDATE sms_registrations SET state='approved',updated_at=$2 WHERE id=$1`, [reg.id, this.now()]);
         await audit(sql, workspace, 'worker', 'worker', 'registration.approved', reg.id, { state: reg.state }, { state: 'approved' });
         return null;
       }
@@ -344,11 +383,19 @@ export class TextingRegistration {
     });
     if (!attachment || attachment instanceof Date) return attachment;
     if (!this.options.platform.attachNumber) return null;
-    const result = await this.options.platform.attachNumber(attachment.account, attachment.number.messaging_service_sid, attachment.number.provider_sid)
+    const omitNotice = this.options.platform.mode === 'mock' && this.options.onboardingCapture && attachment.step.facts.mockScenario === 'lose_number_notice';
+    const result = await this.options.platform.attachNumber(attachment.account, attachment.number.messaging_service_sid, attachment.number.provider_sid, omitNotice ? 'omit' : undefined)
       .catch(() => ({ outcome: 'unknown' as const }));
     if (result.outcome !== 'accepted') return attachment.next;
-    await this.options.db.tenant(workspace, sql => sql.query(`UPDATE sms_registration_steps SET facts=facts||'{"attached":true}'::jsonb,
-      reason=CASE WHEN facts ? 'numberEventAt' THEN reason ELSE 'number_registration_pending' END,next_check_at=NULL WHERE operation_key=$1`, [attachment.step.operation_key]));
+    await this.options.db.tenant(workspace, async sql => {
+      await lockWorkspace(sql, workspace);
+      const recorded = await sql.query(`UPDATE sms_registration_steps SET facts=facts||'{"attached":true}'::jsonb,
+        reason=CASE WHEN facts ? 'numberEventAt' THEN reason ELSE 'number_registration_pending' END,next_check_at=NULL
+        WHERE operation_key=$1 AND NOT (facts @> '{"attached":true}'::jsonb)`, [attachment.step.operation_key]);
+      if (recorded.rowCount) await sql.query(`UPDATE sms_registrations SET updated_at=$3,status_checked_at=$3
+        WHERE id=$1 AND revision=$2 AND state='campaign_pending'`, [registrationId, attachment.step.revision, this.now()]);
+      if (recorded.rowCount && omitNotice) await audit(sql,workspace,'worker','worker','mock.number_notice_omitted',registrationId,null,{revision:attachment.step.revision});
+    });
     return this.options.platform.mode === 'mock' ? this.now() : null;
   }
   /**
@@ -375,37 +422,80 @@ export class TextingRegistration {
       await audit(sql, workspace, source === 'webhook' ? 'twilio' : 'worker', source, `registration.${kind}_status_ignored`, reg.id, { status: previous }, { status: upper });
       return true;
     }
-    if (upper === previous) return true;
-    await sql.query(`UPDATE sms_registrations SET ${column}_status=$2,status_checked_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1`, [reg.id, upper]);
+    const codes = registrationCodes(reason?.split(','));
+    if (upper === previous) {
+      if (upper === 'FAILED' && codes && reg.state === 'rejected' && reg.rejection_reason?.startsWith(kind + ':')) {
+        const prior = reg.rejection_reason.match(/(?<!\d)30[789]\d{2}(?!\d)/g) ?? [];
+        const enriched = kind + ': ' + registrationCodes([...prior, ...codes.split(',')]);
+        if (enriched !== reg.rejection_reason) await sql.query('UPDATE sms_registrations SET rejection_reason=$2 WHERE id=$1', [reg.id,enriched]);
+      }
+      return true;
+    }
+    await sql.query(`UPDATE sms_registrations SET ${column}_status=$2,status_checked_at=$3,updated_at=$3 WHERE id=$1`, [reg.id, upper,this.now()]);
     let state: RegistrationState = reg.state;
     if (upper === 'FAILED') state = 'rejected';
     else if (upper === 'SUSPENDED') state = 'suspended';
-    if (state !== reg.state) await sql.query('UPDATE sms_registrations SET state=$2,rejection_reason=$3 WHERE id=$1', [reg.id, state, upper === 'FAILED' ? `${kind}: ${reason ?? 'carrier rejected'}` : reg.rejection_reason]);
+    if (state !== reg.state) await sql.query('UPDATE sms_registrations SET state=$2,rejection_reason=$3 WHERE id=$1', [reg.id, state, upper === 'FAILED' ? `${kind}: ${codes ?? 'carrier rejected'}` : reg.rejection_reason]);
     await audit(sql, workspace, source === 'webhook' ? 'twilio' : 'worker', source, `registration.${kind}_status`, reg.id, { status: previous, state: reg.state }, { status: upper, state });
     return true;
   }
   private async poll(workspace: string, registrationId: string): Promise<Date | null> {
-    const minutes = await this.options.db.read(workspace, async sql => (await readSettings(sql, workspace)).registration_poll_minutes);
-    if (minutes === undefined) return null;
-    const work = await this.options.db.read(workspace, async sql => {
-      const reg = (await sql.query<RegistrationRow>('SELECT * FROM sms_registrations WHERE id=$1', [registrationId])).rows[0];
-      if (!reg || !['brand_pending', 'campaign_pending'].includes(reg.state)) return null;
-      const due = new Date((reg.status_checked_at?.getTime() ?? 0) + minutes * 60000);
-      return { reg, due, account: await this.account(sql, workspace) };
+    const now = this.now();
+    // Claim the poll before leaving the transaction. Worker retries and earlier callbacks cannot slide the progress clock.
+    const work = await this.options.db.tenant(workspace, async sql => {
+      await lockWorkspace(sql, workspace);
+      const reg = (await sql.query<RegistrationRow & { enrollment: boolean; attached_number: string | null }>(`
+        SELECT r.*,b.profile ? 'onboarding' enrollment,n.provider_sid attached_number
+        FROM sms_registrations r JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id
+        LEFT JOIN sms_registration_steps s ON s.registration_id=r.id AND s.revision=r.revision AND s.step='number' AND s.facts @> '{"attached":true}'
+        LEFT JOIN sms_numbers n ON n.carrier_brand_id=b.id AND n.messaging_service_sid=r.messaging_service_sid AND n.provider_sid=s.provider_sid AND n.state='reserved'
+        WHERE r.id=$1 AND r.state IN ('brand_pending','campaign_pending')`, [registrationId])).rows[0];
+      if (!reg || (reg.enrollment && (!this.options.onboardingCapture || this.options.platform.mode !== 'mock'))) return null;
+      const minutes = (await readSettings(sql, workspace, reg.enrollment ? this.options.defaults : undefined)).registration_poll_minutes;
+      if (minutes === undefined) return null;
+      const due = new Date((reg.status_checked_at?.getTime() ?? 0) + minutes * 60_000);
+      if (due > now) return due;
+      const account = await this.account(sql, workspace);
+      if (!account) return null;
+      await sql.query('UPDATE sms_registrations SET status_checked_at=$2 WHERE id=$1', [reg.id, now]);
+      return { reg, account, next: new Date(now.getTime() + minutes * 60_000) };
     });
-    if (!work || !work.account) return null;
-    if (work.due > this.now()) return work.due;
-    const checks: ['brand' | 'campaign', string | null, string | undefined][] = [['brand', work.reg.brand_sid, undefined], ['campaign', work.reg.campaign_sid, work.reg.messaging_service_sid ?? undefined]];
+    if (!work || work instanceof Date) return work;
+    const { reg, account, next } = work;
+    const checks: ['brand' | 'campaign', string | null, string | undefined][] = [
+      ['brand', reg.brand_sid, undefined], ['campaign', reg.campaign_sid, reg.messaging_service_sid ?? undefined],
+    ];
+    let progress = false;
     for (const [kind, sid, parent] of checks) {
       if (!sid) continue;
-      const result = await this.options.platform.status(kind, work.account, sid, parent).catch(() => ({ outcome: 'unknown' as const, value: undefined }));
-      await this.options.db.tenant(workspace, async sql => {
-        const current = await sql.query('UPDATE sms_registrations SET status_checked_at=clock_timestamp() WHERE id=$1 AND revision=$2', [registrationId,work.reg.revision]);
-        if (!current.rowCount) return;
-        if (result.outcome === 'accepted' && result.value) await this.status(sql, workspace, kind, sid, result.value.status, result.value.reason ?? null, 'worker');
+      const result = await this.options.platform.status(kind, account, sid, parent).catch(() => null);
+      if (result?.outcome !== 'accepted' || !result.value) continue;
+      const { status, reason } = result.value;
+      const advanced = await this.options.db.tenant(workspace, async sql => {
+        await lockWorkspace(sql, workspace);
+        const current = (await sql.query<RegistrationRow>('SELECT * FROM sms_registrations WHERE id=$1 AND revision=$2', [reg.id, reg.revision])).rows[0];
+        if (!current || current[kind === 'brand' ? 'brand_sid' : 'campaign_sid'] !== sid) return false;
+        const previous = current[kind === 'brand' ? 'brand_status' : 'campaign_status'] ?? 'PENDING';
+        await this.status(sql, workspace, kind, sid, status, reason ?? null, 'worker');
+        return (registrationRank[status.toUpperCase()] ?? 0) > (registrationRank[previous] ?? 0);
       });
+      progress ||= advanced;
     }
-    return new Date(this.now().getTime() + minutes * 60000);
+    if (reg.enrollment && reg.attached_number && reg.messaging_service_sid && this.options.platform.capturedNumberReceipt) {
+      const receipt = await this.options.platform.capturedNumberReceipt(account, reg.messaging_service_sid, reg.attached_number);
+      if (receipt && URL.canParse(receipt.url) && typeof receipt.body === 'string' && typeof receipt.signature === 'string') {
+        try {
+          await receiveCarrierEvents(this.options.db, this, receipt.url, Buffer.from(receipt.body), receipt.signature, {
+            accountSid: account.accountSid, serviceSid: reg.messaging_service_sid, numberSid: reg.attached_number,
+          });
+          progress = true;
+        } catch (error) {
+          // Malformed or mismatched evidence cannot activate the number. It stays visible to the stalled-registration watchdog.
+          if (!(error instanceof AppError) || error.status >= 500) throw error;
+        }
+      }
+    }
+    return progress ? now : next;
   }
 }
 
@@ -414,15 +504,20 @@ export class TextingRegistration {
  * brand-scoped, so each of the company's brands is checked under its own brand context, which is then cleared.
  */
 export async function signupPage(sql: Sql, companyId: string, origin: string): Promise<string | null> {
-  const fields = (await sql.query<{ phone_field: boolean }>('SELECT phone_field FROM sms_workspace_profile')).rows[0];
-  if (!fields?.phone_field) return null;
+  const setup = await companySignupSetup(sql, companyId, origin);
+  return setup.mobileEnabled ? setup.url : null;
+}
+
+export async function companySignupSetup(sql: Sql, companyId: string, origin: string) {
+  const fields = (await sql.query<{ phone_field: boolean; revision: number }>('SELECT phone_field,revision FROM sms_workspace_profile')).rows[0];
   const brands = (await sql.query<{ brand_id: string }>('SELECT brand_id FROM company_brands WHERE company_id=$1 ORDER BY brand_id', [companyId])).rows;
   let url: string | null = null;
+  let brandId = brands[0]?.brand_id ?? null;
   for (const { brand_id } of brands) {
     await sql.query("SELECT set_config('app.intake_brand_id',$1,true)", [brand_id]);
     const slug = (await sql.query<{ slug: string | null }>('SELECT public.flockletter_signup_slug(form_token) slug FROM customer_audience_settings WHERE brand_id=$1 AND enabled', [brand_id])).rows[0]?.slug;
-    if (slug) { url = new URL('/signup/' + slug, origin).href; break; }
+    if (slug) { brandId = brand_id; url = new URL('/signup/' + slug, origin).href; break; }
   }
   await sql.query("SELECT set_config('app.intake_brand_id','',true)");
-  return url;
+  return {brandId, url, mobileEnabled: fields?.phone_field === true, profileRevision: fields?.revision ?? 1};
 }

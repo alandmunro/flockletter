@@ -12,6 +12,7 @@ import { loadConfig } from '../src/server/config.js';
 import { CustomerWorkflows } from '../src/server/customer-runtime.js';
 import { Database } from '../src/server/db.js';
 import { CommandService, type Actor } from '../src/server/service.js';
+import type { CampaignInput } from '../src/server/texting/twilio.js';
 import { Texting } from '../src/server/texting/service.js';
 import { enrollmentPageReader } from '../src/server/texting/public-page-reader.js';
 import { hostedBusinessUrls, policyPreview } from '../src/shared/texting-policy-pages.js';
@@ -41,6 +42,8 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
     'Authorized contact first name': 'Robin', 'Authorized contact last name': 'Sample', 'Job title': 'Owner',
     'Business email': 'owner@orchard.example.test', 'Business phone in +1 format': '+13035550126',
   };
+  await button('Enable optional mobile number field').click();
+  await panel.getByRole('heading',{name:'Prepare the signup form'}).waitFor({state:'hidden'});
   const picker = panel.getByRole('combobox',{name:/^Company to register/});
   const company = await picker.inputValue();
   const drafts = () => page.evaluate(() => Object.entries(localStorage).filter(([key]) => key.startsWith('flockletter.texting.draft.')));
@@ -91,8 +94,18 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
     if (hosted && ['Business website','Privacy policy URL','SMS terms URL'].includes(name)) continue;
     await field(name).fill(value);
   }
+  await panel.getByRole('combobox', { name: /^Industry/ }).selectOption(hosted ? 'FOOD_AND_BEVERAGE' : 'REAL_ESTATE');
   await button('Save unfinished draft').click();
   await panel.getByText('Private draft saved.').waitFor();
+  const confirmName = panel.getByRole('checkbox', { name: /matches the name on the IRS EIN letter/ });
+  await panel.getByRole('checkbox', { name: hosted ? /I authorize publishing/ : /I am authorized/ }).check();
+  assert.equal(await button('Save business details').isEnabled(), false);
+  await confirmName.check();
+  await field('Employer identification number').fill('invalid');
+  assert.equal(await field('Employer identification number').evaluate(input => (input as HTMLInputElement).validity.patternMismatch), true);
+  assert.equal(await confirmName.isChecked(), false);
+  await field('Employer identification number').fill(values['Employer identification number']);
+  await confirmName.check();
   await panel.getByRole('checkbox', { name: hosted ? /I authorize publishing/ : /I am authorized/ }).check();
   await button('Save business details').click();
   if (!hosted) {
@@ -100,10 +113,24 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
     assert.equal(await button('Confirm practice setup and submit').isEnabled(), false);
     await button('Edit business details').click();
     await field('Privacy policy URL').fill(privacy);
+    await confirmName.check();
     await panel.getByRole('checkbox', { name: /I am authorized/ }).check();
     await button('Save business details').click();
   }
   await panel.getByText('All four pages passed the automated checks.').waitFor();
+  const review = panel.locator('details').filter({ has: page.getByText('Review carrier campaign wording', { exact: true }) });
+  await review.getByText('Review carrier campaign wording').click();
+  const [description, messageFlow] = await review.locator('p').allTextContents();
+  const [optInMessage, helpMessage, optOutMessage] = await review.locator('dd').allTextContents();
+  const wording = { description, messageFlow, optInMessage, helpMessage, optOutMessage, samples: await review.locator('li').allTextContents() };
+  assert.match(wording.description ?? '', hosted ? /menus and restaurant updates/ : /home care and closing anniversaries/);
+  if (!hosted) {
+    assert.match(wording.description ?? '', /past clients/);
+    assert.match(wording.messageFlow ?? '', /Past clients sign up/);
+    assert.doesNotMatch(JSON.stringify(wording), /advertis|open houses?|leads?|listings?|prospect|offers/i);
+  }
+  assert.match(wording.helpMessage ?? '', hosted ? /support@orchard/ : /owner@orchard/);
+  assert.match(wording.messageFlow ?? '', /\?preview=sms/);
   assert.equal((await drafts()).length,0, 'Completing the form clears the local draft.');
   if (hosted) {
     const [publication] = await Promise.all([page.waitForEvent('popup'), panel.getByRole('link', { name: 'View published business and policy pages' }).click()]);
@@ -157,11 +184,15 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
   }
   if (hosted) await reviewEvidence();
   await button('Confirm practice setup and submit').click({ timeout: 35_000 });
+  const progress = panel.getByRole('region', { name: 'Carrier registration progress' });
+  await progress.getByText('Submitted · complete', { exact: true }).waitFor();
   await page.getByText(/registration approved.*\+1\d+.*ready to send/i).waitFor({ timeout: 90_000 });
+  assert.deepEqual(await progress.locator('li').allTextContents(), ['Submitted', 'Brand approved', 'Campaign under review', 'Campaign approved', 'Number active'].map(stage => stage + ' · complete'));
   await panel.getByText('Enrollment updates', { exact: true }).click();
   await panel.getByText(/owner email notifications are captured/i).waitFor();
   await panel.getByRole('listitem').filter({ hasText: 'Your carrier registration was submitted.' }).waitFor();
   await panel.getByRole('listitem').filter({ hasText: 'Registration approved. Your assigned number is active.' }).waitFor();
+  return wording;
 }
 
 const fixture = await startDatabase();
@@ -184,6 +215,10 @@ try {
   const documents = new Map([[applicantSite, '<p>Orchard Practice LLC</p>'], [privacy, '<p>' + practice.privacy + '</p>'],
     [terms, '<p>' + practice.terms + '</p>'], [applicantSite + '/unfinished', '<p>Privacy</p>']]);
   const texting = new Texting(db, { ...workflows.texting.options, evidenceReviewers:['fixture-reviewer'], readEnrollmentPage: async url => documents.get(url) ?? readOwn(url) });
+  assert.ok(texting.mock);
+  const submissions: CampaignInput[] = [];
+  const submitCampaign = texting.mock.platform.submitCampaign.bind(texting.mock.platform);
+  texting.mock.platform.submitCampaign = (...args) => { submissions.push(args[4]); return submitCampaign(...args); };
   Object.assign(workflows, { texting });
   Object.assign(workflows.audience.options, { texting });
   const service = new CommandService(db, undefined, identity.isOwner, undefined, undefined, identity.team, undefined, undefined, undefined, 'local', undefined, workflows);
@@ -199,7 +234,6 @@ try {
     await texting.operator('platform.textingSetSetting', { operationKey: randomUUID(), workspaceId: actor.workspaceId,
       key, value, expectedRevision: 0, reason: 'Synthetic browser exercise on loopback.' }, { userId: 'fixture', via: 'operator_api' });
   }
-  await service.execute('sms.configure', { operationKey: randomUUID(), expectedRevision: 1, phoneField: true }, actor);
   const brandId = workspace.brands[0]!.id;
   const signup = await workflows.audience.execute('audienceOnboarding.configure', { brandId, operationKey: randomUUID(), enabled: true,
     purpose: 'orchard_news', policyVersion: 'v1', consentText: 'Email me orchard updates. I can unsubscribe at any time.', sourceDomain: 'orchard.example.test' }, actor) as { signupUrl: string };
@@ -227,7 +261,30 @@ try {
       companyId, expectedRevision: 1, action: 'accept_evidence', reason: 'Reviewed fictional ownership letter in isolated practice.' },
     reviewer);
   };
-  try { await prove(page, origin, reviewEvidence); } catch (error) {
+  try {
+    const review = await prove(page, origin, reviewEvidence);
+    assert.equal(submissions.length, 1);
+    const { description, messageFlow, samples, optInMessage, helpMessage, optOutMessage } = submissions[0]!;
+    assert.deepEqual({ description, messageFlow, samples, optInMessage, helpMessage, optOutMessage }, review);
+    const recipient = await browserContext.newPage();
+    await recipient.goto(signup.signupUrl);
+    if (!hosted) await recipient.getByRole('checkbox', { name: /As a past client/ }).waitFor();
+    await recipient.locator('input[name=email]').fill('subscriber@orchard.example.test');
+    const phone = '+13035550129';
+    await recipient.locator('input[name=phone]').fill(phone);
+    await recipient.locator('input[name=consentAffirmed]').check();
+    await recipient.locator('input[name=smsConsent]').check();
+    const [accepted] = await Promise.all([recipient.waitForResponse(r => r.request().method() === 'POST' && r.url() === signup.signupUrl),
+      recipient.getByRole('button', { name: 'Subscribe' }).click()]);
+    assert.ok(accepted.ok(), 'The public signup must accept the checked consent.');
+    await db.tenant(actor.workspaceId, async sql => {
+      const id = (await sql.query<{ id: string }>("SELECT id FROM sms_numbers WHERE state='active'")).rows[0]!.id;
+      await texting.messaging.inbound(sql, actor.workspaceId, id, { From: phone, Body: 'HELP', MessageSid: 'SM-HELP-' + randomUUID() }, { help_words: ['HELP'] });
+      const messages = await sql.query<{ purpose: string; rendered_body: string }>("SELECT purpose,rendered_body FROM sms_messages WHERE to_e164=$1 ORDER BY purpose", [phone]);
+      assert.deepEqual(messages.rows, [{ purpose: 'confirmation', rendered_body: optInMessage }, { purpose: 'help', rendered_body: helpMessage }]);
+    });
+    await recipient.close();
+  } catch (error) {
     console.error((await page.locator('main').innerText()).slice(-3500));
     throw error;
   }

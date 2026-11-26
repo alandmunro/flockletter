@@ -17,6 +17,9 @@ export const textingSettings = {
   send_window_end_hour: { kind: 'int', min: 9, max: 21, required: 'sending', description: 'Hour by which sending stops in the recipient’s time zone (never after 21).' },
   contact_monthly_limit: { kind: 'int', min: 1, max: 31, required: 'sending', description: 'Marketing texts per contact per calendar month per workspace.' },
   carrier_daily_limit: { kind: 'int', min: 1, max: 2_000_000, required: 'sending', description: 'Texts per day per workspace, from the carrier registration tier.' },
+  mock_low_volume_daily_limit: { kind: 'int', min: 1, max: 2_000_000, required: 'optional', description: 'Daily practice carrier limit for an approved low-volume registration in mock enrollment.' },
+  mock_standard_daily_limit: { kind: 'int', min: 1, max: 2_000_000, required: 'optional', description: 'Daily practice carrier limit for an approved Standard registration in mock enrollment.' },
+  mock_sole_proprietor_daily_limit: { kind: 'int', min: 1, max: 2_000_000, required: 'optional', description: 'Daily practice carrier limit for an approved sole-proprietor registration in mock enrollment.' },
   monthly_segment_allowance: { kind: 'int', min: 0, max: 10_000_000, required: 'sending', description: 'Segments per calendar month per workspace. Sending stops when used.' },
   test_texts_per_day: { kind: 'int', min: 1, max: 10, required: 'test', description: 'Test texts per workspace per UTC day.' },
   member_code_minutes: { kind: 'int', min: 5, max: 30, required: 'test', description: 'Minutes a member phone verification code stays valid.' },
@@ -184,6 +187,8 @@ export type ConsentState = typeof consentStates[number];
 /** The exact SMS checkbox wording recorded as consent evidence (CON-2). */
 export const smsConsentWording = (business: string, perMonth: number, stayTexts = false) =>
   `Yes, text me offers${stayTexts ? ', updates and info about my stays' : ' and updates'} from ${business}. Up to ${perMonth} msgs/month. Msg & data rates may apply. Reply STOP to opt out, HELP for help. Consent is not a condition of purchase.`;
+export const pastClientConsentWording = (business: string, perMonth: number) =>
+  `As a past client, I agree to receive home care and closing anniversary texts from ${business}. Up to ${perMonth} msgs/month. Msg & data rates may apply. Reply STOP to opt out, HELP for help. Consent is not a condition of purchase.`;
 export const smsConsentPolicyVersion = (stayTexts = false) => stayTexts ? 'sms-consent-stay-v1' : 'sms-consent-v1';
 /** Twilio A2P campaign use cases Flockletter files. MARKETING is the default; LOW_VOLUME is Low Volume Mixed. */
 export const campaignUseCases = ['MARKETING', 'LOW_VOLUME'] as const;
