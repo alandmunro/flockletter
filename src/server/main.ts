@@ -74,16 +74,30 @@ if (configurationGaps(config).length === 0) {
 const server = createApp(config, service, auth, platform).listen(config.port, config.host, () => {
   console.info(`Flockletter ${config.environment} listening on port ${config.port}. Customer delivery ${externalDelivery(service?.customer?.settings.delivery??'off')?'requires verified per-brand provider eligibility':'disabled'}.`);
 });
-for (const signal of ['SIGTERM', 'SIGINT'])
-  process.once(signal, () => {
-    stop.abort();
-    ses?.close?.();
-    const customerShutdown=Promise.resolve(service?.customer?.close());
-    server.close(() => {
-      void customerShutdown.then(()=>Promise.allSettled(tasks))
-        .then(() => messenger?.close())
-        .then(() => platform?.close())
-        .then(() => service?.db.close())
-        .finally(() => process.exit(0));
-    });
+let shuttingDown = false;
+const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const forceExit = setTimeout(() => {
+    console.error('Forced exit after shutdown timeout.');
+    process.exit(1);
+  }, 15_000);
+  forceExit.unref();
+  stop.abort();
+  const httpClosed = new Promise<void>(resolve => {
+    server.close(() => resolve());
+    server.closeIdleConnections?.();
   });
+  void httpClosed
+    .then(() => Promise.allSettled(tasks))
+    .then(() => service?.customer?.close())
+    .then(() => { ses?.close?.(); })
+    .then(() => messenger?.close())
+    .then(() => platform?.close())
+    .then(() => service?.db.close())
+    .finally(() => {
+      clearTimeout(forceExit);
+      process.exit(0);
+    });
+};
+for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, shutdown);

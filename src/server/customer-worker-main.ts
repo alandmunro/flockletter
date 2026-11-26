@@ -19,6 +19,13 @@ const runtime=await CustomerWorkflows.start(db,config,identity);
 await runtime.engine?.verify();
 const platform=await platformRuntime(config,db,new Authenticator(db,identity,runtime.billing.options),runtime);
 const stop=new AbortController();
-for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>{stop.abort();void runtime.close();});
+let forceExit:ReturnType<typeof setTimeout>|undefined;
+for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>{
+  stop.abort();
+  if(!forceExit){
+    forceExit=setTimeout(()=>{console.error('Forced worker exit after shutdown timeout.');process.exit(1);},15_000);
+    forceExit.unref();
+  }
+});
 try{await runtime.run(stop.signal);}
-finally{await runtime.close();await platform?.close();await db.close();}
+finally{await runtime.close();await platform?.close();await db.close();if(forceExit)clearTimeout(forceExit);}

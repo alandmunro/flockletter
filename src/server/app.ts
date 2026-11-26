@@ -61,7 +61,7 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   app.get('/readyz', async (_req, res) => {
     const gaps = configurationGaps(config);
     if (!service || !auth) gaps.push('service_not_ready');
-    if (service) { try { await service.db.verifyBoundary(); } catch { gaps.push('database_unavailable'); } }
+    if (service) { try { await service.db.checkReadiness(); } catch { gaps.push('database_unavailable'); } }
     res.status(gaps.length ? 503 : 200).json({ ready: gaps.length === 0, gaps,
       sendingEnabled: externalDelivery(service?.customer?.settings.delivery??'off')&&service?.customer?.settings.deliveryScope==='all',
       testSendingEnabled:externalDelivery(service?.customer?.settings.delivery??'off') });
@@ -217,13 +217,24 @@ export function createApp(config: Config, service?: CommandService, auth?: Authe
   const clientDirectory = path.resolve('dist/client');
   app.use(express.static(clientDirectory, { index: false, maxAge: '1h' }));
   app.get('/{*path}', (_req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(clientDirectory, 'index.html')); });
-  const errors: ErrorRequestHandler = (error: unknown, _req, res, _next) => {
+  const errors: ErrorRequestHandler = (error: unknown, req, res, _next) => {
     if (error instanceof AppError) return void res.status(error.status).json({ error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) } });
     if (error instanceof ZodError) return void res.status(422).json({ error: { code: 'invalid_input', message: 'Review the highlighted input requirements.', details: error.issues.map(i => ({ path: i.path.join('.'), message: i.message })) } });
     const status = (error as { status?: number })?.status;
     if (status === 415) return void res.status(415).json({error:{code:'unsupported_encoding',message:'Use an uncompressed JSON body.'}});
     if (status === 413 || status === 400) return void res.status(status).json({ error: { code: status === 413 ? 'request_too_large' : 'invalid_json', message: status === 413 ? 'This request is too large. Split the batch.' : 'Send valid JSON.' } });
-    // Never return provider responses, request bodies, connection strings or tokens.
+    // Never log or return provider responses, request bodies, path tokens, connection strings or credentials.
+    const routePath = typeof (req.route as { path?: unknown } | undefined)?.path === 'string'
+      ? `${req.baseUrl}${(req.route as { path: string }).path}`
+      : req.baseUrl || req.path.split('/').slice(0, 3).join('/');
+    const command = routePath === '/api/v1/commands/:name' && typeof req.params?.name === 'string' && isCommand(req.params.name) ? req.params.name : undefined;
+    console.error('Unhandled request error.', {
+      method: req.method,
+      route: routePath,
+      ...(command ? { command } : {}),
+      error: error instanceof Error ? error.name : typeof error,
+      code: typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : null,
+    });
     res.status(500).json({ error: { code: 'service_error', message: 'The operation could not finish. Retry with the same operation key.' } });
   };
   app.use(errors);

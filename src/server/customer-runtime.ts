@@ -76,6 +76,7 @@ export class CustomerWorkflows {
   observe?: (value:{workspaceId:string;status:CustomerOperationsStatus})=>Promise<void>;
   private running=false;
   private closing=false;
+  private closePromise?:Promise<void>;
   private active=new Map<string,Promise<number>>();
   /**
    * Startup entry for the web and the dedicated worker. Live texting reads its Twilio credentials from
@@ -485,5 +486,17 @@ export class CustomerWorkflows {
       modes:{billing:modes.billing,delivery:modes.delivery,deliveryScope:modes.deliveryScope,audience:modes.audience,team:modes.team,support:modes.support,retention:modes.retention,infrastructure:modes.infrastructure},
       preparation:customerPreparation(this.env),gaps,queue,safeguards:{externalDelivery:externalDelivery(modes.delivery)&&modes.deliveryScope==='all',testDelivery:externalDelivery(modes.delivery),realCharges:modes.billing==='stripe_live',hostedErasure:false,openTracking:false,clickTracking:false}};
   }
-  async close(){this.closing=true;const providerClose=Promise.resolve(this.infrastructure.options.provider?.close?.());this.ses?.close();await Promise.all([providerClose,this.engine?.close()]);await Promise.allSettled(this.active.values());}
+  async close(){
+    if(this.closePromise)return this.closePromise;
+    this.closing=true;
+    this.closePromise=(async()=>{
+      await Promise.allSettled(this.active.values());
+      this.ses?.close();
+      await Promise.allSettled([
+        Promise.resolve(this.infrastructure.options.provider?.close?.()),
+        Promise.resolve(this.engine?.close()),
+      ]);
+    })();
+    return this.closePromise;
+  }
 }

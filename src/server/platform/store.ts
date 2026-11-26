@@ -19,6 +19,13 @@ export class OperatorStore implements PlatformStore {
   requireCondition([...this.operatorUrl.searchParams.keys()].every(k=>k==='sslmode'),503,'operator_database_unsafe','Do not override the reviewed database host, user or database through query parameters.');
   // One web pool plus its rolling replacement fits the restricted role's two connections.
   this.pool=new pg.Pool({connectionString:url,max:1,connectionTimeoutMillis:5000,statement_timeout:10000});
+  this.pool.on('error',error=>{
+   const code=(error as {code?:unknown}).code;
+   console.error('Unexpected idle operator PostgreSQL client error.',{
+    error:error instanceof Error?error.name:'unknown',
+    code:typeof code==='string'?code:null,
+   });
+  });
  }
  async verify(){
   if(!this.pool)return;
@@ -62,7 +69,7 @@ export class OperatorStore implements PlatformStore {
    requireCondition(typeof row?.cents==='string'&&/^[0-9]+$/.test(row.cents)&&Number.isSafeInteger(Number(row.cents)),503,'gift_funding_inventory_unverified','Funding coverage requires a complete inventory.');
    return Number(row.cents);
   },count:async(kind)=>(await sql.query<{n:number}>(`SELECT count(*)::int n FROM ${this.table()} WHERE workspace_id=$1 AND kind=$2`,[workspace,kind])).rows[0]!.n,find:async<T>(kind:RecordKind)=>(await sql.query<{body:T}>(`SELECT body FROM ${this.table()} WHERE workspace_id=$1 AND kind=$2 ORDER BY created_at DESC LIMIT 1000`,[workspace,kind])).rows.map(r=>r.body),get:async<T>(kind:RecordKind,id:string)=>(await sql.query<{body:T}>(`SELECT body FROM ${this.table()} WHERE workspace_id=$1 AND kind=$2 AND id=$3`,[workspace,kind,id])).rows[0]?.body??null,put:async(kind,id,value,immutable=false)=>{await sql.query(`INSERT INTO ${this.table()}(workspace_id,kind,id,body) VALUES($1,$2,$3,$4) ON CONFLICT(workspace_id,kind,id) ${immutable?'DO NOTHING':'DO UPDATE SET body=excluded.body'}`,[workspace,kind,id,JSON.stringify(value)]);}}) as Promise<T>;};
-  if(!this.pool)return this.db.tenant(workspace,run);const client=await this.pool.connect();try{await client.query('BEGIN');const result=await run(client);await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  if(!this.pool)return this.db.tenant(workspace,run);const client=await this.pool.connect();let broken=false;try{await client.query('BEGIN');const result=await run(client);await client.query('COMMIT');return result;}catch(error){try{await client.query('ROLLBACK');}catch{broken=true;}throw error;}finally{client.release(broken);}
  }
  async close(){await this.pool?.end();}
 }
