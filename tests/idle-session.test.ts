@@ -60,3 +60,38 @@ describe('browser session renewal', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('texting enrollment verification', () => {
+  it('retries a temporary verification failure with the same code, operation key and workspace bearer', async () => {
+    const input = { companyId: 'practice-company', expectedRevision: 2, channel: 'carrier', code: '123456', operationKey: 'practice-verification' };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(rejection(500, 'service_error')).mockResolvedValueOnce(Response.json({result:{verified:true}}));
+    vi.stubGlobal('fetch', fetcher);
+    const token = vi.fn<TokenGetter>().mockResolvedValue('original-workspace');
+    await expect(client(token).call('sms.onboardingVerify', input)).resolves.toEqual({verified:true});
+    expect(token).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls).toHaveLength(2);
+    for (const [path, request] of fetcher.mock.calls) {
+      expect(path).toBe('/api/v1/commands/sms.onboardingVerify');
+      expect(request?.body).toBe(JSON.stringify(input));
+      expect(new Headers(request?.headers).get('authorization')).toBe('Bearer original-workspace');
+    }
+  });
+
+  it('bounds status retries and preserves the last service error', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => rejection(503, 'membership_unavailable'));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(client(async () => 'workspace').call('sms.onboardingStatus', {})).rejects.toThrow('membership_unavailable');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  }, 10000);
+
+  it.each([
+    ['sms.onboardingVerify', 409, 'verification_expired'],
+    ['sms.onboardingVerify', 403, 'owner_required'],
+    ['sms.onboardingFinish', 500, 'service_error'],
+  ] as const)('preserves %s %s %s on the first response', async (name, status, code) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(rejection(status, code));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(client(async () => 'workspace').call(name, {})).rejects.toThrow(code);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});

@@ -173,6 +173,23 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
     assert.equal(await button('Confirm practice setup and submit').isEnabled(), false);
   }
   await button('Request email code').waitFor();
+  // A temporary upstream error can hide a successful verification. One click must recover it.
+  let originalVerification: string | null = null;
+  let recoveredVerification = false;
+  await page.route('**/api/v1/commands/sms.onboardingVerify', async route => {
+    const body = route.request().postData();
+    if (route.request().postDataJSON().channel !== 'email') return route.continue();
+    if (originalVerification === null) {
+      assert.ok(body);
+      originalVerification = body;
+      const accepted = await route.fetch();
+      assert.equal(accepted.ok(), true);
+      return route.fulfill({status: 500, json: {error: {code:'service_error', message:'Temporary practice response failure.'}}});
+    }
+    assert.equal(body, originalVerification);
+    recoveredVerification = true;
+    return route.continue();
+  });
   for (const channel of ['email', 'phone'] as const) {
     await button('Request ' + channel + ' code').click();
     const codeText = panel.getByText(/Practice code/).last();
@@ -183,6 +200,7 @@ async function prove(page: Page, origin: string, reviewEvidence: () => Promise<v
     await button('Verify ' + channel).click();
     await panel.getByText(channel === 'email' ? 'Business email verified' : 'Business phone verified', { exact: true }).waitFor();
   }
+  assert.ok(recoveredVerification);
   if (hosted) await reviewEvidence();
   await button('Confirm practice setup and submit').click({ timeout: 35_000 });
   const progress = panel.getByRole('region', { name: 'Carrier registration progress' });
