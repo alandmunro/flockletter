@@ -36,13 +36,13 @@ function sandbox() {
   const session = 'cs_test_FixturePrivate', payment = 'pi_fixture', charge = 'ch_fixture', refund = 're_fixture';
   const account = 'acct_fixture', reward = 'REWARD01', order = 'ORDER001';
   const state = { paid: false, expired: false, wrongCharge: false, wrongAccount: false, checkoutDenied: false, orders: 0, creates: 0, refunds: 0,
-    loseOrderReply: true, wrongRefund: true, privateLinks: 0, requests: 0 };
+    loseOrderReply: true, wrongRefund: true, privateLinks: 0, requests: 0, checkoutPath: '/c/pay/' };
   const meta: Record<string, string> = {};
   let externalId = '';
   const checkout = () => ({ id: session, livemode: false, mode: 'payment', currency: 'usd', amount_total: 1100,
     metadata: meta, client_reference_id: meta.lot, payment_status: state.paid ? 'paid' : 'unpaid',
     status: state.paid ? 'complete' : state.expired ? 'expired' : 'open', payment_intent: state.paid ? payment : null,
-    url: state.paid || state.expired ? null : 'https://checkout.stripe.com/c/pay/' + session + '#private' });
+    url: state.paid || state.expired ? null : 'https://checkout.stripe.com' + state.checkoutPath + session + '#private' });
   const refundReceipt = () => ({ id: refund, amount: 550, status: 'succeeded', currency: 'usd',
     charge, payment_intent: payment, metadata: meta });
   const unexpected: string[] = [];
@@ -179,7 +179,10 @@ test('the configured gateway resumes the bounded fixture across unpaid, ambiguou
     assert.deepEqual(await readCheckoutProofStage(db), stage('checkout_session_write_required'));
     assert.equal(gateway.state.creates, 0);
     gateway.state.checkoutDenied = false;
-    for (let i = 0; i < 2; i++) assert.deepEqual(await advance(), stage('awaiting_browser_payment'));
+    for (const path of ['/c/pay/', '/g/pay/']) {
+      gateway.state.checkoutPath = path;
+      assert.deepEqual(await advance(), stage('awaiting_browser_payment'));
+    }
     const app = express(), qa = { userId: 'user_qa', workspaceId: 'org_qa', owner: true };
     const env = { ...bindings, FLOCKLETTER_GIFT_QA_CLERK_USER: 'user_qa', FLOCKLETTER_GIFT_QA_CLERK_ORG: 'org_qa' };
     const config = loadConfig({ ...env, CLERK_PUBLISHABLE_KEY: 'pk_test_fixture' });
@@ -220,7 +223,10 @@ test('the configured gateway resumes the bounded fixture across unpaid, ambiguou
     assert.equal(await count(workspace), rowsBefore);
     const privateResult = await post('/link');
     assert.equal(privateResult.status, 200);
-    assert.deepEqual(await privateResult.json(), { url: 'https://checkout.stripe.com/c/pay/cs_test_FixturePrivate#private' });
+    assert.deepEqual(await privateResult.json(), { url: 'https://checkout.stripe.com/g/pay/cs_test_FixturePrivate#private' });
+    gateway.state.checkoutPath = '/g/pay/cs_test_other/';
+    assert.equal((await post('/link')).status, 409);
+    gateway.state.checkoutPath = '/g/pay/';
     assert.equal(privateResult.headers.get('referrer-policy'), 'no-referrer');
     assert.equal(await count(workspace), rowsBefore);
     releaseStartup();

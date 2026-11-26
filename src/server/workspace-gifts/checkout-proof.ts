@@ -112,7 +112,7 @@ function verifyCheckoutUrl(raw: unknown, session: string | undefined) {
   check(typeof raw === 'string' && session && /^cs_test_[A-Za-z0-9]+$/.test(session));
   const url = new URL(raw);
   check(url.origin === 'https://checkout.stripe.com' && !url.username && !url.password &&
-    url.pathname === '/c/pay/' + session);
+    (url.pathname === '/c/pay/' + session || url.pathname === '/g/pay/' + session));
   return url.href;
 }
 
