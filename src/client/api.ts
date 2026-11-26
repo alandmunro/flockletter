@@ -8,7 +8,7 @@ export class ApiError extends Error {
   }
 }
 export function client(getToken: TokenGetter) {
-  async function request(path: string, options: RequestInit = {}) {
+  async function request(path: string, options: RequestInit = {}, retryVerification = false) {
     const token = await getToken();
     if (!token) throw new Error('Your sign-in expired. Sign in again to continue.');
     const send = (bearer: string) => {
@@ -16,17 +16,33 @@ export function client(getToken: TokenGetter) {
       headers.set('authorization', `Bearer ${bearer}`);
       return fetch(path, { ...options, headers, cache: 'no-store' });
     };
-    const response = await send(token);
-    if (response.status !== 401) return response;
-    const rejection = await response.clone().json().catch(() => null);
-    // This response comes from authentication before the command is executed.
-    if (rejection?.error?.code !== 'sign_in_required') return response;
-    const refreshed = await getToken(true);
-    return refreshed && refreshed !== token ? send(refreshed) : response;
+    let bearer = token;
+    let response = await send(bearer);
+    if (response.status === 401) {
+      const rejection = await response.clone().json().catch(() => null);
+      if (rejection?.error?.code !== 'sign_in_required') return response;
+      // Authentication rejected the request before executing the command.
+      const refreshed = await getToken(true);
+      if (!refreshed || refreshed === token) return response;
+      bearer = refreshed;
+      response = await send(bearer);
+    }
+    if (retryVerification) {
+      // Reuse this tenant's token and the original operation key across brief service failures.
+      for (const delayMs of [1000, 3000]) {
+        if (response.status !== 500 && response.status !== 503) break;
+        const rejection = await response.clone().json().catch(() => null);
+        if (!['service_error', 'membership_unavailable', 'workspace_busy'].includes(rejection?.error?.code)) break;
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        response = await send(bearer);
+      }
+    }
+    return response;
   }
   return {
     async call<T>(name: CommandName, input: unknown): Promise<T> {
-      const response = await request(`/api/v1/commands/${name}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
+      const retryVerification = name === 'sms.onboardingVerify' || name === 'sms.onboardingStatus';
+      const response = await request(`/api/v1/commands/${name}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }, retryVerification);
       const data = await response.json() as { result: T; error?: { code?:unknown;message: string; details?: { path: string; message: string }[] } };
       if (!response.ok) throw new ApiError(response.status,data.error?.code,[data.error?.message ?? 'Request failed.', ...data.error?.details?.map(d => `${d.path}: ${d.message}`) ?? []].join(' '));
       return data.result;
