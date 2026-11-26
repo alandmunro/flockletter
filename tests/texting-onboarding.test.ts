@@ -418,12 +418,13 @@ it('retains a held fictional letter, audits its deletion, and refuses an older r
   const template = (await status(owner)).evidenceFiles!.CP575!;
   await mutation(owner, 'sms.onboardingEvidence', { document: 'CP575', contents: template });
   const caseId = (await status(owner)).evidence!.caseId!;
+  let reviewService=texting;
   const action = (
     name: 'view' | 'claim' | 'hold' | 'release_hold',
     extra: Record<string, string> = {},
     userId: string = operator.userId,
   ) =>
-    texting.operator(
+    reviewService.operator(
       'platform.textingEvidenceCase',
       { operationKey: randomUUID(), workspaceId: workspace, companyId, caseId, action: name, ...extra },
       { ...operator, userId, mfaAt: new Date(clock).toISOString() },
@@ -434,6 +435,9 @@ it('retains a held fictional letter, audits its deletion, and refuses an older r
       (await sql.query('SELECT profile FROM sms_carrier_brands WHERE company_id=$1', [companyId])).rows[0]!
         .profile,
   );
+  const recoveryId='texting-letter/'+caseId;
+  const reference=await db.read(workspace,async sql=>(await sql.query("SELECT body FROM platform_exercise_records WHERE kind='hold' AND id=$1",[recoveryId])).rows[0]!.body);
+  expect(JSON.stringify(reference)).not.toContain('FLOCKLETTER STAGING PRACTICE');
   await action('claim', {}, 'backup-reviewer');
   await expect(action('view')).rejects.toMatchObject({ code: 'evidence_assignment_required' });
   await expect(
@@ -452,11 +456,14 @@ it('retains a held fictional letter, audits its deletion, and refuses an older r
   expect(await status(owner)).toMatchObject({ state: 'correction_required' });
   const initial = clock;
   try {
+    // A replacement web instance starts with an empty filesystem. An intact current hold
+    // recovers the exact uploaded fixture despite both ordinary deadlines having passed.
+    reviewService=new Texting(db,{...texting.options});
     clock += 31 * 86400000;
     expect(await action('view', {}, 'backup-reviewer')).toEqual({ contents: template });
     await action('release_hold', {}, 'backup-reviewer');
     await expect(action('view', {}, 'backup-reviewer')).rejects.toMatchObject({ code: 'evidence_expired' });
-    await texting.tick(workspace);
+    await reviewService.tick(workspace);
     const facts = await db.read(
       workspace,
       async (sql) =>
@@ -493,6 +500,13 @@ it('retains a held fictional letter, audits its deletion, and refuses an older r
     clock = initial;
     await expect(action('view')).rejects.toMatchObject({ code: 'evidence_expired' });
     expect((await status(owner)).evidence).toBeNull();
+    // Replaying both logical records gives the recovery reference a new PostgreSQL row version.
+    await db.tenant(workspace,sql=>sql.query("UPDATE platform_exercise_records SET body=$1 WHERE kind='hold' AND id=$2",[reference,recoveryId]));
+    await expect(action('view')).rejects.toMatchObject({code:'evidence_expired'});
+    reviewService=texting;
+    await expect(action('view')).rejects.toMatchObject({code:'evidence_expired'});
+    await reviewService.tick(workspace);
+    expect(await texting.onboarding!.letters.retention(snapshot.practiceEvidenceCases[caseId])).toBeNull();
   } finally {
     clock = initial;
   }

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, writeFile, unlink, rename, mkdir, lstat, readdir } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { requireCondition } from '../errors.js';
-import { audit, type Interface } from './storage.js';
+import { audit, requestHash, type Interface } from './storage.js';
 import type { Sql } from '../db.js';
 
 const day = 86_400_000;
@@ -27,6 +27,24 @@ export type EvidenceCase = {
   viewedAt?: string;
 };
 export type EvidenceActor = { userId: string; mfaAt?: string; via: Interface };
+// These fixtures contain no business data and have no value as real identity documents.
+export function practiceLetter(
+  workspace: string,
+  brand: string,
+  revision: number,
+  document: 'CP575' | '147C',
+) {
+  const ref = requestHash(['practice-ownership-letter-v1', workspace, brand, revision, document]);
+  return [
+    'FLOCKLETTER STAGING PRACTICE',
+    'Fictional ownership letter: ' + document,
+    'Enrollment revision: ' + revision,
+    'Practice reference: ' + ref,
+    'For the simulated enrollment review only. Contains no taxpayer information.',
+    '',
+  ].join('\n');
+}
+
 export function deletionDue(c: EvidenceCase) {
   return Math.min(
     Date.parse(c.uploadedAt) + 30 * day,
@@ -73,8 +91,12 @@ export class PracticeEvidence {
     if (!/^[0-9a-f-]{36}$/.test(c.id)) throw Error('Invalid practice receipt.');
     return join(await this.bucket(c.workspace), c.id);
   }
-  async attach(c: EvidenceCase, fixture: string) {
-    await writeFile(await this.path(c), JSON.stringify({ fixture, expires: deletionDue(c) }), {
+  async attach(
+    c: EvidenceCase,
+    fixture: string,
+    policy: { expires: number | null; hold?: Hold; baseDeadline?: number } = { expires: deletionDue(c) },
+  ) {
+    await writeFile(await this.path(c), JSON.stringify({ fixture, ...policy }), {
       mode: 0o600,
       flag: 'wx',
     });
@@ -122,7 +144,71 @@ export class PracticeEvidence {
   }
   async retention(c: EvidenceCase) {
     const obj = await this.object(c);
-    return obj ? { hold: obj.hold, expires: obj.expires } : null;
+    return obj
+      ? { hold: obj.hold, expires: obj.expires, baseDeadline: obj.baseDeadline ?? deletionDue(c) }
+      : null;
+  }
+  // Persist only the right to regenerate this *known, identical fictional template*. Every
+  // live row version is bound to its database instance and creating transaction. A pg_dump
+  // replay obtains a fresh xmin; physical recovery starts a fresh postmaster. A restored
+  // authorization cannot silently resurrect a purged exercise original.
+  async remember(sql: Sql, brand: string, c: EvidenceCase) {
+    const retention = await this.retention(c);
+    if (!retention) return;
+    const body = {
+      brand,
+      revision: c.revision,
+      document: c.document,
+      fingerprint: requestHash(practiceLetter(c.workspace, brand, c.revision, c.document)),
+      ...retention,
+    };
+    await sql.query(
+      `INSERT INTO platform_exercise_records(workspace_id,kind,id,body)
+      VALUES($1,'hold',$2,$3::jsonb || jsonb_build_object('transaction',pg_current_xact_id()::xid::text,
+        'boot',extract(epoch FROM pg_postmaster_start_time())::text))
+      ON CONFLICT(workspace_id,kind,id) DO UPDATE SET body=excluded.body`,
+      [c.workspace, 'texting-letter/' + c.id, JSON.stringify(body)],
+    );
+  }
+  async recover(sql: Sql, brand: string, c: EvidenceCase, now: Date, materialize = true) {
+    if (c.deletedAt) return false;
+    const ref = (
+      await sql.query<{
+        body: {
+          brand: string;
+          document: string;
+          revision: number;
+          fingerprint: string;
+          expires: number | null;
+          baseDeadline: number;
+          hold?: Hold;
+        };
+      }>(
+        `SELECT body FROM platform_exercise_records WHERE workspace_id=$1 AND kind='hold' AND id=$2
+        AND xmin::text=body->>'transaction' AND body->>'boot'=extract(epoch FROM pg_postmaster_start_time())::text`,
+        [c.workspace, 'texting-letter/' + c.id],
+      )
+    ).rows[0]?.body;
+    if (!ref || ref.brand !== brand || ref.document !== c.document || ref.revision !== c.revision)
+      return false;
+    const fixture = practiceLetter(c.workspace, brand, c.revision, c.document);
+    if (ref.fingerprint !== requestHash(fixture) || !Number.isFinite(ref.baseDeadline)) return false;
+    const expires = ref.hold ? null : Math.min(ref.baseDeadline, ref.expires ?? 0, deletionDue(c));
+    if (expires !== null && expires <= +now) return false;
+    if (materialize) {
+      const obj = await this.object(c);
+      // A copy left by an older web instance must follow the current hold and deadline.
+      if (!obj || obj.fixture !== fixture || obj.expires !== expires ||
+          (obj.baseDeadline ?? deletionDue(c)) !== ref.baseDeadline ||
+          obj.hold?.owner !== ref.hold?.owner || obj.hold?.reason !== ref.hold?.reason ||
+          obj.hold?.reviewAt !== ref.hold?.reviewAt) {
+        const path = await this.path(c), temp = path + '.' + randomUUID();
+        await writeFile(temp, JSON.stringify({fixture, expires, baseDeadline: ref.baseDeadline, hold: ref.hold}),
+          { mode: 0o600, flag: 'wx' });
+        await rename(temp, path);
+      }
+    }
+    return true;
   }
   async remove(c: EvidenceCase) {
     await unlink(await this.path(c)).catch((e: NodeJS.ErrnoException) => {
@@ -142,11 +228,6 @@ export class PracticeEvidence {
     }
     for (const file of files) {
       if (/^[0-9a-f-]{36}(?:\.[0-9a-f-]{36})?$/.test(file) && !retained.has(file)) {
-        // Keep a held original through restoration of a snapshot predating its case receipt.
-        if (file.length === 36) {
-          const obj = JSON.parse(await readFile(join(bucket, file), 'utf8')) as { hold?: Hold };
-          if (obj.hold) continue;
-        }
         await unlink(join(bucket, file));
       }
     }
@@ -193,8 +274,9 @@ export async function sweepEvidence(sql: Sql, workspace: string, store: Practice
   await store.reconcileCopies(workspace, new Set(rows.map((row) => row.c.id)));
   let next = Infinity;
   for (const { brand, company, c } of rows) {
+    const current = await store.recover(sql, brand, c, now);
     const policy = await store.retention(c);
-    if (policy && (policy.expires === null || Math.min(policy.expires, deletionDue(c)) > +now)) {
+    if (current && policy) {
       if (JSON.stringify(policy.hold) !== JSON.stringify(c.hold)) {
         if (policy.hold) c.hold = policy.hold;
         else delete c.hold;
@@ -205,13 +287,23 @@ export async function sweepEvidence(sql: Sql, workspace: string, store: Practice
     }
     await store.remove(c);
     c.deletedAt = now.toISOString();
-    await saveEvidenceCase(sql, brand, c);
+    // Keep the minimum receipt in sms_audit; erase the recovery reference and working copy.
+    await sql.query(
+      "UPDATE platform_exercise_records SET body='{}' WHERE workspace_id=$1 AND kind='hold' AND id=$2",
+      [workspace, 'texting-letter/' + c.id],
+    );
+    await sql.query(
+      `UPDATE sms_carrier_brands SET profile=(CASE WHEN profile#>>'{onboarding,evidence,caseId}'=$2
+      THEN profile #- '{onboarding,evidence}' ELSE profile END) #- ARRAY['practiceEvidenceCases',$2] WHERE id=$1`,
+      [brand, c.id],
+    );
     await audit(sql, workspace, 'worker', 'worker', 'onboarding.evidence_deleted', brand, null, {
       caseId: c.id,
       company,
       revision: c.revision,
       document: c.document,
       deletedAt: c.deletedAt,
+      reviewer: c.viewedBy ?? c.assigned,
       outcome: c.outcome ?? 'unresolved',
       reason: policy ? 'retention_deadline' : 'original_already_absent',
     });

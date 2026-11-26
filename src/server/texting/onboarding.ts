@@ -12,7 +12,7 @@ import { acceptEnrollmentPlan } from './commercial.js';
 import { hostedBusinessUrls, makeHostedPolicySnapshot } from '../../shared/texting-policy-pages.js';
 import { scanEnrollmentPages } from './website-preflight.js';
 import type { SetupReceipt, StripeTestSetupPayment } from './setup-payment.js';
-import { PracticeEvidence, saveEvidenceCase, type EvidenceCase, type EvidenceActor } from './practice-evidence.js';
+import { PracticeEvidence, practiceLetter, saveEvidenceCase, type EvidenceCase, type EvidenceActor } from './practice-evidence.js';
 import { textingPlatformCommands } from '../../shared/texting-platform.js';
 import type { z } from 'zod';
 import { enrollmentNotices, restartPracticeProbation } from './enrollment-recovery.js';
@@ -59,14 +59,6 @@ type Row = {
   id: string; dba_name: string | null; registration_id: string; state: string; legal_name: string; rejection_reason: string | null;
   profile: Record<string, unknown> & { onboarding?: Enrollment; practiceEvidenceCases?: Record<string,EvidenceCase>; campaign?: { samples: string[] } };
 };
-
-// These fixtures contain no business data and have no value as real identity documents.
-function practiceLetter(workspace: string, row: Row, revision: number, document: 'CP575' | '147C') {
-  const ref = requestHash(['practice-ownership-letter-v1', workspace, row.id, revision, document]);
-  return ['FLOCKLETTER STAGING PRACTICE', 'Fictional ownership letter: ' + document,
-    'Enrollment revision: ' + revision, 'Practice reference: ' + ref,
-    'For the simulated enrollment review only. Contains no taxpayer information.', ''].join('\n');
-}
 
 function campaign(business: OnboardingBusiness) {
   const topics = business.vertical === 'FOOD_AND_BEVERAGE'
@@ -144,7 +136,7 @@ export class TextingOnboarding {
     const progress = personal && row ? await this.registration.progress(sql, workspace, row.registration_id) : null;
     const review = personal?.review;
     const c = personal?.evidence?.caseId && row?.profile.practiceEvidenceCases?.[personal.evidence.caseId];
-    const attached = c && await this.letters.available(c,this.now());
+    const attached = c && row && await this.letters.recover(sql,row.id,c,this.now(),false);
     return {
       available: true, blocked: !!row && !owned,
       signupReady: !row || (owned && ['draft','rejected'].includes(row.state))
@@ -157,7 +149,7 @@ export class TextingOnboarding {
       carrierVerified: personal?.challenges.carrier?.verified === true,
       pageCheck: personal?.pendingScan ? null : personal?.pageCheck ?? null, review: personal?.review ?? null, evidence: attached ? personal?.evidence ?? null : null,
       ...(row && personal && row.profile.registrationType !== 'sole_proprietor' && (personal.review === 'payer_mismatch' || personal.review === 'hosted_ownership') && {
-        evidenceFiles: { CP575: practiceLetter(workspace, row, personal.revision, 'CP575'), '147C': practiceLetter(workspace, row, personal.revision, '147C') },
+        evidenceFiles: { CP575: practiceLetter(workspace, row.id, personal.revision, 'CP575'), '147C': practiceLetter(workspace, row.id, personal.revision, '147C') },
       }),
       publicPages: business?.hostedPages ? { website: business.website, privacyPolicyUrl: business.privacyPolicyUrl, smsTermsUrl: business.smsTermsUrl } : null,
       progress, probation: personal?.probation?.state ?? null,
@@ -273,7 +265,7 @@ export class TextingOnboarding {
             'review_unavailable',
             'A practice ownership letter is available for hosted-page and payer reviews.',
           );
-          const expected = practiceLetter(workspace, row, state.revision, document);
+          const expected = practiceLetter(workspace, row.id, state.revision, document);
           requireCondition(
             contents === undefined || contents === expected,
             422,
@@ -282,7 +274,7 @@ export class TextingOnboarding {
           );
           const existing =
             state.evidence?.caseId && row.profile.practiceEvidenceCases?.[state.evidence.caseId];
-          if (!existing || !(await this.letters.available(existing, this.now()))) delete state.evidence;
+          if (!existing || !(await this.letters.recover(sql,row.id,existing,this.now()))) delete state.evidence;
           requireCondition(
             !state.evidence || state.evidence.document === document,
             409,
@@ -301,6 +293,7 @@ export class TextingOnboarding {
               assigned: this.letters.seats[0] ?? null,
             };
             await this.letters.attach(c, expected);
+            await this.letters.remember(sql,row.id,c);
             await saveEvidenceCase(sql, row.id, c);
             state.evidence = { caseId: c.id, document, fingerprint, source, attachedAt: c.uploadedAt };
             await this.record(sql, row, state);
@@ -600,7 +593,7 @@ export class TextingOnboarding {
     const c = state.evidence?.caseId && row.profile.practiceEvidenceCases?.[state.evidence.caseId];
     if (action === 'accept_evidence') {
       requireCondition(
-        c && c.revision === state.revision && !c.closedAt && (await this.letters.available(c, this.now())),
+        c && c.revision === state.revision && !c.closedAt && (await this.letters.recover(sql,row.id,c,this.now())),
         409,
         'evidence_unavailable',
         'Attach a current practice original to this revision.',
@@ -656,7 +649,10 @@ export class TextingOnboarding {
     if (c && !c.closedAt && (action === 'accept_evidence' || action === 'request_correction')) {
       c.closedAt = this.now().toISOString();
       c.outcome = action === 'accept_evidence' ? 'accepted' : 'correction';
-      await this.letters.schedule(c, this.now());
+      if (await this.letters.recover(sql,row.id,c,this.now())) {
+        await this.letters.schedule(c,this.now());
+        await this.letters.remember(sql,row.id,c);
+      }
       await saveEvidenceCase(sql, row.id, c);
       await audit(sql, workspace, actor, via, 'onboarding.evidence_closed', row.id, null, {
         caseId: c.id,
@@ -685,7 +681,7 @@ export class TextingOnboarding {
     requireCondition(row && c, 404, 'evidence_unavailable', 'This case is unavailable.');
     this.letters.authorize(actor, c, now, p.action === 'claim');
     requireCondition(
-      await this.letters.available(c, now),
+      await this.letters.recover(sql,row.id,c,now),
       410,
       'evidence_expired',
       'This original has expired or is unavailable.',
@@ -726,7 +722,10 @@ export class TextingOnboarding {
         requireCondition(c.hold, 409, 'evidence_hold_missing', 'There is no active hold for this original.');
         delete c.hold;
       }
-      if (p.action === 'hold' || p.action === 'release_hold') await this.letters.schedule(c, now, p.action);
+      if (p.action === 'hold' || p.action === 'release_hold') {
+        await this.letters.schedule(c,now,p.action);
+        await this.letters.remember(sql,row.id,c);
+      }
       await saveEvidenceCase(sql, row.id, c);
       await audit(
         sql,
