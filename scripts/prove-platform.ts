@@ -33,6 +33,9 @@ try{
  await page.goto(origin+'/operator?ticket='+encodeURIComponent(ticket.id));await rejectOptionalCookies(page);await page.getByRole('heading',{name:'Platform control room',exact:true}).waitFor();
  await page.waitForFunction(expected=>(document.querySelector('input[pattern="org_[A-Za-z0-9_-]+"]') as HTMLInputElement|null)?.value===expected,actor.workspaceId);
  assert.equal(await page.getByLabel('Workspace ID',{exact:true}).inputValue(),actor.workspaceId);
+ await page.getByRole('combobox', {name:/^Review area/}).selectOption('abuse');
+ await page.getByLabel('Brand ID for a gifting review', {exact:true}).waitFor();
+ await page.getByRole('combobox', {name:/^Review area/}).selectOption('support');
  assert.equal(await page.getByLabel('Exact conversation, delivery or retention job ID',{exact:true}).inputValue(),ticket.id);
  await page.getByLabel('Reason for access',{exact:true}).fill('Review the exact captured customer support conversation.');
  await page.getByRole('button',{name:'Open five-minute audited case',exact:true}).click();
