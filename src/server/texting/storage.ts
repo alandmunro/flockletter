@@ -54,6 +54,7 @@ function enrollmentNotice(action: string, value: unknown): string | null {
     case 'onboarding.accept_evidence': return 'Your practice evidence was accepted. Continue enrollment.';
     case 'probation.canary_paused': case 'probation.risk_paused': return 'Sending paused. Review the first broadcast and recent delivery results.';
     case 'probation.risk_suspended': return 'Sending suspended after a delivery or opt-out threshold was reached. Operator review is required.';
+    case 'probation.mock_broadcast_released': return 'The operator ended practice probation and released the two held texts for the usual sending checks.';
     case 'onboarding.probation_restarted': return 'Probation restarted. A freshly reviewed broadcast must pass the first-cohort check.';
     case 'probation.completed': case 'onboarding.complete_probation': return 'Texting probation ended.';
     default: return null;

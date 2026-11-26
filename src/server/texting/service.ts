@@ -1,3 +1,4 @@
+import { releaseMockBroadcast } from './mock-broadcast-release.js';
 import { textingReport } from './reports.js';
 import { textingReportCommands, type PracticeReportCommand } from '../../shared/texting-reports.js';
 import { textingPlanCommands, type TextPlanCommand } from '../../shared/texting-commercial.js';
@@ -32,6 +33,7 @@ import type { StripeTestSetupPayment } from './setup-payment.js';
 export type TextingMode = 'off' | 'mock' | 'live';
 export type TextingOptions = {
   evidenceReviewers?: readonly string[]; evidenceDirectory?: string;
+  mockBroadcastRelease?: string;
   probationPolicy?: import('./probation-policy.js').ProbationPolicy;
   mode: TextingMode; origin: string; linkOrigin: string; seal: CredentialSeal;
   platform: TwilioPlatformPort; port: TwilioMessagingPort; liveAccount?: AccountCredentials;
@@ -759,10 +761,11 @@ export class Texting {
       case 'platform.textingRegistration': {
         const w = input.workspaceId!;
         return this.db.read(w, async sql => {
-          const regs = (await sql.query<RegistrationRow & { company_id: string; legal_name: string; cases:Record<string,EvidenceCase> | null }>(`
+          const regs = (await sql.query<RegistrationRow & { company_id: string; legal_name: string; cases:Record<string,EvidenceCase> | null; firstSend:string | null; probationState:string | null }>(`
             SELECT r.*,b.company_id,b.legal_name,b.profile->'practiceEvidenceCases' cases,b.profile#>'{onboarding,revision}' "onboardingRevision",
               b.profile#>>'{onboarding,review}' "onboardingReview",b.profile#>>'{onboarding,evidence,document}' "evidenceDocument",
-              b.profile#>>'{onboarding,evidence,source}' "evidenceSource",b.profile#>>'{onboarding,evidence,fingerprint}' "evidenceFingerprint",b.profile#>>'{onboarding,probation,state}' "probationState"
+              b.profile#>>'{onboarding,evidence,source}' "evidenceSource",b.profile#>>'{onboarding,evidence,fingerprint}' "evidenceFingerprint",b.profile#>>'{onboarding,probation,state}' "probationState",
+              b.profile#>>'{onboarding,probation,sendId}' "firstSend"
             FROM sms_registrations r JOIN sms_carrier_brands b ON b.id=r.carrier_brand_id ORDER BY r.created_at`)).rows;
           const steps = (await sql.query<StepRow>('SELECT * FROM sms_registration_steps ORDER BY created_at')).rows;
           const numbers = (await sql.query('SELECT id,carrier_brand_id AS "carrierBrandId",e164,state FROM sms_numbers')).rows;
@@ -788,7 +791,8 @@ export class Texting {
               OR r.state='suspended' OR (r.state IN ('provisioning','brand_pending','campaign_pending') AND $1::int IS NOT NULL
                 AND r.updated_at <= $2::timestamptz - make_interval(mins=>$1))) ORDER BY r.updated_at,r.id LIMIT 50`, [reviewMinutes ?? null, this.now()])).rows : [];
           const settingsNeeded = steps.some(s => s.state === 'uncertain' && regs.some(r => r.id === s.registration_id && r.revision === s.revision)) && settle === undefined ? ['reconcile_settle_minutes'] : [];
-          return { mode: this.options.mode, settingsNeeded, reviewQueue, registrations: regs.map(({cases,...r}) => ({ ...r,
+          return { mode: this.options.mode, settingsNeeded, reviewQueue, registrations: regs.map(({cases,firstSend,...r}) => ({ ...r,
+            ...(this.mock && this.onboarding && firstSend && r.probationState === 'paused' && this.options.mockBroadcastRelease === w + '/' + firstSend && { mockReleaseSendId: firstSend }),
             ...(this.onboarding?.letters.seats.includes(operator.userId) && { evidenceCases: Object.values(cases ?? {}).filter(c=>!c.deletedAt)
               .map(c=>({id:c.id,revision:c.revision,document:c.document,assignedToMe:c.assigned===operator.userId,
                 hold:c.hold ? {reason:c.hold.reason,reviewAt:c.hold.reviewAt} : null,closed:!!c.closedAt})) }),
@@ -824,6 +828,14 @@ export class Texting {
         requireCondition(this.mock, 409, 'mock_only', 'Mock actions run only with the mock Twilio client.');
         const p = textingPlatformCommands['platform.textingMock'].schema.parse(raw);
         const a = p.action;
+        if (a.kind === 'release_held_broadcast') {
+          requireCondition(this.onboarding && this.options.mockBroadcastRelease === p.workspaceId + '/' + a.sendId,
+            403, 'mock_release_not_granted', 'This broadcast has no staging release authorization.');
+          const result = await write(p.workspaceId, sql =>
+            releaseMockBroadcast(sql, p.workspaceId, a.sendId, actor, operator.via, a.reason, this.now()));
+          await this.wake(p.workspaceId);
+          return result;
+        }
         if (a.kind === 'fault') return write(p.workspaceId, async sql => {
           let target: `${typeof a.target}/${string}`;
           if (a.target === 'send') {

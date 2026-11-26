@@ -39,6 +39,8 @@ The free staging instance stores fictional originals in a private temporary dire
 
 The owner sees enrollment notices in Texting. Staging captures the email copies. A failed first cohort holds its remaining texts. Restarting after review closes that broadcast, cancels its unattempted remainder and requires a newly reviewed first cohort. A suspension requires an operator decision. The worker checks opt-outs and filtering against privately configured risk settings and checks both age and delivered volume before completing probation.
 
+The owner authorized one exception for Alder’s original three-text practice broadcast. On mock staging in capture mode, set `FLOCKLETTER_TEXTING_MOCK_BROADCAST_RELEASE` to the exact workspace ID and send ID, separated by a slash. The assigned workspace’s operator enters a reason and chooses **End practice probation and release the two held texts**. The server checks the original failed cohort, both unattempted message records and any competing sends or risk hold. In one transaction it records the operator, reason and all three message IDs, completes probation and wakes the two pending records for normal admission. An audit receipt prevents a second release. Clear the setting after verification. The customer’s ordinary restart still cancels the held remainder.
+
 In capture mode the owner can manage a separate monthly practice texting plan, set a spend cap and cancel or reactivate texting. A change requiring a Standard campaign goes through mock brand and campaign review while the existing registration stays active. The simulated agreement records the selected plan and amount. Newsletter access has its own agreement.
 
 ## Carrier readiness
