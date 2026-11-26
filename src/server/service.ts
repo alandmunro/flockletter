@@ -39,7 +39,7 @@ import {companyDirectory,createCompany,renameCompany,createBrand,renameBrand,mov
 import type { CustomerWorkflows } from './customer-runtime.js';
 import { customerEligibility } from './customer-billing/service.js';
 
-export type Actor = { workspaceId: string; userId: string; actorId: string; owner: boolean; kind: 'session' | 'connection'; scopes: Capability[]; brandIds: string[] | null };
+export type Actor = { mfaAt?: string; workspaceId: string; userId: string; actorId: string; owner: boolean; kind: 'session' | 'connection'; scopes: Capability[]; brandIds: string[] | null };
 type CampaignRow = { id: string; brand_id: string; version: number; content: CampaignContent; created_at: Date; updated_at: Date };
 type AssetRow = { id: string; name: string; mime: string; size: number; width: number; height: number; sha256: string; created_at: Date; bytes: Buffer };
 type ConnectionRow = { id: string; name: string; scopes: Capability[]; brand_ids: string[]; created_at: Date; expires_at: Date; revoked_at: Date | null };

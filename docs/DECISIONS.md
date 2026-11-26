@@ -219,3 +219,9 @@ On November 25, 2026 the owner authorized implementing WA-09, deploying the chec
 ## D-067 · Automated texting onboarding on staging (November 25, 2026)
 
 The owner extended D-065 to build and verify the remaining self-service texting enrollment on staging with synthetic businesses. The scope includes automated page checks, simulated identity and carrier decisions, a mock texting plan, exception review, number activation and probation recovery. Any fee, real carrier submission or production rollout is paused. Actual provider acceptance, identity-document handling and customer launch require separate evidence and authorization. [Staging runbook](implementation/TEXTING_ONBOARDING_STAGING.md)
+
+## D-068 · Texting probation and identity evidence
+
+On November 25, 2026 the owner approved private new-sender thresholds and an exception-only identity-document policy for implementation on mock staging. The worker ramps daily volume, observes the first cohort, checks opt-outs and carrier filtering, and requires both age and delivered volume before graduation. The approved numeric settings belong in private deployment configuration.
+
+For EIN ownership exceptions, restrict original access to one assigned named reviewer with a named backup and recent MFA. Log each view. Delete originals by the earlier of seven days after closure or thirty days after upload, subject to a documented appeal or legal hold with an owner and review date. Keep a minimal audit receipt. Staging accepts only fictional letters. Real collection, paid filings and production activation remain separate decisions. [Implementation and restore limitations](implementation/TEXTING_ONBOARDING_STAGING.md#private-probation-settings-and-fictional-identity-letters)

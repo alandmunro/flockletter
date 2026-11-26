@@ -1,3 +1,4 @@
+import { completePolicy } from './probation-policy.js';
 import { plainText } from '../../shared/texting.js';
 import type { Sql } from '../db.js';
 import { audit, requireSettings, type SettingValues } from './storage.js';
@@ -5,7 +6,7 @@ import { audit, requireSettings, type SettingValues } from './storage.js';
 const policyKeys = ['probation_canary_count', 'probation_canary_minutes', 'probation_min_days', 'probation_delivered_min',
   'probation_initial_days', 'probation_initial_daily_limit', 'probation_daily_limit'] as const;
 export function needsProbationSettings(settings: SettingValues) {
-  return policyKeys.some(key => settings[key] === undefined);
+  return !completePolicy(settings);
 }
 
 type State = { state: 'canary' | 'active' | 'paused' | 'complete' | 'suspended' | 'awaiting_canary'; startsAt: string; sendId?: string; members?: string[] };
@@ -75,6 +76,10 @@ export async function probationHold(sql: Sql, workspace: string, company: string
     }
   }
   const age = (now.getTime() - Date.parse(current.startsAt)) / 86400000;
+  if (messageId || (current.state === 'active' && age >= policy.probation_min_days)) {
+    const risk = await applyRisk(sql, workspace, company, current, record.id, settings, now);
+    if (risk) return hold('probation_' + risk);
+  }
   if (current.state === 'active' && age >= policy.probation_min_days) {
     const delivered = (await sql.query<{ count: number }>(`SELECT count(*)::int FROM sms_messages
       WHERE company_id=$1 AND purpose='broadcast' AND state='delivered' AND submitted_at>=$2`, [company, current.startsAt])).rows[0]!.count;
@@ -111,6 +116,7 @@ async function applyRisk(sql: Sql, workspace: string, company: string, state: St
     await update(sql,brand,state);
     await audit(sql,workspace,'worker','worker','probation.risk_'+next,brand,null,{reason:'delivery_or_optout_rate'});
   }
+  return next;
 }
 
 /** Settle single-recipient cohorts and age/volume completion even when no further text needs admission. */

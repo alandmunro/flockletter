@@ -7,11 +7,11 @@ export type Interface = 'ui' | 'api' | 'mcp' | 'worker' | 'webhook' | 'signup_pa
 export type SettingValues = { [K in TextingSettingKey]?: (typeof textingSettings)[K]['kind'] extends 'int' ? number : string[] };
 
 /** Reads every texting setting for one workspace: the workspace override, else the platform value. */
-export async function readSettings(sql: Sql, workspace: string): Promise<SettingValues> {
+export async function readSettings(sql: Sql, workspace: string, defaults?: SettingValues): Promise<SettingValues> {
   const rows = (await sql.query<{ key: string; workspace_id: string | null; value: unknown }>('SELECT * FROM flockletter_customer_jobs.texting_settings_list($1)', [workspace])).rows;
   const values: Record<string, unknown> = {};
   for (const row of rows) if (Object.hasOwn(textingSettings, row.key) && (row.workspace_id !== null || !(row.key in values))) values[row.key] = row.value;
-  return values as SettingValues;
+  return { ...defaults, ...values } as SettingValues;
 }
 /** Fails closed with a named reason when any required setting is unset (FL-SMS-013). */
 export function requireSettings<K extends TextingSettingKey>(values: SettingValues, keys: readonly K[]): { [P in K]: NonNullable<SettingValues[P]> } {

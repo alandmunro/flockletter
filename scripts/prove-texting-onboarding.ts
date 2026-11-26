@@ -183,7 +183,7 @@ try {
   const readOwn = enrollmentPageReader(origin, allowedSignup);
   const documents = new Map([[applicantSite, '<p>Orchard Practice LLC</p>'], [privacy, '<p>' + practice.privacy + '</p>'],
     [terms, '<p>' + practice.terms + '</p>'], [applicantSite + '/unfinished', '<p>Privacy</p>']]);
-  const texting = new Texting(db, { ...workflows.texting.options, readEnrollmentPage: async url => documents.get(url) ?? readOwn(url) });
+  const texting = new Texting(db, { ...workflows.texting.options, evidenceReviewers:['fixture-reviewer'], readEnrollmentPage: async url => documents.get(url) ?? readOwn(url) });
   Object.assign(workflows, { texting });
   Object.assign(workflows.audience.options, { texting });
   const service = new CommandService(db, undefined, identity.isOwner, undefined, undefined, identity.team, undefined, undefined, undefined, 'local', undefined, workflows);
@@ -194,7 +194,8 @@ try {
   const workspace = await service.execute('workspace.get', {}, actor) as Workspace;
   for (const [key, value] of Object.entries({ carrier_daily_limit: 10, monthly_segment_allowance: 300,
     probation_canary_count: 1, probation_canary_minutes: 1, probation_min_days: 2, probation_delivered_min: 2,
-    probation_initial_days: 1, probation_initial_daily_limit: 3, probation_daily_limit: 5 })) {
+    probation_risk_window_days: 2, probation_risk_minimum: 9, probation_pause_optout_bps: 2500, probation_suspend_optout_bps: 4000,
+    probation_pause_filter_bps: 2500, probation_suspend_filter_bps: 4000, probation_initial_days: 1, probation_initial_daily_limit: 3, probation_daily_limit: 5 })) {
     await texting.operator('platform.textingSetSetting', { operationKey: randomUUID(), workspaceId: actor.workspaceId,
       key, value, expectedRevision: 0, reason: 'Synthetic browser exercise on loopback.' }, { userId: 'fixture', via: 'operator_api' });
   }
@@ -217,9 +218,14 @@ try {
   page.on('pageerror', err => errors.push(err.message));
   const reviewEvidence = async () => {
     const companyId = await db.read(actor.workspaceId, async sql => (await sql.query<{ id: string }>('SELECT company_id AS id FROM company_brands WHERE brand_id=$1',[brandId])).rows[0]!.id);
+    const evidence = await texting.execute('sms.onboardingStatus',{companyId},actor,'ui') as import('../src/shared/texting-onboarding.js').OnboardingView;
+    const reviewer = {userId:'fixture-reviewer',via:'operator_api',mfaAt:new Date().toISOString()} as const;
+    const letter=await texting.operator('platform.textingEvidenceCase',{workspaceId:actor.workspaceId,companyId,
+      caseId:evidence.evidence!.caseId,action:'view',operationKey:randomUUID()},reviewer) as {contents:string};
+    assert.ok(letter.contents.startsWith('FLOCKLETTER STAGING PRACTICE'));
     await texting.operator('platform.textingOnboardingReview', { operationKey: randomUUID(), workspaceId: actor.workspaceId,
       companyId, expectedRevision: 1, action: 'accept_evidence', reason: 'Reviewed fictional ownership letter in isolated practice.' },
-    { userId: 'fixture-reviewer', via: 'operator_api' });
+    reviewer);
   };
   try { await prove(page, origin, reviewEvidence); } catch (error) {
     console.error((await page.locator('main').innerText()).slice(-3500));

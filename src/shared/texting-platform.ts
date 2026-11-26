@@ -48,6 +48,11 @@ export const textingPlatformCommands = {
   'platform.textingCampaignResubmitted': define('Record that a FAILED campaign was edited and resubmitted in the Twilio Console (same campaign, no new vetting fee). Registration goes back to waiting on its status.', true, {
     operationKey, workspaceId, registrationId: z.uuid(), reason }),
   'platform.textingRegistration': define('Read registration state, every step with its operation key, and numbers for one workspace.', false, { workspaceId }),
+  'platform.textingEvidenceCase': define('Manage one assigned fictional evidence case with current multifactor verification.', true, {
+    operationKey, workspaceId, companyId: z.uuid(), caseId: z.uuid(),
+    action: z.enum(['claim','view','hold','release_hold']),
+    holdReason: z.enum(['carrier_appeal','legal_hold']).optional(), reviewAt: z.iso.datetime().optional(),
+  }),
   'platform.textingOnboardingReview': define('Return a practice enrollment for correction or end its probation with an audit reason.', true, {
     operationKey, workspaceId, companyId: z.uuid(), expectedRevision: z.number().int().positive(),
     action: z.enum(['request_correction', 'complete_probation', 'accept_evidence', 'lift_suspension']), reason,

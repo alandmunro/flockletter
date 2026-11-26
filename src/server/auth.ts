@@ -24,7 +24,7 @@ export async function pendingClerkInvitations(directory: Pick<ClerkOrganizations
 }
 
 export type IdentityProvider = {
-  session(request: ExpressRequest): Promise<{ userId: string; workspaceId: string }>;
+  session(request: ExpressRequest): Promise<{ userId: string; workspaceId: string; mfaAt?: string }>;
   isOwner(userId: string, workspaceId: string): Promise<boolean>;
   team?:ClerkTeam;
 };
@@ -62,7 +62,10 @@ export function clerkIdentity(config: Config): IdentityProvider {
       requireCondition(auth.orgId, 403, 'workspace_required', 'Select or create a workspace in the account menu.');
       const session = await clerk.sessions.getSession(auth.sessionId);
       requireCondition(session.status === 'active' && session.userId === auth.userId, 401, 'session_revoked', 'Sign in again to continue.');
-      return { userId: auth.userId, workspaceId: auth.orgId };
+      const ages = auth.factorVerificationAge;
+      const mfaAt = ages?.length === 2 && ages.every(age => Number.isInteger(age) && age >= 0 && age < 5)
+        ? new Date(Date.now() - Math.max(...ages) * 60_000).toISOString() : undefined;
+      return { userId: auth.userId, workspaceId: auth.orgId, mfaAt };
     },
     async isOwner(userId, workspaceId) {
       return (await team.membership(userId,workspaceId))==='owner';
