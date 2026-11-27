@@ -14,6 +14,8 @@ D-051 asks the owner to restore operator MFA once paying customers arrive. Live 
 
 ## Current authorization
 
+D-069 adds FL-BRD-003: an optional per-brand welcome email, sent once after live double opt-in, with an owner-entered promo code. The code is display text only; WA-08 coupons remain unauthorized. Verify on staging with a disposable inbox before relying on it in production.
+
 D-063 accepts the texting add-on and authorizes phase 2 only: FL-SMS-001–015 in [the SRD](docs/SRD.md), verified in staging with a mock Twilio client and two synthetic workspaces, then operator-run registration of the owner's first business and one real opted-in text to the owner's phone. Self-serve onboarding, billing, gifting, coupons, events and outside customers are not authorized. Keep fraud-control values and private registration details out of this repository; load secrets from Bitwarden Secrets Manager. See [the texting requirements](docs/implementation/PROPOSED_TEXTING_AND_GIFTING.md).
 
 D-062 accepts the owner's explicit temporary Flockletter-only no-tax-collection mode, including live signup after ordinary staging/provider verification. Only exact `FLOCKLETTER_BILLING_TAX=off` selects it; absent/invalid live configuration fails closed. Keep US location/card proof, current agreement/price/date acceptance, account/catalogue/webhook checks, trial history and Pro holds. Never declare a customer tax-exempt, change shared merchant tax/Managed Payments settings or silently change accepted pending agreements. Read [the no-collection runbook](docs/implementation/NO_TAX_COLLECTION.md). Configuration, real provider evidence and activation are separate from code approval.

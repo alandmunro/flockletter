@@ -9,6 +9,7 @@ import { SignupFields, SignupPostcard } from "../shared/SignupPostcard.js";
 import { operationKey, type Api } from "./api.js";
 import { BrandImageUpload } from "./BrandImageUpload.js";
 import { ConfirmationDesignEditor } from "./ConfirmationDesignEditor.js";
+import { WelcomeEmailEditor } from "./WelcomeEmailEditor.js";
 import { useBrandImages } from "./useBrandImages.js";
 
 function usePreviewImage(api: Api, id: string | null | undefined) {
@@ -201,6 +202,17 @@ export function SignupDesignStudio({
       library={library}
       logoUrl={logo.url}
       photoUrl={photo.url}
+    />
+    <WelcomeEmailEditor
+      view={view}
+      design={design}
+      edit={(welcome) => edit({ welcome: { enabled: false, ...design.welcome, ...welcome } })}
+      save={save}
+      busy={busy}
+      error={error || library.error || logo.error}
+      notice={notice}
+      logoUrl={logo.url}
+      logo={library.assets.find((asset) => asset.id === design.logoId)}
     />
   </>);
 }

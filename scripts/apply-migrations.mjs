@@ -17,7 +17,7 @@ const MIGRATIONS = [
   '041_audience_people.sql', '042_texting_reply_forwarding.sql', '043_audience_import_jobs.sql', '044_subscriber_preferences.sql',
   '045_date_sources.sql', '046_date_automations.sql', '047_date_dispatch.sql', '048_annual_greeting_recovery.sql',
   '049_gift_accounting_retention.sql', '050_gift_funding_inventory.sql', '051_gift_accounting_adjustments.sql',
-  '052_hot_path_indexes.sql',
+  '052_hot_path_indexes.sql', '053_audience_welcome.sql',
 ];
 
 export async function applyMigrations(client, role) {

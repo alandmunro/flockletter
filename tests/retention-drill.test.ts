@@ -122,6 +122,8 @@ async function seed(db: pg.Client, workspace: string) {
         SELECT w,b,'fixture-confirmation-'||w,digest,id,gen_random_uuid(),'delivered',now() FROM customer_audience_confirmations WHERE workspace_id=w AND brand_id=b;
       INSERT INTO customer_audience_optouts(workspace_id,brand_id,id,subscriber_id,token_hash)
         VALUES(w,b,gen_random_uuid(),s,digest);
+      INSERT INTO customer_audience_welcomes(workspace_id,brand_id,id,subscriber_id,confirmation_id,welcome_snapshot,state)
+        SELECT w,b,gen_random_uuid(),s,id,'{"enabled":true,"promoCode":"Fixture"}','cancelled' FROM customer_audience_confirmations WHERE workspace_id=w AND brand_id=b;
       INSERT INTO customer_team_scenarios(workspace_id,user_id,email,role)
         VALUES(w,'fixture-member','same@example.test','member');
       INSERT INTO customer_team_invites(workspace_id,id,email,state,reference)

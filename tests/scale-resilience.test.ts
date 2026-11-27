@@ -40,7 +40,7 @@ describe('migration ledger, hot indexes, and paid operations exemption', () => {
     try {
       await admin.connect();
       const recorded = await admin.query<{ count: string }>('SELECT count(*) FROM flockletter_customer_jobs.schema_migrations');
-      expect(Number(recorded.rows[0]?.count)).toBe(52);
+      expect(Number(recorded.rows[0]?.count)).toBe(53);
 
       const indexes = await admin.query<{ indexname: string }>(
         `SELECT indexname FROM pg_indexes WHERE indexname = ANY($1::text[])`,

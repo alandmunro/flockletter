@@ -22,7 +22,7 @@ type SenderTemplate = {
   confirmation?: ConfirmationDesign;
 };
 
-const escapeHtml = (s: string) =>
+export const escapeHtml = (s: string) =>
   s.replace(
     /[&<>"']/g,
     (c) =>
@@ -31,7 +31,7 @@ const escapeHtml = (s: string) =>
       ]!,
   );
 
-function imageTag(image: InlineImage, maxWidth: number, maxHeight: number) {
+export function imageTag(image: InlineImage, maxWidth: number, maxHeight: number) {
   if (
     !/^[a-zA-Z0-9._@-]+$/.test(image.contentId) ||
     ![image.width, image.height].every((n) => Number.isFinite(n) && n >= 1)
@@ -42,6 +42,36 @@ function imageTag(image: InlineImage, maxWidth: number, maxHeight: number) {
   const width = Math.max(1, Math.round(image.width * scale));
   const height = Math.max(1, Math.round(image.height * scale));
   return `<img src="cid:${image.contentId}" alt="${escapeHtml(image.alt)}" width="${width}" height="${height}" style="display:block;border:0;width:${width}px;max-width:100%;height:auto">`;
+}
+
+/** Shared outer frame for brand-identified transactional email. Every fragment must already be escaped. */
+export function renderEmailDocument(parts: {
+  subject: string;
+  preheader: string;
+  brand: string;
+  face: string;
+  identity: string;
+  body: string;
+  footer: string;
+}) {
+  const { subject, preheader, brand, face, identity, body, footer } = parts;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(subject)}</title><style>
+  @media (max-width:480px){.outer{padding:12px 8px!important}.pad{padding-left:22px!important;padding-right:22px!important}.brand{font-size:21px!important}.mark{width:88px!important}.mark img{max-width:84px!important}}
+  </style></head><body style="margin:0;padding:0;background:#fff7f8">
+  <div style="display:none!important;max-height:0;overflow:hidden;opacity:0;mso-hide:all;font-size:1px;line-height:1px">${escapeHtml(preheader)}</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#fff7f8"><tr><td class="outer" align="center" style="padding:28px 12px">
+  <!--[if mso]><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600"><tr><td><![endif]-->
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="max-width:600px;background:#ffffff;border:1px solid #eadbdf;border-collapse:separate;border-radius:8px;font:16px/1.55 Arial,Helvetica,sans-serif;color:#342b30;text-align:left">
+  <tr><td class="pad" bgcolor="#f5e8ea" style="padding:22px 34px;border-bottom:1px solid #e5d1d7;border-radius:7px 7px 0 0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle" style="padding-right:10px">
+  <div class="brand" style="font:bold 25px/1.15 ${face};color:#4a0a1e;overflow-wrap:anywhere">${brand}</div>
+  <div style="padding-top:7px;font:bold 11px/1.4 Arial,Helvetica,sans-serif;letter-spacing:2px;color:#69515d">NEWSLETTER</div></td>
+  <td class="mark" width="120" align="right" valign="middle">${identity}</td></tr></table></td></tr>
+  <tr><td class="pad" style="padding:34px 34px 30px;font:16px/1.55 Arial,Helvetica,sans-serif">${body}</td></tr>
+  <tr><td class="pad" style="border-top:1px solid #eadbdf;padding:18px 34px 20px;color:#69515d;font:14px/1.55 Arial,Helvetica,sans-serif">
+  ${footer}</td></tr></table>
+  <!--[if mso]></td></tr></table><![endif]-->
+  </td></tr></table></body></html>`;
 }
 
 export function renderVerificationEmail(
@@ -110,23 +140,15 @@ export function renderVerificationEmail(
     story,
     link,
   });
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(subject)}</title><style>
-  @media (max-width:480px){.outer{padding:12px 8px!important}.pad{padding-left:22px!important;padding-right:22px!important}.brand{font-size:21px!important}.mark{width:88px!important}.mark img{max-width:84px!important}}
-  </style></head><body style="margin:0;padding:0;background:#fff7f8">
-  <div style="display:none!important;max-height:0;overflow:hidden;opacity:0;mso-hide:all;font-size:1px;line-height:1px">${escapeHtml(preheader)}</div>
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#fff7f8"><tr><td class="outer" align="center" style="padding:28px 12px">
-  <!--[if mso]><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600"><tr><td><![endif]-->
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="max-width:600px;background:#ffffff;border:1px solid #eadbdf;border-collapse:separate;border-radius:8px;font:16px/1.55 Arial,Helvetica,sans-serif;color:#342b30;text-align:left">
-  <tr><td class="pad" bgcolor="#f5e8ea" style="padding:22px 34px;border-bottom:1px solid #e5d1d7;border-radius:7px 7px 0 0">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle" style="padding-right:10px">
-  <div class="brand" style="font:bold 25px/1.15 ${face};color:#4a0a1e;overflow-wrap:anywhere">${brand}</div>
-  <div style="padding-top:7px;font:bold 11px/1.4 Arial,Helvetica,sans-serif;letter-spacing:2px;color:#69515d">NEWSLETTER</div></td>
-  <td class="mark" width="120" align="right" valign="middle">${identity}</td></tr></table></td></tr>
-  <tr><td class="pad" style="padding:34px 34px 30px;font:16px/1.55 Arial,Helvetica,sans-serif">${body}</td></tr>
-  <tr><td class="pad" style="border-top:1px solid #eadbdf;padding:18px 34px 20px;color:#69515d;font:14px/1.55 Arial,Helvetica,sans-serif">
-  Didn’t sign up? You can ignore this email or <a href="${unsubscribe}" style="color:#713049;text-decoration:underline">opt out</a>.</td></tr></table>
-  <!--[if mso]></td></tr></table><![endif]-->
-  </td></tr></table></body></html>`;
+  const html = renderEmailDocument({
+    subject,
+    preheader,
+    brand,
+    face,
+    identity,
+    body,
+    footer: `Didn’t sign up? You can ignore this email or <a href="${unsubscribe}" style="color:#713049;text-decoration:underline">opt out</a>.`,
+  });
   const text = `${copy?.heading ? title + "\n\n" : ""}${introduction}\n\nOpen the confirmation page and select “${pageButton}” to start receiving our emails.\n\n${button}\n${links.confirmUrl}\n\nDidn’t sign up? You can ignore this email or opt out here:\n${links.unsubscribeUrl}`;
   return { subject, preheader, html, text };
 }

@@ -378,6 +378,7 @@ export class CustomerWorkflows {
       for(const brand of brands) {
         await run(()=>this.audience.tickImport(workspace,brand.id));
         await run(()=>this.audience.tick(workspace,brand.id));
+        await run(()=>this.audience.tickWelcome(workspace,brand.id));
       }
       if(this.dates.mode!=='off') await eachDateBrand(this.db,workspace,brand=>run(async()=>{
         const now=new Date();
