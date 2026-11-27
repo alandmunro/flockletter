@@ -41,6 +41,7 @@
   {"name":"customer_audience_settings","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"customer_audience_confirmations","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"customer_audience_optouts","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
+  {"name":"customer_audience_welcomes","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"date_occurrences","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},
   {"name":"date_automation_revisions","scope":"brand","permissions":["SELECT","INSERT"]},
   {"name":"date_automations","scope":"brand","permissions":["SELECT","INSERT","UPDATE"]},

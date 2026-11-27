@@ -1,4 +1,5 @@
 import { confirmationContent } from './verification-email.js';
+import type { WelcomeEnvelope } from './welcome-email.js';
 import type { CustomerConfirmationFeedback } from './feedback.js';
 import {lockWorkspace} from '../workspace-lock.js';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -13,7 +14,7 @@ import { preparationContactLimit } from '../../shared/trial.js';
 import { limits, plans } from '../../shared/contracts.js';
 import { workspaceAccess } from '../campaign/access.js';
 
-import { defaultDesign, type SignupDesign } from '../../shared/signup-design.js';
+import { defaultDesign, type SignupDesign, type WelcomeDesign } from '../../shared/signup-design.js';
 
 export async function brandIdentity(sql: Sql, brand: string) {
   const row = (await sql.query<{name:string; signup_design:SignupDesign|null; signup_design_revision:number}>(
@@ -88,6 +89,10 @@ export interface CustomerConfirmationPort {
     message: ConfirmationEnvelope,
   ): Promise<{ state: 'accepted' | 'rejected' | 'unknown'; providerId?: string }>;
   lookup(operationKey: string): Promise<{ state: 'accepted' | 'rejected' | 'unknown'; providerId?: string }>;
+  /** Optional: one welcome message after a live double opt-in. Absent means welcomes stay queued. */
+  submitWelcome?(
+    message: WelcomeEnvelope,
+  ): Promise<{ state: 'accepted' | 'rejected' | 'unknown'; providerId?: string }>;
 }
 export type CustomerAudienceOptions = {
   /** Texting add-on hook for the optional sign-up fields (FL-SMS-007). */
@@ -840,6 +845,16 @@ export class CustomerAudience {
       "UPDATE customer_audience_confirmations SET state='confirmed',consumed_at=now() WHERE id=$1",
       [id],
     );
+    if (message.mode === 'live' && this.options.mode === 'live') {
+      const { design } = await brandIdentity(sql, brand);
+      // One welcome per subscriber, ever; a repeat signup does not earn a second message.
+      if (design.welcome?.enabled)
+        await sql.query(
+          `INSERT INTO customer_audience_welcomes(workspace_id,brand_id,id,subscriber_id,confirmation_id,welcome_snapshot)
+           VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id,brand_id,subscriber_id) DO NOTHING`,
+          [workspace, brand, randomUUID(), message.subscriber_id, id, JSON.stringify(design.welcome)],
+        );
+    }
     return { confirmed: true, mode: message.mode };
   }
   async resolveSignupSlug(slug: string) {
@@ -880,7 +895,11 @@ export class CustomerAudience {
       const row = await settings(sql);
       if (!row?.enabled || row.form_token !== form || this.options.mode === 'off') throw invalidLink();
       const texting = this.options.texting ? await this.options.texting.signupView(sql, workspace, brand, options.smsPreview === true) : null;
-      return { ...(await brandIdentity(sql, brand)), ...policy(row), mode: this.options.mode, confirmationMode: row.confirmation_mode, texting };
+      const identity = await brandIdentity(sql, brand);
+      // The welcome promo code is only for confirmed subscribers; never hand it to public pages.
+      const design = { ...identity.design };
+      delete design.welcome;
+      return { ...identity, design, ...policy(row), mode: this.options.mode, confirmationMode: row.confirmation_mode, texting };
     });
   }
   publicLogo(form: string) {
@@ -1137,6 +1156,74 @@ export class CustomerAudience {
     });
     return { processed: true };
   }
+
+  /** Sends at most one queued welcome. An unknown provider outcome is never resubmitted. */
+  async tickWelcome(workspace: string, brand: string) {
+    const submitWelcome = this.options.provider?.submitWelcome?.bind(this.options.provider);
+    if (this.options.mode !== 'live' || !submitWelcome) return { processed: false };
+    const claim = await this.db.brand(workspace, brand, async (sql) => {
+      await lockWorkspace(sql, workspace);
+      const job = (
+        await sql.query<{ id: string; subscriber_id: string; confirmation_id: string; welcome_snapshot: WelcomeDesign;
+          stale: boolean; email_normalized: string; state: string }>(
+          `SELECT w.id,w.subscriber_id,w.confirmation_id,w.welcome_snapshot,s.email_normalized,s.state,
+             w.created_at<clock_timestamp()-interval '3 days' AS stale
+           FROM customer_audience_welcomes w JOIN subscribers s ON s.workspace_id=w.workspace_id AND s.brand_id=w.brand_id AND s.id=w.subscriber_id
+           WHERE w.state='queued' AND w.next_check_at<=clock_timestamp() ORDER BY w.created_at,w.id LIMIT 1 FOR UPDATE OF w,s`,
+        )
+      ).rows[0];
+      if (!job) return;
+      const cancel = async (code: string) => {
+        await sql.query("UPDATE customer_audience_welcomes SET state='cancelled',error_code=$2 WHERE id=$1", [job.id, code]);
+        return { cancelled: true } as const;
+      };
+      if ((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount) return cancel('workspace_erased');
+      if (job.stale) return cancel('expired');
+      if (job.state !== 'confirmed' || !(await productionConsentEligible(sql, job.subscriber_id)))
+        return cancel('recipient_ineligible');
+      const identity = await emailIdentity(sql, brand);
+      if (!(await brandIdentity(sql, brand)).design.welcome?.enabled) return cancel('welcome_disabled');
+      const optOut = await createCustomerOptOut(sql, workspace, brand, job.subscriber_id, this.options.origin);
+      await sql.query("UPDATE customer_audience_welcomes SET state='submitting',attempts=1 WHERE id=$1 AND state='queued'", [job.id]);
+      const message: WelcomeEnvelope = {
+        operationKey: job.id,
+        routeToken: this.options.feedback?.routeToken(workspace, brand, job.confirmation_id),
+        to: job.email_normalized,
+        brandName: identity.brandName,
+        identity: { accent: identity.identity.accent, font: identity.identity.font, logo: identity.identity.logo },
+        welcome: job.welcome_snapshot,
+        unsubscribeUrl: optOut.url,
+        preferencesUrl: optOut.preferencesUrl,
+      };
+      return { id: job.id, message };
+    });
+    if (!claim) return { processed: false };
+    if ('cancelled' in claim) return { processed: true };
+    let result: Awaited<ReturnType<NonNullable<CustomerConfirmationPort['submitWelcome']>>> = { state: 'unknown' };
+    try {
+      result = await this.db.brand(workspace, brand, async (sql) => {
+        await lockWorkspace(sql, workspace);
+        if ((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount) return { state: 'rejected' as const };
+        return submitWelcome(claim.message);
+      });
+    } catch {
+      /* Keep the committed attempt as uncertain for reconciliation. */
+    }
+    await this.db.brand(workspace, brand, async (sql) => {
+      await lockWorkspace(sql, workspace);
+      await sql.query(
+        `UPDATE customer_audience_welcomes SET state=$2,provider_id=coalesce($3,provider_id),error_code=$4
+         WHERE id=$1 AND state='submitting'`,
+        [
+          claim.id,
+          result.state === 'accepted' ? 'accepted' : result.state === 'rejected' ? 'cancelled' : 'uncertain',
+          result.providerId ?? null,
+          result.state === 'rejected' ? 'provider_rejected' : result.state === 'unknown' ? 'reconciliation_required' : null,
+        ],
+      );
+    });
+    return { processed: true };
+  }
 }
 
 export const customerAudienceTables = [
@@ -1144,6 +1231,7 @@ export const customerAudienceTables = [
   { name: 'customer_audience_imports', scope: 'brand', permissions: ['SELECT', 'INSERT'] },
   { name: 'customer_audience_confirmations', scope: 'brand', permissions: ['SELECT', 'INSERT', 'UPDATE'] },
   { name: 'customer_audience_optouts', scope: 'brand', permissions: ['SELECT', 'INSERT', 'UPDATE'] },
+  { name: 'customer_audience_welcomes', scope: 'brand', permissions: ['SELECT', 'INSERT', 'UPDATE'] },
   { name: 'customer_audience_feedback', scope: 'brand', permissions: ['SELECT', 'INSERT'] },
 ] as const;
 

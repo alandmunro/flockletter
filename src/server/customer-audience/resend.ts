@@ -1,4 +1,5 @@
 import { confirmationContent } from './verification-email.js';
+import { welcomeContent, type WelcomeEnvelope } from './welcome-email.js';
 import { z } from 'zod';
 import type { ConfirmationEnvelope,CustomerConfirmationPort } from './service.js';
 
@@ -18,6 +19,24 @@ export class CustomerConfirmationProvider implements CustomerConfirmationPort {
         headers:{authorization:'Bearer '+this.key,'content-type':'application/json','Idempotency-Key':'flockletter-confirmation/'+message.operationKey},
         body:JSON.stringify({from:this.sender,to:[message.to],subject:mail.subject,html:mail.html,text:mail.text,attachments,
           tags:[{name:'fl_confirmation',value:message.operationKey},{name:'fl_confirmation_route',value:message.routeToken}]}),
+      });
+      if(!response.ok){await response.body?.cancel();return {state:response.status>=500||[408,409,429].includes(response.status)?'unknown':'rejected'};}
+      const parsed=z.object({id:z.uuid()}).safeParse(await response.json());
+      return parsed.success?{state:'accepted',providerId:parsed.data.id}:{state:'unknown'};
+    }catch{return {state:'unknown'};}
+  }
+  async submitWelcome(message:WelcomeEnvelope):ReturnType<CustomerConfirmationPort['submit']> {
+    const own=(value:string|undefined)=>{if(value===undefined)return true;try{const u=new URL(value);return u.origin===this.origin&&!u.username&&!u.password;}catch{return false;}};
+    if(!message.routeToken||!/^[A-Za-z0-9_-]{43}$/.test(message.routeToken)||!z.uuid().safeParse(message.operationKey).success
+      ||!z.email().safeParse(message.to).success||!own(message.unsubscribeUrl)||!own(message.preferencesUrl))return {state:'rejected'};
+    try {
+      const {mail,attachments}=await welcomeContent(message);
+      const headers:Record<string,string>={'List-Unsubscribe':'<'+message.unsubscribeUrl+'>','List-Unsubscribe-Post':'List-Unsubscribe=One-Click'};
+      const response=await this.send('https://api.resend.com/emails',{
+        method:'POST',redirect:'error',signal:AbortSignal.timeout(8000),
+        headers:{authorization:'Bearer '+this.key,'content-type':'application/json','Idempotency-Key':'flockletter-welcome/'+message.operationKey},
+        body:JSON.stringify({from:this.sender,to:[message.to],subject:mail.subject,html:mail.html,text:mail.text,attachments,headers,
+          tags:[{name:'fl_welcome',value:message.operationKey},{name:'fl_confirmation_route',value:message.routeToken}]}),
       });
       if(!response.ok){await response.body?.cancel();return {state:response.status>=500||[408,409,429].includes(response.status)?'unknown':'rejected'};}
       const parsed=z.object({id:z.uuid()}).safeParse(await response.json());

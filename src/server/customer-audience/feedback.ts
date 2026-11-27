@@ -27,8 +27,12 @@ export class CustomerConfirmationFeedback {
     z.email().parse(options.sender);
   }
   private recipient(email:string){return createHmac('sha256',this.options.routeKey).update('recipient\0'+mailbox(email)).digest('hex');}
+  /** Deterministic route token for a confirmation; a later welcome message reuses its confirmation's route. */
+  routeToken(workspace:string,brand:string,confirmation:string) {
+    return createHmac('sha256',this.options.routeKey).update(JSON.stringify(['confirmation-route-v1',workspace,brand,confirmation])).digest('base64url');
+  }
   async register(sql:Sql,workspace:string,brand:string,operation:string,email:string,expiresAt:Date) {
-    const token=createHmac('sha256',this.options.routeKey).update(JSON.stringify(['confirmation-route-v1',workspace,brand,operation])).digest('base64url');
+    const token=this.routeToken(workspace,brand,operation);
     // The route remains usable for delayed negative feedback after the confirmation link expires.
     const expires=new Date(expiresAt.getTime()+30*86400000);
     await sql.query('SELECT flockletter_customer_jobs.register_confirmation_route($1,$2,$3,$4,$5,$6)',
@@ -64,6 +68,8 @@ export class CustomerConfirmationFeedback {
     const sent=parsed.data;
     requireCondition(sent.id===event.data.email_id&&mailbox(sent.from)===mailbox(this.options.sender)&&mailbox(event.data.from)===mailbox(this.options.sender)&&mailbox(sent.to[0]!)===mailbox(event.data.to[0]!),409,'confirmation_feedback_mismatch','The provider receipt does not match this event.');
     const tag=(name:string)=>{const found=sent.tags.filter(t=>t.name===name);return found.length===1?found[0]!.value:'';};
+    const welcome=tag('fl_welcome');
+    if(welcome)return this.receiveWelcome(welcome,tag('fl_confirmation_route'),sent.id,sent.to[0]!,kind);
     const token=tag('fl_confirmation_route'),operation=tag('fl_confirmation');
     requireCondition(/^[A-Za-z0-9_-]{43}$/.test(token)&&z.uuid().safeParse(operation).success,409,'confirmation_feedback_unmapped','The provider receipt is not a registered confirmation.');
     const route=(await this.db.pool.query<Route>('SELECT * FROM flockletter_customer_jobs.resolve_confirmation_route($1)',[hash(token)])).rows[0];
@@ -91,6 +97,28 @@ export class CustomerConfirmationFeedback {
     }).catch((error:unknown)=>{
       if((error as {code?:string}).code==='23505')throw new AppError(409,'confirmation_feedback_conflict','This receipt conflicts with an existing event or provider binding.');
       throw error;
+    });
+    return {received:true};
+  }
+  /**
+   * Welcome messages share the confirmation sender. Their receipts settle the welcome and suppress on hard
+   * bounce or complaint; an unmappable welcome receipt is acknowledged so Resend keeps this endpoint enabled.
+   */
+  private async receiveWelcome(welcome:string,token:string,providerId:string,recipient:string,kind:Kind) {
+    if(!z.uuid().safeParse(welcome).success||!/^[A-Za-z0-9_-]{43}$/.test(token))return {received:true,ignored:true};
+    const route=(await this.db.pool.query<Route>('SELECT * FROM flockletter_customer_jobs.resolve_confirmation_route($1)',[hash(token)])).rows[0];
+    if(!route||route.recipient_digest!==this.recipient(recipient))return {received:true,ignored:true};
+    await this.db.brand(route.workspace_id,route.brand_id,async sql=>{
+      await lockWorkspace(sql,route.workspace_id);
+      if((await sql.query('SELECT FROM customer_retention_receipts LIMIT 1')).rowCount)return;
+      const job=(await sql.query<{subscriber_id:string;provider_id:string|null;email_normalized:string}>(`SELECT w.subscriber_id,w.provider_id,s.email_normalized
+        FROM customer_audience_welcomes w JOIN subscribers s ON(s.workspace_id,s.brand_id,s.id)=(w.workspace_id,w.brand_id,w.subscriber_id)
+        WHERE w.id=$1 AND w.confirmation_id=$2 AND w.attempts=1 FOR UPDATE OF w,s`,[welcome,route.confirmation_id])).rows[0];
+      if(!job||this.recipient(job.email_normalized)!==route.recipient_digest||(job.provider_id&&job.provider_id!==providerId))return;
+      await sql.query(`UPDATE customer_audience_welcomes SET provider_id=coalesce(provider_id,$2),
+        state=CASE WHEN state IN ('submitting','uncertain') THEN 'accepted' ELSE state END WHERE id=$1`,[welcome,providerId]);
+      if(kind==='hard_bounce'||kind==='complaint')
+        await suppress(sql,job.subscriber_id,null,kind==='complaint'?'complained':'hard_bounced','customer-provider-feedback');
     });
     return {received:true};
   }

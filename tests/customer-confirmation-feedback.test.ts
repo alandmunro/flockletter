@@ -162,3 +162,30 @@ it('acknowledges newsletter deliveries from other senders on the shared Resend a
  const own=signed({...a.event(),data:{...a.event().data,from:'"Alpine" <'+sender+'>'}});await a.feedback.receive(own.body,own.headers);
  expect(a.fetches()).toBe(1);expect((await a.rows()).job.state).toBe('accepted');
 });
+it('sends the welcome through the confirmation route, suppresses on complaint and acknowledges unmapped welcome receipts',async()=>{
+ const a=await setup(),welcomeId=randomUUID();let payload:{tags:{name:string;value:string}[];headers:Record<string,string>;html:string}|undefined;
+ const resend=new CustomerConfirmationProvider('send-only',sender,'https://mail.example.test',async(url,options)=>{
+  expect(url).toBe('https://api.resend.com/emails');expect((options?.headers as Record<string,string>)['Idempotency-Key']).toMatch(/^flockletter-welcome\//);
+  payload=JSON.parse(String(options?.body));return Response.json({id:welcomeId});
+ });
+ const audience=new CustomerAudience(db,{mode:'live',origin:'https://mail.example.test',checkOwner:async()=>true,confirmationKey:randomBytes(32),feedback:a.feedback,provider:{
+  submit:async()=>({state:'unknown'}),lookup:async()=>({state:'unknown'}),submitWelcome:message=>resend.submitWelcome(message)}});
+ const view=await audience.execute('audienceOnboarding.status',{brandId:a.brand},a.actor) as {designRevision:number};
+ await audience.execute('audienceOnboarding.saveDesign',{operationKey:randomUUID(),brandId:a.brand,expectedRevision:view.designRevision,
+  design:{displayName:'',heading:'',introduction:'',accent:'#83364f',font:'serif',logoId:null,welcome:{enabled:true,promoCode:'Dec2026'}}},a.actor);
+ const confirm=new URL(a.message().confirmUrl);
+ await audience.confirm(confirm.pathname.split('/')[2]!,confirm.searchParams.get('t')!);
+ expect(await audience.tickWelcome(a.workspace,a.brand)).toEqual({processed:true});
+ expect(payload!.html).toContain('Dec2026');expect(payload!.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+ expect(payload!.tags.map(t=>t.name)).toEqual(['fl_welcome','fl_confirmation_route']);
+ a.setSent({id:welcomeId,from:sender,to:['reader@retailer.test'],tags:payload!.tags});
+ const complaint=signed({...a.event('email.complained'),data:{...a.event().data,email_id:welcomeId}});
+ // The harness fetch asserts the confirmation's provider ID; point retrieval at the welcome instead.
+ const feedback=new CustomerConfirmationFeedback(db,{webhookSecret:secret,retrieveKey:'retrieve-only',sendingKey:'send-only',routeKey,sender,send:async()=>Response.json(a.sent())});
+ expect(await feedback.receive(complaint.body,complaint.headers)).toEqual({received:true});
+ expect((await a.rows()).person.state).toBe('complained');
+ expect(await db.brand(a.workspace,a.brand,async sql=>(await sql.query('SELECT state,provider_id FROM customer_audience_welcomes')).rows)).toEqual([{state:'accepted',provider_id:welcomeId}]);
+ a.setSent({id:welcomeId,from:sender,to:['reader@retailer.test'],tags:[{name:'fl_welcome',value:randomUUID()},{name:'fl_confirmation_route',value:'x'.repeat(43)}]});
+ const unmapped=signed({...a.event(),data:{...a.event().data,email_id:welcomeId}});
+ expect(await feedback.receive(unmapped.body,unmapped.headers)).toEqual({received:true,ignored:true});
+});
