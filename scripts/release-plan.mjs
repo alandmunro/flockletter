@@ -38,7 +38,9 @@ async function trustedAncestors(start){
  const uid=process.getuid?.();
  if(uid===undefined)throw Error('protected_ancestor_permissions');
  for(let ancestor=start;;ancestor=path.dirname(ancestor)){
-  const info=await lstat(ancestor),trustedSticky=info.uid===0&&(info.mode&0o1000)!==0;
+  // A shared sticky directory is trusted when root or this release user owns it: other users can add
+  // entries but cannot rename or remove ours. Render's /opt/render is 1777 and owned by the service user.
+  const info=await lstat(ancestor),trustedSticky=[0,uid].includes(info.uid)&&(info.mode&0o1000)!==0;
   if(!info.isDirectory()||![0,uid].includes(info.uid)||((info.mode&0o022)!==0&&!trustedSticky))throw Error('protected_ancestor_permissions');
   if(ancestor===path.dirname(ancestor))break;
  }
@@ -119,7 +121,7 @@ export function privateEnvelopeGaps(envelope,plan){
  return [...new Set(codes)];
 }
 
-/** Owner-private immediate directory; trusted system ancestors may be shared/sticky. */
+/** Owner-private immediate directory; ancestors may be shared only when sticky and owned by root or this user. */
 export async function readProtectedReleaseFile(file,limit=65536){
  if(typeof file!=='string'||!path.isAbsolute(file)||typeof process.getuid!=='function')throw Error('protected_file_required');
  if(await realpath(file)!==file)throw Error('protected_file_symlink');

@@ -60,6 +60,8 @@ async function run() {
 try {
   await run();
 } catch (error) {
-  console.error('Production migration failed' + (error.code ? ' (' + error.code + ')' : '') + '.');
+  // Report database codes and this repository's static snake_case refusal codes; never free-form text.
+  const code = error?.code ?? (/^[a-z_]{1,64}$/.test(error?.message ?? '') ? error.message : undefined);
+  console.error('Production migration failed' + (code ? ' (' + code + ')' : '') + '.');
   process.exitCode = 1;
 }

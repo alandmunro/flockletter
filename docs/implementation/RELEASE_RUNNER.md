@@ -63,7 +63,7 @@ Private files are transient release transport, not the credential source of trut
 ### Private File Safeguards
 *   **Paths:** Canonical absolute paths. No symlinks or hardlinks.
 *   **Permissions:** Regular files owned by current UID, inaccessible to group/other users (`0600` recommended). Immediate directory is owner-private (`0700`).
-*   **Ancestors:** Must be root/current-owner. Not group/world-writable, except trusted root-owned sticky system directories (e.g., `/private/tmp`).
+*   **Ancestors:** Must be root/current-owner. Not group/world-writable, except sticky shared directories owned by root or the current user (e.g., `/private/tmp`, or Render's `/opt/render`, which is `1777` and owned by the service user). Before November 27, 2026 only root-owned sticky directories were trusted, so `migrate-staging.mjs` and `migrate-production.mjs` refused every Render checkout with a bare "migration failed"; migrations 041–053 were never applied to production and 052–053 to staging, and deploys marked `migrations_applied=true` failed their startup boundary check. Failures now report static refusal codes such as `release_source_invalid`.
 *   **Timing:** Plan max 30 minutes old, max 1 minute future. Plan shape, age, target digest and exact source are checked before opening private input. Private connections must match the plan's selected host/port and source/admin role; migration/runtime roles and database are fixed by environment.
 *   **Validation:** All missing/invalid static fields are returned together as codes before any DB connection or mutation.
 

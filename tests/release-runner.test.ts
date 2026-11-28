@@ -64,7 +64,10 @@ it('refuses symlinks, hardlinks, unsafe files/directories/ancestors and oversize
  const child=path.join(directory,'shared');await mkdir(child,{mode:0o750});const childFile=path.join(child,'input.json');await writeFile(childFile,'{}',{mode:0o600});
  await expect(readProtectedReleaseFile(childFile)).rejects.toThrow('protected_directory_permissions');
  await chmod(child,0o777);const nested=path.join(child,'private');await mkdir(nested,{mode:0o700});const nestedFile=path.join(nested,'input.json');await writeFile(nestedFile,'{}',{mode:0o600});
- await expect(readProtectedReleaseFile(nestedFile)).rejects.toThrow('protected_ancestor_permissions');await chmod(child,0o700);
+ await expect(readProtectedReleaseFile(nestedFile)).rejects.toThrow('protected_ancestor_permissions'); // A sticky shared ancestor owned by this user (Render's /opt/render is 1777) is trusted for both checks.
+ await chmod(child,0o1777);expect(await readProtectedReleaseFile(nestedFile)).toBe('{}');
+ const source=path.join(nested,'source.mjs');await writeFile(source,'export {};',{mode:0o644});await expect(verifyReleaseSourceFile(source)).resolves.toBeUndefined();
+ await chmod(child,0o777);await expect(verifyReleaseSourceFile(source)).rejects.toThrow('release_source_invalid');await chmod(child,0o700);
  const huge=path.join(directory,'huge.json');await writeFile(huge,'x'.repeat(65537),{mode:0o600});await expect(readProtectedReleaseFile(huge)).rejects.toThrow('protected_file_size');
  await expect(readProtectedReleaseFile(child)).rejects.toThrow('protected_file_permissions');
 });
